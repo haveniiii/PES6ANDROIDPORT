@@ -1,0 +1,236 @@
+# 24 — Comentarios del partido (iteración 41, 2026-10-16)
+
+> La versión PSP no comenta los partidos (`docs/11`, apartado «Comentarios»). El port añade un
+> comentarista en el host con un banco de voz de PES6 de **PS2**: lee los eventos del partido de la
+> memoria del juego (`docs/21`) y mezcla frases en la salida de audio. No cambia nada del juego, así
+> que tampoco la partida en red.
+
+## Bancos de voz (`?_sound.afs` de PS2)
+
+AFS: `"AFS\0"`, u32 número de clips, pares (offset, tamaño); cada clip es **ADX de CRI** (tipo 3,
+4 bits, bloques de 18 bytes; casi todos mono a 24 kHz, *high-pass* 500). Mapa de la comunidad
+(PeSoccerWorld, «Mapa AFS Completo PES 6»): **5 279–5 968 nombres de equipos**, **8 157–13 126
+nombres de jugadores** (con variantes: «Ono» 8163, «y Ono» 11954, «ahí está Ono» 12345, «¡Ono!»
+12736). El resto son frases.
+
+| Banco | Qué tiene |
+|---|---|
+| `e_sound.afs` (Claudio Palma, parche) | 13 217 clips; **7 467 frases** (0–5 278 y 5 969–8 156, 8 h); los huecos de nombres están vacíos (72 bytes) |
+| `s_sound.afs` (parche chileno) | frases y nombres, pero los nombres no corresponden al número del jugador (reordenados); el hueco de equipos lleva 1,4 GB de otra cosa |
+| **`s_sound.afs` original** (PS2 PAL, español: Juan Carlos Rivero e Iñaki Cano; 420 MB, 13 127 clips) | **el banco por defecto**: frases, 230 equipos y 4 970 nombres con la misma voz |
+
+**Nombres de jugadores:** el registro de la base de datos (`docs/21` §2b-bis) guarda en `+0x30` un
+u16 en el rango de los nombres (Laslandes 8693, Micoud 8279…): es el índice del clip con su
+nombre en un `s_sound.afs` **original** de PS2 PAL. En el banco chileno no coincide.
+
+Nota: el error del juego de PS2 con el parche de Claudio Palma (dice «2-2, empate» yendo 2-1)
+encaja con clips reemplazados en otro orden: el juego pide la frase por su número original. El port
+no pide por número: lee el marcador real (`*0x090B1110 + equipo·0x2F4 + 8`) y elige del catálogo.
+
+## Motor (`runtime/common/commentary.c`)
+
+- **Decodificador ADX propio** (sirve también en Android sin FFmpeg): idéntico a ffmpeg
+  (correlación 0,99999 en 5 clips).
+- **Director** (hilo del juego, una vez por vblank, solo en el partido): eventos a partir de la fase
+  (`0x090B9C18`), el código de toque del balón, la bandera de gol, la causa del silbato y el tipo de
+  saque, y los estados de los porteros. Hoy: `kickoff`, `goal`, `shot`, `header`, `lofted_pass`,
+  `through_pass`, `woodwork`, `foul`, `offside`, `throw_in`, `out`, `save`. Prioridades: una frase más
+  importante interrumpe; las menores esperan medio segundo tras la anterior o se descartan.
+- **Voz** (hilo de audio, en `pes6_audio_pull`): un clip a la vez, remuestreado a 44,1 kHz; el resto
+  del sonido baja al ~60 % mientras habla.
+- **Catálogo**: texto `evento clip clip …` (`commentary.txt` junto al banco). Falta llenarlo: hay que
+  saber qué dice cada frase.
+
+Uso (escritorio): `PES6_COMMENTARY=/ruta/e_sound.afs [PES6_COMMENTARY_CATALOGUE=…]
+[PES6_COMMENTARY_LOG=1] … --window`. Pruebas: `PES6_COMMENTARY_DECODE=clip:salida.wav` (decodifica y
+sale), `PES6_COMMENTARY_SAY=clip`. Sin dispositivo de audio solo se registran los eventos.
+
+Comprobado en la partida de referencia con input aleatorio (semilla 6): saque inicial, pases altos,
+cabezazo, los dos saques de banda (8@2152, 8@2600), pases al hueco, tiros, el fuera de juego (8@3499)
+y el gol (8@4010), en ese orden.
+
+## Clasificación de las frases (Claudio Palma)
+
+1. Extraer las frases a WAV de 16 kHz (`ffmpeg -f adx`) en `build/comm/wav/`.
+2. Transcribir con **whisper.cpp** (`brew install whisper-cpp`, modelo `ggml-small.bin` en
+   `vendor/whisper/`, `-l es`). Uno a uno va a ~1 s por clip (whisper rellena cada entrada a 30 s); por
+   lotes —60 audios de 10 min con 1,2 s de silencio entre clips y marcas de tiempo— tarda ~40 min, y
+   `tools/commentary/split_parts.py` devuelve a cada clip su texto.
+3. El banco está **ordenado por situaciones** (la tabla de PS2): el catálogo sale de
+   `tools/commentary/blocks_e_sound_palma.txt` (evento, rango de clips, expresión opcional) con
+   `tools/commentary/build_catalogue.py` → `commentary.txt` (2 536 entradas; 30 tipos). Las palabras
+   clave solas (`classify.py`) fallan con los giros chilenos («falta la chaucha»).
+4. **Marcador**: 3000–3060 y 3119–3160 son la tabla «1-1», «2-0 está ganando», «2-1», «2-2 el
+   partido», «lo empata»…; el director dice la que corresponde al marcador real tras cada gol.
+
+Eventos que detecta el director hoy: saque inicial, gol / gol en propia (`0x08A2F710`) / comentario
+tras el gol / marcador o empate, tiro, tiro desviado (balón fuera tras un tiro), al palo, parada
+(el portero se queda el balón: 0x83, 0x8C), centro (pase alto cerca del área), pase al hueco, pase,
+entrada, regate en carrera, falta, fuera de juego, saque de banda, preparación de un libre o córner,
+y frases de relleno tras 25 s sin hablar.
+
+Instalación en escritorio: `build/commentary/e_sound.afs` (o un enlace) y `build/commentary/
+commentary.txt`; el menú previo tiene **Commentary: On/Off**.
+
+## El banco original en español (iteración 41b)
+
+Transcrito entero (`make_parts.py` por lotes; los clips cortos, que whisper deja vacíos o funde
+con el vecino, y los nombres, uno a uno) y leído por bloques: `tools/commentary/
+blocks_s_sound_original.txt` → `build_catalogue.py` → `s_sound.txt` (~2 100 entradas, 35 tipos).
+El juego de PS2 **compone** frases con piezas; el port usa estas:
+
+| Pieza | Clips | Uso |
+|---|---|---|
+| bienvenida («Muy buenas tardes… les habla Juan Carlos Rivero») | 6319–6348 | antes del primer saque |
+| **equipos**: nombre, nombre, «contra X» | 5279+k, 5509+k, 5739+k (k = 0…229) | «Borgoña… contra Aquitania» tras la bienvenida |
+| saque inicial / segunda parte | 6660–6678 / 6679–6698 | |
+| gritos de gol | 1019–1057 (empate: 1013–1014) | luego el nombre del goleador |
+| **marcador con frase**: 5 por resultado, de 1-0 a 5-5 | 7108–7207 | 3 dichas del que gana («Van ganando por un gol, 1-0»), 2 del que pierde; empates, 5 |
+| marcador suelto «dos uno» (0-0 … 10-10) | 2997 y 3118 (entonación final) | orden 0-0, 1-0, 0-1, 1-1, 2-0…: `inicio + n² + 2k (+1 si gana el visitante)` |
+| saque de puerta / córner / banda | 5019–5029 / 5030–5097 / 3851–3901 | `0x08A2FEFF`: 2 saque de puerta (medido tras un tiro fuera), 3 córner (*inferido*) |
+
+**Equipos del partido:** `0x08A2F3C8` (u16[2], índices de la tabla de 296 de `docs/21` §2c; Auxerre
+84 contra Burdeos 85; en la Liga Master, MyTeam 294 contra el rival). El banco trae los nombres
+**sin licencia** de PS2 (Lyon = «Rhône», Bayern = «Recordmeister», Man. United = «Man Red»);
+`tools/commentary/teams_s_sound_original.txt` empareja 169 equipos por nombre (transcripción +
+lista de la comunidad). Sin clip: Angola, Ghana, Togo, Rangers, varios franceses y españoles.
+
+**Variantes de nombre:** 11 954+i «y X», 12 345+i «ahí está X», 12 736+i «¡X!» (i = 0…390) para
+parte de los jugadores, en el orden de los nombres pero con huecos (11 954 = Ono 8 163; 12 338
+no es 8 547 + 3 791). `tools/commentary/name_variants.py` las empareja por alineación monótona
+de las transcripciones → líneas `name_and|name_there|name_shout <nombre> <variante>`; el motor
+dice «¡X!» tras el grito de gol y «y X» / «ahí está X» en el relato.
+
+**Catálogo** (además de `evento clip…`): `team <índice> <nombre> <contra>`, `score_table
+<inicio>`, `score_lead_a_b` / `score_trail_a_b`, `name_*`. El motor busca junto al banco
+`<banco>.txt` (`s_sound.txt`) y si no `commentary.txt`; prefiere `s_sound.afs` a `e_sound.afs`.
+
+**Android:** `<files>/commentary/` o `<files>/mods/commentary/` (`s_sound.afs` + `s_sound.txt`);
+`tools/commentary/trim_bank.py` deja solo los clips del catálogo y los nombres (mismos números).
+
+## Pendiente
+
+1. Descanso y final del partido (señal por medir; el guion se bloqueaba en la pausa: con la pausa el
+   contador de frames de la escena se detiene) y llamadas de minuto.
+2. Confirmar el saque 3 = córner.
+3. Penales y tarjetas (hay frases en el catálogo; falta la señal).
+4. Probar en el teléfono con el banco recortado.
+
+## Disparo o despeje, y el catálogo de Palma revisado (2026-10-21, `docs/29` §5d)
+
+- **«¡Le pegó!» solo en tiros:** el código de toque 4 es el golpeo con □, también al despejar o
+  pegar un pelotazo. `kick_is_shot()` lo juzga 6 vblanks después del golpe, con la posición y el
+  último paso del balón (`pos - prev_pos`). Es tiro si:
+  - el balón se mueve hacia el extremo en que está;
+  - |x| > 6 000 (a menos de ~33 m de la portería);
+  - cruzaría la línea de gol (±16 500) a menos de 2 600 del centro.
+
+  Si no, no hay frase. El cabezazo lejano se juzga igual (si no es tiro, «header»).
+- **Catálogo** (`blocks_e_sound_palma.txt`, `build_catalogue.py`):
+  - los gritos «¡GOOOOOOL!» (1020–1057) entran con `max=13`; antes el límite de 8 s los dejaba
+    fuera y sonaban «golazo» y las horas del partido (1058–1079);
+  - «shot_miss» se queda en 4500–4514;
+  - «save» se filtra por portero, arquero, tapada o manotazo.
+- **Banco recortado:** catálogo y nombres, con `trim_bank.py … --keep 8000-11999` (los nombres de los
+  jugadores de PECH están entre 8000 y 11951): 188 MB.
+
+### Catálogo de Palma: bloques filtrados (2026-10-21)
+
+Tras una prueba del usuario en el teléfono («comentarios que no coinciden con lo que ocurre»),
+el registro mostró que los bloques sin filtro de `blocks_e_sound_palma.txt` mezclaban frases de
+otras situaciones. Ahora cada bloque filtra por su transcripción:
+- **cross:** 180 → 38 frases. 806–899 eran la tensión de una tanda de penaltis.
+- **pass:** 120 → 23. 7260–7342 era un mismo chiste repetido.
+- **dribble:** 180 → 84.
+- **through_pass:** 60 → 30.
+- **setpiece_wait:** 60 → 17, solo la tensión. Decía «será saque de arco» en un córner.
+- **corner:** +7.
+- **goal_kick:** nuevo, 5 «será saque de arco». Sin él, cada saque de puerta decía una frase de
+  tiro desviado.
+- **kickoff:** «está todo dado para que los jugadores brinden un gran espectáculo», en vez de
+  «dice la señora, la inquieta».
+- **chatter:** sin frases de goles, empates, córners, laterales ni del resultado (618 → 525).
+
+
+### Centro solo si es un centro (2026-10-22)
+
+El usuario oía «¡el centro!» y «balón al área» sin que pasara nada parecido. El código de toque 1
+es **todo pase alto**: despejes, pelotazos y cambios de frente. Antes bastaba con `|x| > 5500` para
+decir «centro»; en un partido en el teléfono salieron 24.
+
+Ahora `kick_is_cross` juzga el pase alto unos frames después, igual que el tiro, mirando el último
+paso del balón. Cuenta como centro solo si se cumplen tres cosas:
+- el balón está en los últimos ~25 m (`|x| > 7000`; la línea de fondo está en ~13 465);
+- sale por fuera del ancho del área (`|z| > 3500`; la banda está en ~7 200);
+- va hacia adentro y no vuelve hacia el medio.
+
+Comprobado en un partido jugado por el usuario en el Mac: de 16 pases altos, 3 fueron centros
+(los tres desde la banda hacia el área). El log muestra cada pase alto juzgado así:
+`[commentary] v… lofted a cross|not a shot: ball x,z step dx,dz`.
+
+**Atajada falsa tras un tiro desviado (2026-10-22).** Tras un tiro desviado y el silbato, el arquero
+recogía el balón para el saque de arco. Su estado de atrapar (0x83/0x8C) y el último tiro todavía
+marcado bastaban para «el arquero la agarra». Ahora solo cuenta como atajada con el balón en juego
+(`p1 == 1`), y el silbato olvida el último tiro. Visto en el log del partido del usuario en el Mac:
+v9559 tiro, silbato con saque de arco, v9629 «save».
+
+**Regate, pase e inicio (2026-10-22, prueba del usuario en el Mac).**
+- **Elogios sin motivo.** «Epa, la hizo bonita», «qué bonito pase» y «qué habilidad» sonaban con
+  cualquier conducción o pase raso. Los bloques de `dribble` y `pass` estaban filtrados con exclusiones
+  y dejaban pasar los elogios. Ahora usan listas de frases neutras (transcripciones de
+  `build/comm_pech`, no las de `build/comm`, que son de otro banco):
+  - dribble: 84 → 21 clips («se manda, se viene», «ojo que viene», «quién le marca, quién obtura»,
+    «casa de ratones»…);
+  - pass: 23 → 3 clips («se limpia el camino», «mira por los retrovisores»…).
+- **El saque inicial no es un pase.** Se esperan 90 frames desde que el balón está en juego: antes
+  sonaba «el pase filtrado» al sacar.
+- **La frase de inicio nunca sonaba.** Era «está todo dado para que los jugadores brinden un gran
+  espectáculo» (6003), que se añadió al catálogo después del recorte del banco: en el banco tenía
+  tamaño 0 y el log decía «(busy)» en todos los saques. Se volvió a recortar con
+  `trim_bank.py "<PECH>/dat/s_sound.afs" mods/pech2026/commentary/s_sound.txt
+  mods/pech2026/commentary/s_sound.afs --keep 8000-11999` (171 MB).
+- **Regla:** tras tocar el catálogo, recortar el banco de nuevo y comprobar que ningún clip del
+  catálogo tiene tamaño 0.
+
+**Segunda prueba del usuario en el Mac (2026-10-22).**
+- **La frase de inicio era un saludo personal.** Las transcripciones de `build/comm_pech/cat/phrases.tsv`
+  vienen de partes largas cortadas en clips, y en algunos tramos el texto quedó corrido: en 6000–6029,
+  «está todo dado para que…» aparecía en todos los clips. Retranscritos uno por uno
+  (`whisper-cli … -f build/comm_pech/wav/<clip>.wav`, 1 094 clips de los eventos que se disparan;
+  texto en `build/comm_pech/cat/phrases_clip.tsv`):
+  - la 6003 es «Saludos para un amigo Lorenzo Camos, nos ven en internet…»;
+  - el inicio pasa a ser 6001–6002 («saludos para los chilenos en el mundo… la cancha se ve en muy
+    buen estado», «…hasta sus hogares en alta definición»).
+- **Frases mal clasificadas.** La transcripción clip a clip escribe mal los gritos («Gooooor»,
+  «córrer»), así que no se reemplaza el catálogo: se usa para quitar, con la nueva línea
+  `drop <evento> <clips…>` de `build_catalogue.py`, lo que no corresponde. Por ejemplo:
+  - «espectacular el partido» como atajada;
+  - «pisa la pelota» como pase al hueco;
+  - «seis a cinco» como empate;
+  - «va una larga» como centro.
+- **Motor (`commentary.c`):**
+  - **frase de inicio:** solo en el primer saque del partido; no en el segundo tiempo (no hay frases
+    `second_half`) ni tras un gol (`after_goal`, antes se perdía al decir el marcador);
+  - **sin repeticiones:**
+    - no se repite ninguno de los últimos 24 clips;
+    - las frases menores (prioridad ≤ 3: regate, pase, centro…) no se repiten antes de 12 s
+      (`EVENT_GAP`);
+    - el nombre de un mismo jugador no se repite antes de 20 s (`NAME_GAP`);
+  - **fundido del grito de gol:** cuando el juego pasa a preparar el saque (fase 13/14), porque la
+    repetición terminó o se saltó, la voz se apaga en ~0,4 s (`g_fade` en el hilo de audio);
+  - **gol en jugada ya pitada:** `goal_check` pone la bandera de gol solo por la posición del balón,
+    también después de un silbato de fuera de juego. Tras un silbato que no es de gol (causa ≠ 0 y
+    ≠ 2), la bandera se ignora hasta que el balón vuelve a estar en juego (`dead`).
+
+**Centros por altura y pase hacia atrás (2026-10-22).**
+- **Centro.** El código de toque 1 incluye también los pases tensos a ras de suelo hacia el área. Por
+  eso `kick_is_cross` exige además que el balón vaya por el aire al juzgarlo, 6 frames después: más de
+  120 de altura (`-pos.y`) o todavía subiendo. El umbral es una estimación: el log da la altura de cada
+  pase alto (`lofted … height H`) para ajustarlo con un partido real.
+- **Pase hacia atrás.** «Mira por los retrovisores» (7367, 7410, 7438) sale de dribble y pass y pasa
+  al evento nuevo `back_pass`:
+  - se dispara con un pase raso (código 5) que va claramente hacia el arco propio, una de cada tres
+    veces;
+  - el sentido de ataque de cada equipo se deduce de dónde está su arquero (`attack_dir`, registros 1
+    y 12).
+  Los pases rasos se juzgan ahora 6 frames después del toque, como los tiros.

@@ -1,0 +1,60 @@
+# === Game data — never committed (bring your own dump) ===
+/data/
+*.iso
+*.cso
+*.chd
+*.dax
+*.pbp
+*.PBP
+*.elf
+*.prx
+*.PRX
+*.self
+*.SELF
+EBOOT.BIN
+BOOT.BIN
+DATA.PSP
+DATA.PSAR
+*.sym
+*.ppmap
+
+# === Mods: third-party assets (crests, kits...) for the user's own copy, never committed ===
+mods/
+
+# === Build artifacts ===
+build/
+out/
+*.o
+*.a
+*.obj
+*.lib
+*.log
+
+# === Vendored dependencies ===
+vendor/
+
+# === Decryption keys — never committed ===
+keys/
+*.keys
+
+# === RE tooling databases ===
+*.i64
+*.idb
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+ghidra_projects/
+
+# === Editor / OS ===
+.idea/
+.vscode/
+.opencode/
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+
+# === Per-variant build trees (e.g. runtime/desktop/build-trace) ===
+build-*/

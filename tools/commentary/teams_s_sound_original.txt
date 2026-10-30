@@ -1,0 +1,183 @@
+# Team callnames of the original Spanish s_sound.afs of PES6 PS2 (docs/24).
+#   <team index in the game's table 0x089AA89C (docs/21 §2c)> <k>
+# The bank has 230 team names in three sets: 5279+k the name, 5509+k the name again,
+# 5739+k "contra <name>" (checked: 5394 / 5624 / 5854 = Chile). Matched by name from the
+# whisper transcriptions of 5279..5508 and the community list; the PS2 bank keeps the
+# unlicensed names (Rhône for Lyon), as the PS2 commentary did. Teams without a line have no
+# clip in the bank (Angola, Ghana, Togo, the edit and ML teams...).
+# national teams
+0 92    # Austria
+1 80    # Belgium
+2 98    # Bulgaria
+3 95    # Croatia
+4 84    # Czech Republic
+5 86    # Denmark
+6 76    # England
+7 89    # Finland
+8 79    # France
+9 85    # Germany
+10 99   # Greece
+11 93   # Hungary
+12 72   # Ireland ("Eire")
+13 83   # Italy
+14 126  # Latvia
+15 81   # Netherlands
+16 73   # Northern Ireland
+17 87   # Norway
+18 90   # Poland
+19 77   # Portugal
+20 97   # Romania
+21 102  # Russia
+22 74   # Scotland
+23 96   # Serbia and Montenegro
+24 91   # Slovakia
+25 94   # Slovenia
+26 78   # Spain
+27 88   # Sweden
+28 82   # Switzerland
+29 100  # Turkey
+30 101  # Ukraine
+31 75   # Wales
+33 106  # Cameroon
+34 210  # Cote d'Ivoire
+36 105  # Nigeria
+37 107  # South Africa
+39 104  # Tunisia
+40 111  # Costa Rica
+41 110  # Mexico
+42 212  # Trinidad and Tobago
+43 109  # United States
+44 118  # Argentina
+45 113  # Brazil
+46 115  # Chile
+47 112  # Colombia
+48 119  # Ecuador
+49 116  # Paraguay
+50 114  # Peru
+51 117  # Uruguay
+52 123  # Iran
+53 120  # Japan
+54 124  # Saudi Arabia
+55 121  # South Korea
+56 125  # Australia
+57 199  # Classic England
+58 200  # Classic France
+59 201  # Classic Germany
+60 202  # Classic Italy
+61 203  # Classic Netherlands
+62 205  # Classic Argentina
+63 204  # Classic Brazil
+210 211 # Panama
+212 213 # Venezuela
+214 122 # China
+220 214 # Uzbekistan
+# England
+64 127  # Arsenal
+65 3    # West Midlands Village
+66 19   # Lancashire
+67 34   # Middlebrook
+68 35   # South East London Reds
+69 128  # London FC: the bank says "Chelsea"
+70 20   # Merseyside Blue
+71 21   # West London White
+72 1    # Merseyside Red
+73 16   # Man Blue
+74 0    # Manchester United: the bank says "Man Red"
+75 36   # Teesside
+76 2    # Tyneside
+77 37   # Pompy
+80 22   # North East London
+# France: the bank has the regions of the PS2 names
+84 23   # AJ Auxerre: Bourgogne
+85 7    # Bordeaux: Aquitaine
+86 70   # Le Mans: Sarthe
+87 41   # RC Lens: Pas de Calais
+88 25   # Lille: Nord
+90 24   # Lyon: Rhône
+91 5    # Marseille: Bouches du Rhône
+94 43   # Nantes: Loire Océan
+95 44   # Nice: Alpes Maritimes
+96 6    # Paris Saint-Germain: Île de France
+97 45   # Rennes: Bretagne
+100 46  # Sochaux: Franche-Comté
+101 48  # Toulouse: Garonne
+# Italy
+105 152 # Atalanta
+106 183 # Cagliari
+108 146 # Chievo Verona
+110 141 # Fiorentina
+111 136 # Inter
+112 139 # Lazio
+113 184 # Livorno
+114 185 # Messina
+115 138 # A.C. Milan
+116 154 # Palermo
+117 140 # Parma
+118 155 # Reggina
+119 142 # A.S. Roma
+120 156 # Sampdoria
+121 157 # Siena
+123 147 # Udinese
+169 137 # Juventus
+# Netherlands
+124 159 # ADO Den Haag
+125 133 # Ajax
+126 158 # AZ
+128 134 # Feyenoord
+129 160 # FC Groningen
+130 161 # SC Heerenveen
+131 188 # Heracles Almelo
+132 162 # NAC Breda
+133 163 # N.E.C.
+134 135 # PSV
+135 170 # RKC Waalwijk
+136 164 # Roda JC
+137 189 # Sparta Rotterdam
+138 166 # FC Twente
+139 167 # FC Utrecht
+140 168 # Vitesse
+141 171 # Willem II
+# Spain
+142 174 # Athletic Club
+143 129 # Barcelona
+144 148 # Betis
+146 132 # Deportivo de la Coruña
+147 175 # Espanyol
+148 192 # Getafe
+151 193 # Levante
+152 143 # Atlético de Madrid
+153 130 # Real Madrid
+154 177 # Mallorca
+155 178 # Osasuna
+156 179 # Racing de Santander
+157 149 # Real Sociedad
+158 180 # Sevilla
+159 131 # Valencia
+160 181 # Villarreal
+161 182 # Real Zaragoza
+# others
+162 17  # Bruxelles
+163 57  # FC Belgium
+164 18  # AC Czech
+166 9   # Bayern München: Recordmeister
+167 13  # Olympiacos: Peloponisos
+168 32  # Athenakos FC
+174 12  # Celtic: Old Firm Green
+177 59  # FC Bosphorus
+178 31  # Constanti
+181 15  # Patagonia
+182 14  # Pampas
+183 71  # Caopolo
+184 150 # PES United
+185 151 # WE United
+221 229 # ML United
+254 198 # World Selection
+255 197 # European Selection
+256 215 # North American Selection
+257 216 # South American Selection
+258 217 # Asia Oceanian Selection
+259 218 # African Selection
+260 219 # Master League Youth Squad
+261 222 # The Jaguars: Los felinos
+262 224 # The Goliaths: Los forzudos
+272 196 # Canuch

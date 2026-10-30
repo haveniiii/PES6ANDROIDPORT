@@ -1,0 +1,81 @@
+# Commentary events of the original Spanish s_sound.afs of PES6 PS2 (Juan Carlos Rivero and
+# Iñaki Cano, with the players' and teams' names), by blocks of the bank (docs/24). Found by
+# transcribing every clip (whisper.cpp; the short ones one by one) and reading the blocks.
+#   <event> <first clip>-<last clip> [<regex the transcription must match> | *]
+# "*" takes every clip of the block with sound (some short ones come back from whisper empty).
+# tools/commentary/build_catalogue.py turns this into s_sound.txt.
+
+# before the first kick-off: "Buenas tardes... les habla Juan Carlos Rivero" (then the teams)
+welcome       6319-6348 *
+kickoff       6660-6678 *
+second_half   6679-6698 *
+
+# goals: the shout (the name "¡X!" follows), a line on the goal, the score
+goal          1019-1057 *
+equalizer     1013-1014 *
+equalizer     149-154   *
+goal_after    1380-1433 *
+goal_after    155-179   *
+goal_after    300-347   *
+own_goal      1674-1691 propia|propia meta
+# whole lines: "Van ganando por un gol, 1-0", "Ahora pierden por un gol, 1-0", "empate a 2"
+score_lines   7108
+# the bare "dos uno" (sentence-final), for scores the lines do not reach
+score_table   3118
+
+# shots
+shot          4239-4259 *
+shot          4285-4332 *
+header        4260-4284 *
+header        4196-4201 *
+woodwork      4339-4353 *
+woodwork      963-970   *
+shot_miss     4354-4365 *
+shot_miss     4380-4514 *
+shot_miss     960-962   *
+shot_miss     987-990   *
+save          3368-3379 *
+save          3392-3393 *
+save          3415-3445 parad|detuv|atajad|reaccion|despej|portero
+save          3935-3950 *
+save          3995-4060 *
+
+# stoppages
+offside       4532-4570 *
+offside       3655-3675 fuera de juego|reglamentaria
+foul          4649-4694 *
+foul          4790-4860 falta|libre
+penalty       4695-4774 penalti
+red_card      4775-4784 roja|expuls
+red_card      4861-4866 roja|expuls
+yellow_card   4785-4789 amarilla
+yellow_card   4867-4878 amarilla
+throw_in      3851-3901 *
+goal_kick     5019-5029 *
+corner        5030-5097 c[oó]rner|esquina
+setpiece_wait 4907-4996 *
+setpiece_wait 5102-5124 *
+
+# open play
+cross         76-87     *
+cross         775-779   *
+cross         780-810   cruzad|centro|área
+cross         5125-5190 *
+through_pass  7364-7394 *
+through_pass  7649-7689 *
+through_pass  7569-7593 *
+pass          7209-7349 *
+pass          7611-7647 *
+tackle        7819-7909 *
+tackle        7529-7551 *
+dribble       7924-7969 *
+dribble       6316-6318 *
+chatter       6229-6314 *
+chatter       7714-7799 *
+chatter       3840-3850 *
+
+# time
+half_time     1920-1931 *
+full_time     2322-2328 *
+time_call     2810-2852 *
+substitution  1728-1760 *

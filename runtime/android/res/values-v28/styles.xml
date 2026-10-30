@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 9+: draw under the camera cutout on the short edges too, so the picture reaches the
+     side of the screen where the notch is instead of leaving a black bar there (docs/31). -->
+<resources>
+    <style name="PES6Theme" parent="@android:style/Theme.NoTitleBar.Fullscreen">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

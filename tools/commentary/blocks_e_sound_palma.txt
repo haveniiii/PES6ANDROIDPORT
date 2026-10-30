@@ -1,0 +1,68 @@
+# Commentary events of the e_sound.afs with Claudio Palma's voice (Chilean mod of PES6 PS2,
+# no player names), by blocks of the bank (docs/24). Found by transcribing every clip
+# (whisper.cpp, tools/commentary/split_parts.py) and reading the blocks.
+#   <event> <first clip>-<last clip> [<regex the transcription must match>]
+# tools/commentary/build_catalogue.py turns this into commentary.txt (clips <= 8 s, with speech).
+goal          1020-1057  max=13 go+l   # the shouts (1058-1079 are minute calls)
+goal          300-359    golazo
+goal          1380-1439  golazo|violento|increíble
+goal_after    180-299
+goal_after    1320-1379
+goal_after    1440-1499
+own_goal      1680-1739
+score         3000-3239
+shot          4200-4379  le peg|peg[oó]
+shot_miss     4500-4514                # 4515-4559: chatter, offside, fouls
+shot_miss     3540-3659  desperdici|cerca|peligros|disparo
+woodwork      4380-4439  palo|cerca
+save          3420-3479  portero|arquero|tapad|manotazo
+save          3960-4079  partero|portero|manotazo|puñetazo|portentoso|atento
+offside       3660-3719
+offside       4560-4619
+foul          4680-4739
+foul          4800-4859
+penalty       4740-4799
+red_card      4860-4919  roja|expuls
+throw_in      3900-3959  banda|lateral
+throw_in      4080-4139  banda|lateral
+corner        5040-5099  c[oó]rner
+setpiece_wait 4980-4996  ^(?!.*(?:cabina|loco))    # the tension; 4997-5018 free kicks and shots
+setpiece_wait 5037-5038
+corner        5030-5036  c[oó]rner
+corner        5039-5039  c[oó]rner
+goal_kick     5019-5029  saque de arco                # without these a goal kick said shot_miss
+cross         780-805    centro|larga|aire|ojo|cuidado   # 806-899: the penalty shoot-out's tension
+cross         5160-5219  ^¡(?:pelota|a la olla|el centro|centro|van a un al)(?!.*(?:cabina|aliento|público|nervio))
+through_pass  7679-7701  profundo
+through_pass  7369-7377  profund|filtrado|entre l
+counter       7800-7859
+tackle        7860-7919
+dribble       7380-7439  se manda|ojo que viene|velocidad|obtura|qui[eé]n le marca|maniobra|banderas|peligrosa esta carga   # any run with the ball: no praise ("la hizo bonita", "bonito pase")
+dribble       7560-7625  ratones|rapidito   # the rest: "la hizo bonita", "qué bonito pase"; 7626-7678: one phrase over and over
+dribble       7343-7363  ratones|rapidito
+pass          7343-7379  camino|otro lado   # any ground pass: no praise, no through ball; 7260-7342: one joke over and over
+substitution  1740-1919
+back_pass     7367-7367  .   # "mira por los retrovisores": only a pass played back (commentary.c)
+back_pass     7410-7410  .
+back_pass     7438-7438  .
+kickoff       6001-6002  max=11 .   # clip by clip: "saludos para los chilenos en el mundo... la cancha se ve en muy buen estado", "...hasta sus hogares en alta definición" (the tsv text of 6000-6029 is misaligned)
+chatter       6120-6299  ^(?!.*(?:gol|c[oó]rner|esquina|penal|lateral|banda|tiro|saque|habilitad|cuenta|marcador|empat|gana|pierde|minuto|roja|amarill|expuls|palo|peg[oó]|centro|arquero|portero|cambio|segundo tiempo|final|termin|resultado|desventaja|ventaja|clasifica|marc[oó])).
+chatter       6720-7019  ^(?!.*(?:gol|c[oó]rner|esquina|penal|lateral|banda|tiro|saque|habilitad|cuenta|marcador|empat|gana|pierde|minuto|roja|amarill|expuls|palo|peg[oó]|centro|arquero|portero|cambio|segundo tiempo|final|termin|resultado|desventaja|ventaja|clasifica|marc[oó])).
+chatter       7080-7259  ^(?!.*(?:gol|c[oó]rner|esquina|penal|lateral|banda|tiro|saque|habilitad|cuenta|marcador|empat|gana|pierde|minuto|roja|amarill|expuls|palo|peg[oó]|centro|arquero|portero|cambio|segundo tiempo|final|termin|resultado|desventaja|ventaja|clasifica|marc[oó])).
+goal_after    7080-7092  ^(?!.*honor).*\bgol\b
+goal_after    6888-6890  gol
+full_time     2280-2699
+time_call     2820-2879
+time_call     1080-1139
+
+# Clips that a block lets in by a misaligned transcription (build/comm_pech/cat/phrases.tsv splits
+# long parts badly). Each one was transcribed again on its own (2026-10-22, docs/24): what it says.
+drop save          3424 3427 3448 4007 4008 4022 4023   # "¡espectacular el partido!"
+drop save          3458 3462 4048 3992 3994 3996 3998   # "respiro profundo", "y despejar", "acá puede venir"...
+drop through_pass  7690 7691 7692 7693 7694 7695 7696 7697 7698 7699 7700 7701   # "pisa la pelota", "se nos va el partido"
+drop equalizer     3044                                  # "¡seis a cinco!"
+drop goal          327 339                               # "repetimos el gol" (the replay, not the shout)
+drop shot          4235 4305                             # "acá puede estar", "para eso bonita"
+drop woodwork      4384 4398 4399 4401 4403 4405 4406 4407   # "se fue por sobre el arquero", "algunos separaban..."
+drop cross         5181 5182 5184 5185                   # "va una larga": a long ball, not a cross
+drop goal_kick     5019                                  # something else

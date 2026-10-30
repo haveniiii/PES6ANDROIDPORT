@@ -1,0 +1,1043 @@
+# PES6PORT — names of the game's own functions, as far as they are understood
+# (EBOOT.elf, we10psp ULES00476). "<hex address> <name>  # where it was found".
+# Hand-kept: these win over Ghidra's and PPSSPP's names (tools/names/build_names.py).
+# Add a line whenever a function is understood; docs/20 explains the workflow.
+089943DC module_start                  # entry (docs/02)
+089944B0 user_main                     # the thread module_start starts (docs/02)
+08804000 game_main                     # init and the frame loop (docs/02)
+0880497C frame_callbacks_run           # walks the linked list of per-frame callbacks (docs/02)
+0880DED4 malloc                        # the game's allocator (docs/07)
+08813EFC dl_ring_free_finished         # frees display-list ring memory by the last FINISH id (ge.c §7)
+08814980 display_flip                  # holds a frame a second vblank when PES6_FLIP_HOLD is set (docs/18 §5)
+08814AE4 display_flip_request_hold     # sets PES6_FLIP_HOLD (docs/18 §5)
+08824FE8 input_update                  # the only caller of the pad reader (docs/03 §3)
+08825790 scene_dispatch                # runs the current scene's handler (docs/03 §2)
+08825AD8 scene_set                     # scene transition: (stack index, state) (docs/03 §2)
+08879E40 resource_load                 # loads a resource by id, e.g. 0x17 = game.ovl (docs/03, docs/05)
+088CA0CC sound_sas_thread              # sceSasCore mix -> audio channel 6 (docs/11 §1)
+088CADBC sound_at3_thread              # "At3 Sound Thread": ATRAC music -> channel 5 (docs/11 §1)
+089920D0 audio_set_channel_datalen     # wrapper of sceAudioSetChannelDataLen (docs/11 §1)
+08992210 audio_output_panned_blocking  # wrapper of sceAudioOutputPannedBlocking (docs/11 §1)
+08994E68 ctrl_read                     # wrapper of sceCtrlReadBufferPositive (docs/03 §3)
+0885060C task_create                   # (init, main, exit, work_size, arg, "name" in $t1): 0x28-byte task (docs/20 §5)
+088504C4 task_step                     # state 0: init(work, arg, task); 1: main(work); 2: exit(work); 1 = next state (docs/20 §5)
+088503B4 task_start                    # links a task_create result into the running list _DAT_089ffa8c (docs/20 §5)
+08849528 scene0_boot                   # scene handlers (docs/03 §2; the confirmed ones)
+089319E4 scene1_bootcheck
+08825E48 scene2_intro
+08825B4C scene3_title
+088AE00C scene4_menu
+08955DF0 scene5_loading
+089399D8 scene6_edit
+0888D298 scene7_masterleague
+08875C38 scene8_match
+0896F32C scene12_demo
+088CE004 scene14_training
+088CA3EC sas_init                      # "Error:sceSasInit():%d"; creates kon_sema/koff_sema, starts the sound threads
+08818950 tex_add                       # "TexAdd(%p): no=0" (GE texture cache)
+08818894 tex_del                       # "TexDel(%p): no=0"
+08818A48 tex_quit                      # "TexQuit: tex %d (%p) not deleted"
+# --- EBOOT functions game.ovl calls most (docs/20 §5; read from Ghidra's decompilation) ---
+08884CF8 motion_get                    # motion id -> its data in the motion table (*DAT_089c11ac)
+0888631C anim_set_motion               # (anim, motion id, start frame): +0x30 id, +0x38 frame, +0x28 rate; 257 calls from game.ovl
+088840A0 anim_blend_to                 # (anim, motion id, frame, blend frames): starts a transition (inferred)
+08883EB8 anim_blend_keep_frame         # like anim_blend_to, keeping the current frame (inferred)
+08884758 anim_is_done                  # 1 when the motion ran past its end (+0x38 >= length / rate)
+088847D4 anim_frame_near               # (anim, frame): current frame within half a step of it
+0888487C anim_at_motion_event          # current frame within half a step of the motion header's event frame (inferred)
+08916D3C frames_scaled                 # n / motion-table rate, rounded (inferred)
+088F261C pct_above                     # (v, t): v > t ? (v - t) * 100 / (100 - t) : 0; 446 calls from game.ovl
+08854214 sqrtf_thunk                   # thunk of sqrtf
+0895767C ptr_first_or0                 # p ? *p : 0
+08957638 table_entry                   # (t, i): t ? t[1 + i] : 0
+089579BC array_at                      # (a, i): i < a->count ? a->items[i] : 0
+08820788 screen_fade                   # (dir 0/1, ?): fade state machine, 1 when finished (inferred)
+# --- match characters (docs/21): 23 records of 0x240 at 0x08A2BDD0 (0 = ?, 1..22 = players) ---
+088E24E0 chara_table_init              # rec[i]+0 = i, rec[i]+4 = &entry[i] (0x08A2B250 + i*0x80), entry+0 = chara_obj(i)
+0883B69C chara_obj                     # index -> its 0x380-byte object in the heap (position at +0x1E0)
+088D9810 players_bind_team_data        # per player: obj+0x14 = 0x08A2B0BC + obj[+0xC]*100 + team(rec+0x12)*200 (inferred)
+# --- the ball (docs/21 §2): object at *0x089C43F4 (0x08A3E360 in a match) ---
+game.ovl:08DDA5B8 ball_take_possession      # owner -> 0x08A2F618/F64C, defending flags 0x08A2F667[team], ball at a trajectory point (inferred)
+game.ovl:08DDA320 ball_control_trap         # ball pos averaged towards 0x08A2FA9C, ball+0x62 = 4 (inferred)
+game.ovl:08F84560 setpiece_place_ball       # early in motions 0x5A1/0x5A2 the ball is put at 0x08A2F66C (inferred)
+game.ovl:08F42920 ball_place_on_ground      # pos = prev = spot, y = -28 (inferred)
+game.ovl:08DCFA90 entity_dist2_xz           # (obj, x, z): squared ground distance to obj+0x10/+0x18
+game.ovl:08DCFB68 entity_angle_from         # (x, z, obj): 16-bit angle from (x, z) to obj (via 0x08853EF4)
+08853EF4 atan2_u16                     # (dy, dx) -> 16-bit angle (inferred from entity_angle_from)
+088F0AC0 ball_update                   # per frame: prev pos/angle/state, counters, then integrate + predict (PES6_WATCH_WRITE on ball+0x20, docs/21 §2)
+088EF1E4 ball_integrate                # one physics step on pointers (state, speed, +0x30, x/y/z, angle): writes the ball pos (PES6_WATCH_WRITE ball+0x10)
+088EEF54 ball_predict_trajectory       # (frames_scaled(224)): runs ball_integrate ahead into the +0x47C/+0x7FC/+0xB7C arrays (watch ball+0x480; its only callee)
+088DAF40 chara_get_pos                 # (rec, out vec4): out = rec+0xE0; in replay (0x08A2B24C set) asks game.ovl 0x08DD06B8; fills obj+0x1E0 (watch, docs/21 §1)
+088DC2E4 match_phase0_setup            # phase level 0 == 0: resets the 23 animations, owner = 2 (watch: owner write at 8@422 has $ra here)
+game.ovl:08EEB258 charas_update_frame       # per frame: team step, 2 steps per player, motion for flagged records, a step for all 23, then charas_move (docs/21 §1b)
+game.ovl:08F16528 charas_move               # writes every record's position +0xE0/+0xE8 (PES6_WATCH_WRITE + $ra on player 22, 8@900)
+0898D4F0 sinf                          # radians from a 16-bit angle (*pi/32768) -> vx in chara_integrate_polar (inferred)
+0898D6A8 cosf                          # same, -> vz (negated) (inferred)
+game.ovl:08FCE358 polar_dx                  # (angle, speed): speed*sin(angle), fixed point; called by ~200 functions (inferred)
+game.ovl:08FCE390 polar_dz                  # (angle, speed): -speed*cos(angle) (inferred)
+game.ovl:08DCFF10 chara_integrate_polar     # when entry+0x2C: vel (+0xF0/+0xF8) = polar(heading +0x28, speed +0x1C) / *0x08A2F3F8; pos += vel
+game.ovl:08D922B8 chara_target_metrics      # writes +0x10C..+0x124 (angle, dist2, dist to targets) and the +0x15C dist2 table (watch + $ra, 8@900)
+# --- action state machine (docs/21 §1c): chara_act_dispatch switches on rec+0x16; handler per state ---
+game.ovl:08EEA348 chara_act_dispatch        # situation = 0x08EEAF80(rec) (15 for record 0; mode 5 may ask the hook *0x08A81128); then per-state handler on rec+0x16
+game.ovl:08EEAF80 chara_situation         # 0 keepers (records 1, 12); 1..8 = role+1 from the set-piece slots 0x08A2FFE4 (8 x 0x28: +0 role, +1 team, +0x10 player); 9/10 controlled players; 11 the rest -> per-state handler
+game.ovl:08D9BE70 chara_act_07_ai_offball       # rec+0x16 == 0x07
+game.ovl:08E021D0 chara_act_36       # rec+0x16 == 0x36; sets touch code 9
+game.ovl:08E03F40 chara_act_30_setpiece_kick       # rec+0x16 == 0x30
+game.ovl:08E0A1A0 chara_act_2F       # rec+0x16 == 0x2F
+game.ovl:08E0B880 chara_act_2D_goal_kick_setup       # rec+0x16 == 0x2D
+game.ovl:08E0CB68 chara_act_2B_restart_wait       # rec+0x16 == 0x2B
+game.ovl:08E0DF10 chara_act_2C_throw_in       # rec+0x16 == 0x2C
+game.ovl:08E44418 chara_act_1A       # rec+0x16 == 0x1A
+game.ovl:08E45D00 chara_act_17_ai_run       # rec+0x16 == 0x17
+game.ovl:08E49E50 chara_act_16       # rec+0x16 == 0x16
+game.ovl:08E511A8 chara_act_0F_43_go_to_ball # rec+0x16 == 0x0F, 0x43
+game.ovl:08E53618 chara_act_2A_aerial_kick       # rec+0x16 == 0x2A
+game.ovl:08E54858 chara_act_1E       # rec+0x16 == 0x1E
+game.ovl:08E56030 chara_act_21       # rec+0x16 == 0x21
+game.ovl:08E57CB0 chara_act_42       # rec+0x16 == 0x42
+game.ovl:08E59280 chara_act_1F       # rec+0x16 == 0x1F
+game.ovl:08E5A190 chara_act_20       # rec+0x16 == 0x20
+game.ovl:08E5EFA0 chara_act_40_user_knock_on       # rec+0x16 == 0x40
+game.ovl:08E62040 chara_act_1B_chase_aerial_ball       # rec+0x16 == 0x1B
+game.ovl:08E6DE38 chara_act_1D       # rec+0x16 == 0x1D
+game.ovl:08E6F4E0 chara_act_26_27_28 # rec+0x16 == 0x26, 0x27, 0x28
+game.ovl:08E71E48 chara_act_22_header_high       # rec+0x16 == 0x22
+game.ovl:08E81360 chara_act_24_25_header    # rec+0x16 == 0x24, 0x25
+game.ovl:08E879D8 chara_act_0A_41_defensive_header    # rec+0x16 == 0x0A, 0x41
+game.ovl:08E8C060 chara_act_08       # rec+0x16 == 0x08
+game.ovl:08E973C0 chara_act_05_06_lofted_pass    # rec+0x16 == 0x05, 0x06
+game.ovl:08E9C770 chara_act_0B_receive_high_ball       # rec+0x16 == 0x0B
+game.ovl:08EAAD08 chara_act_15_restart_position       # rec+0x16 == 0x15
+game.ovl:08EB0A58 chara_act_09_through_pass       # rec+0x16 == 0x09
+game.ovl:08ED0A98 chara_act_19_dash_dribble       # rec+0x16 == 0x19
+game.ovl:08ED2188 chara_act_03_user_run_offball       # rec+0x16 == 0x03
+game.ovl:08ED4990 chara_act_02_dribble       # rec+0x16 == 0x02
+game.ovl:08EDFB70 chara_act_13_ball_control       # rec+0x16 == 0x13
+game.ovl:08EE3868 chara_act_01_user_move       # rec+0x16 == 0x01
+game.ovl:08EE5028 chara_act_00_idle       # rec+0x16 == 0x00
+game.ovl:08EE6AC0 chara_act_45_aerial_duel       # rec+0x16 == 0x45
+game.ovl:08EE78E8 chara_act_18_stoppage_react       # rec+0x16 == 0x18
+game.ovl:08EE9A80 chara_act_12       # rec+0x16 == 0x12
+game.ovl:08EF1850 chara_act_04_FB_shoot # rec+0x16 == 0x04, 0xFB
+game.ovl:08F01618 chara_act_0D_44_tackle # rec+0x16 == 0x0D, 0x44
+game.ovl:08F0D9A8 chara_act_0C_prepare_receive       # rec+0x16 == 0x0C
+game.ovl:08F33280 chara_act_0E_pass       # rec+0x16 == 0x0E
+game.ovl:08F3DCA8 chara_act_10       # rec+0x16 == 0x10
+game.ovl:08F41E70 chara_act_FF       # rec+0x16 == 0xFF
+game.ovl:08F94B10 chara_act_11_keeper_get_up       # rec+0x16 == 0x11
+game.ovl:08FAAB68 chara_act_31       # rec+0x16 == 0x31
+game.ovl:08FB5C88 chara_act_FD_return_to_position       # rec+0x16 == 0xFD
+game.ovl:08FBA450 chara_act_E0       # rec+0x16 == 0xE0
+game.ovl:08FBCF10 chara_act_35_wall       # rec+0x16 == 0x35
+game.ovl:0900BFF8 chara_act_14       # rec+0x16 == 0x14
+# --- human control (docs/21 §1d) ---
+game.ovl:08E1D918 chara_user_control        # 20 KB; sets rec+0x16 = 0x01 while the stick moves the controlled player (watch on p2 +0x16 with frames)
+game.ovl:08DA5DB8 cursor_auto_switch        # moves the controlled player of a side (0x08A2F64F + side*2) when defending (watch: 2->6->4)
+game.ovl:08DFC480 keeper_frame             # situation 0 = the two goalkeepers (records 1 and 12): their own state machine (states 0x8x); also moves the controlled player to the keeper (8@1009)
+# --- ball touch codes, ball+0x84 (docs/21 §2) ---
+088EEB58 ball_touch                    # every touch: sets ball+0x84 = 0, then the kicker writes its own code (watch on ball+0x84)
+game.ovl:08F32810 ball_kick_pass            # writes ball+0x84 = 5 as a pass leaves (8@723, 8@842) (inferred)
+game.ovl:08EF7F38 kick_shot                 # the shot: power/accuracy from the player sheet (99 - stat), touch code 4, sets the opposing keeper reacting (was ball_out_check)
+game.ovl:08F0A7D8 ball_kick_0F              # writes ball+0x84 = 0x0F (8@803); kind of touch not identified
+# --- match phases (docs/21 §0): 10 bytes at 0x090B9C18, one per level ---
+088DC484 match_frame                   # dispatches on phase level 0: 0 setup, 1 init, 2, 3, 4 = match running
+088DC03C match_phase1_init             # level 0 == 1 (8@422): teams, characters, fade
+088DBDD0 match_phase2                  # level 0 == 2 (8@423)
+088DBC14 match_phase3                  # level 0 == 3 (8@424); sets level 1 to 1, 2
+088DB9F4 match_phase4_running          # level 0 == 4 from 8@432; calls game.ovl match_play_frame
+0893E9B0 is_net_match                  # non-zero in a WIRELESS match: phases are sent through netlib 0x08C46DA0 (inferred)
+game.ovl:08DFDE20 phase_get                 # (level) -> byte at 0x090B9C18 + level
+game.ovl:08DFDE38 phase_next                # (level): +1, clears the deeper levels, syncs over the network
+game.ovl:08DFDEA0 phase_set                 # (level, value): same, with a value
+game.ovl:08DFDF18 match_play_frame          # under match_phase4_running; calls charas_update_frame
+# --- zlib 1.1.4, statically linked (version string, error strings and call structure match the 1.1.4 sources) ---
+08804B88 zlib_inflate_codes_free
+08804BA0 zlib_inflate_codes
+08805504 zlib_inflate_codes_new
+08805578 zlib_deflate_slow             # reached only through the configuration table
+08805CC0 zlib_deflate_fast
+0880625C zlib_deflate_stored
+088065FC zlib_fill_window
+08806854 zlib_longest_match
+08806A54 zlib_deflateEnd               # status 0x2A/0x71/0x29A = INIT/BUSY/FINISH
+08806B54 zlib_deflate
+08807170 zlib_deflateReset
+08807304 zlib_deflateInit2_
+08807610 zlib_inflate_blocks_free
+088076E8 zlib_inflate_blocks
+08808500 zlib_inflate_blocks_new
+0880866C zlib_inflate_blocks_reset
+08808720 zlib_adler32
+08808878 zlib_inflate_fast
+08808D40 zlib_inflate
+088092DC zlib_inflateInit_
+08809520 zlib_inflateEnd
+08809594 zlib_inflate_trees_fixed
+088095CC zlib_inflate_trees_dynamic
+088097E8 zlib_inflate_trees_bits
+088098F0 zlib_huft_build
+08809E24 zlib_inflate_flush
+08809FC4 zlib_compress_block
+0880A510 zlib_tr_flush_block
+0880A94C zlib_tr_align
+0880AD54 zlib_tr_stored_block
+0880AF30 zlib_build_tree
+0880C110 zlib_init_block
+0880C1F0 zlib_tr_init
+08819898 zlib_uncompress_mem           # the game's one-shot inflate: inflateInit_ + inflate(Z_FINISH) + inflateEnd
+# --- ball touch history (docs/21 §2) ---
+088E74D8 ball_set_touch_code           # (code): ball+0x84 = code, keeps the last 10 codes (+0x8C) with their team (+0x96) and times (+0xA4/+0xB8)
+08917000 ball_touch_observer           # per frame: who is near the ball and in which action state; sets touch codes for headers (inferred)
+# --- stoppages and goals (docs/21 §0b) ---
+game.ovl:08DCDCB8 goal_check               # ball |x| >= 13465 past the line, |z| <= 939 (posts), |y| < 625 (bar) -> goal flag 0x08A2FB72 = 1
+game.ovl:090091B8 stoppage_start           # the whistle: (cause, ...) -> restart type 0x08A2FEFF, stoppage type 0x08A2F724; phase_set(1, 10)
+game.ovl:09008C68 stoppage_type_for        # table lookup for 0x08A2F724
+game.ovl:09008DF0 restart_type_for         # table lookup for 0x08A2FEFF
+game.ovl:08F91148 restart_type_set         # (type): 0x08A2FEFF = type, 0x08A2F724 = {7,2,6,3,1,4}[type]
+game.ovl:08FF4630 restart_prepare          # clears the goal flag, swaps the defending flags 0x08A2F667, sets the set-piece mode by 0x08A2F724
+game.ovl:08FFFB60 match_ends_on_goal       # stoppage type 5 with the goal flag after half the match length (0x08A2F3F0): golden/silver goal (inferred)
+game.ovl:08DCE618 goal_scored              # scoring team 0x08A2FCB0, own goal 0x08A2F710, scorer 0x08A2FCB8/0x08A2FF01; stoppage_start(2, ...)
+game.ovl:08DCDEC8 ball_out_touchline       # throw-in: stoppage_start(3, ...)
+game.ovl:08DCE0B8 ball_out_goal_line       # goal kick or corner by which side last touched: stoppage_start(3, ...)
+game.ovl:08DC3AA8 goal_net_update          # ball inside the net box (|x| < 14578, |z| < 976, |y| < 1511) (inferred)
+08962380 crowd_chant_pick                  # picks the side whose fans sing (goal side, random by 0x08A2F3DA/0x08A2F72C) (inferred)
+# --- shared EBOOT API, most-called first (docs/20 §6; read in build/decomp/eboot) ---
+088D9028 sd_call                       # request a sound by id ("SD_call" debug string); 2000+ call sites
+0897D878 sprintf                       # newlib: string FILE + _vfprintf_r
+0880ED44 free                          # pairs with malloc 0x0880DED4 (heap semaphore 0x089AFD70)
+088245C4 calloc                        # (n, size) over the heap arenas; thunk of 0x0880EE3C
+0880EE3C calloc_impl
+08824584 free_if_set                   # free(p) when p != 0
+08820554 rand_below                    # (n) -> 0..n-1, xorshift state 0x089B00F4
+0888A720 ui_palette_color              # (i < 12, out[4]) RGBA from 0x089A149C
+088CF920 history10_push                # 10-byte ring with its index at +0x14
+0886EAD4 res_find_bank                 # loaded-resource banks list 0x08A00040: bank whose id == id >> 16 (inferred)
+0886EA3C res_find_entry                # entry (id & 0xFFFF) in a bank (inferred)
+0886F140 res_get_data                  # (resource id) -> data pointer (+8 of the entry) (inferred)
+# layout objects ("lyt", 0xB0 bytes, created from a layout resource; animated 2D panels of the menus)
+08858ED8 lyt_create                    # calloc(1, 0xB0); +0x2C layout resource
+08858E6C lyt_destroy
+08859D9C lyt_update                    # advances the animation while +0xA4 is set, redraws when +0xA6 is dirty, runs the drawers
+08858CE4 lyt_set_playing               # +0xA4
+08858898 lyt_is_playing
+08858CF8 lyt_set_anim                  # (obj, anim index): +0x4E, frame +0x4C = 0
+08858914 lyt_get_pane_rect             # (obj, out x,y,w,h, pane id) in screen units (/16 fixed point)
+088588AC lyt_get_pane_x                # (obj, pane id)
+08858780 lyt_set_z                     # (float, obj): +0x78 of the position x,y,z,w at +0x70, marks dirty
+08858C50 lyt_set_pos                   # (obj, float[4]) -> +0x70..+0x7C, marks dirty (+0xA6 bit 0)
+08858B90 lyt_set_play_mode             # (obj, mode) -> +0xA8; 2 restarts the current animation
+08856924 lyt_res_find                  # (id) in the list of loaded layout resources 0x089FFB18 (inferred)
+088CF85C history10_current
+0886C694 grp_new_sprite                # (group) -> new sprite appended to the group (count at +0x34)
+0886C624 grp_sprite_nth                # (group, n)
+# 2D sprites (0x130 bytes) and their groups/layers (0x40 bytes), the menus' quads and text
+0886E338 spr_create                    # calloc(1, 0x130): clip +0x10, rect +0x20.., colour +0xA0, scale +0x100, visible +0x11C, dirty +0x11E
+0886E2F0 spr_set_visible               # +0x11C
+0886D7B8 spr_set_color                 # (spr, rgba[4]) -> +0xA0
+0886DC94 spr_set_rect                  # (spr, float x,y,w,h) -> quad corners from +0x20
+0886CA4C grp_create                    # calloc(1, 0x40): rect +0x20, visible +0x38, registered as a drawer (0x0886E5A4)
+0886C498 grp_set_visible               # +0x38
+08890990 text_get                      # (message id < 0x16F) -> localized string by the language (sys_param_get(1)); 0x39F8 when out of range
+08854224 sys_param_get                 # (i) -> 0x089FFAD0[i]; 1 = language (used by text_get)
+08854254 sys_param_2                   # 0x089FFAD8
+088CFA6C history10_back                # +0x14 index - 1
+088CFA7C history10_forward             # +0x14 index + 1
+08858B3C lyt_get_pos                   # (obj, out float[4]) <- +0x70..+0x7C
+08858DA4 lyt_set_anim_set              # (obj, set) -> +0x44, animation table +0x48
+08858ED0 lyt_create_2                  # second entry of lyt_create
+0885FBEC txt_create                    # (font/resource id, pos, ?, flag, colour) -> 0x7C-byte text object (inferred)
+0885F964 txt_set_string                # (txt, char *) re-lays out when the string changes (strcmp with +0x18)
+0880F008 mem_alloc                     # (size): tries every heap arena (count 0x089D692C) under the heap semaphore; malloc 0x0880DED4 is the per-arena allocator
+game.ovl:0906B7F8 ball_collide_frame       # posts and bar (x = +-13440, z = +-951) and corner flags (13465, 8729): bounces, touch code 0xD, event via match_event
+game.ovl:0906D0C8 ball_hit_woodwork        # last toucher = 0, new spin, touch code 0xD, match_event(kind)
+game.ovl:0906B630 ball_bounce_angle        # reflects the ball's heading against a surface angle, damps speed over 0x3000 by 7/10
+game.ovl:08DC3620 match_event              # (kind) -> 0x090B8748; kinds 1-4 also notify 0x08DB1828 (inferred: commentary/crowd)
+game.ovl:08FCE288 match_rand               # (n) -> 0..n-1 from its own random stream (state 0x090BAE60 saved and restored around the shared generator; inferred: keeps replays and network play in step)
+game.ovl:08DCFBE8 angle_to_point           # (x0, z0, x1, z1) -> u16 heading via atan2_u16
+game.ovl:08DCF7C8 angle_diff_u16           # |b - a| folded to 0..0x8000
+game.ovl:08DCFA10 angle_turn_towards       # (from, to, max step) u16 angles
+game.ovl:08D89C30 chara_timers_tick        # per frame: +0x1DA counts up to 0xFF, +0x1DB and +0x203 count down to 0 (Ghidra truncates the rest: bad data)
+# --- game.ovl helpers, most-called first ---
+game.ovl:08DCF800 angle_diff8              # |b - a| of u16 headings in 1/256 turns (0..128); 3700 call sites
+game.ovl:08DCFBA8 chara_angle_to           # (x, z, rec) heading from the player's position (+0xE0/+0xE8) to the point
+game.ovl:08DCFAD8 chara_dist2_to           # (rec, x, z) squared ground distance (int)
+game.ovl:08F443E8 chara_slot               # (i) -> &0x090BA830[(i % 23) * 8]; slot[0] = the player's record
+game.ovl:08FCE140 match_chance             # (pct) -> match_rand(100) < pct
+game.ovl:09009DD0 match_flag               # (bit < 46) -> bit of 0x090BB0E0/0x090BB0E4
+game.ovl:08E2F678 min_i
+game.ovl:08E3B6A0 max_i
+game.ovl:08F15FF8 own_keeper_of            # (player index) -> 1 for team 0 (players 1-11), 12 for team 1
+game.ovl:08F15FB8 rival_keeper_of          # (player index) -> 12 for team 0, 1 for team 1
+game.ovl:08DCF960 angle_turn_towards_fps   # angle_turn_towards with the step scaled by the frame rate (0x08A2F5FC)
+game.ovl:08E1C030 chara_turn_towards       # (rec, max step): heading +0x26 turns towards the wanted heading +0x2C
+game.ovl:08DAE5C8 chara_rival_within       # (rec, d2): one of the two nearest rivals (+0x1B4 list, distances +0x158) is closer than d2
+game.ovl:08DCFB20 chara_angle_between      # (a, b) heading from record a to record b
+game.ovl:08FDE608 bits_set                 # (obj, bit, on) on the word at *obj[1]
+game.ovl:08D71380 heading_octant           # u16 heading -> 0x090B3104[octant]
+game.ovl:08DA1868 lerp10                   # (a, b, t) a..b for t in 0..10
+game.ovl:08D4EA40 chara_motion_frame       # 26 KB: per-frame effects of the current motion (+0x30 of the anim struct), big switch for motions >= 0x59A (inferred)
+game.ovl:08D559E8 chara_motion_frame_lo    # 21 KB: the same for motions < 0x59A, falls back to chara_motion_frame (inferred)
+game.ovl:08ECE570 chara_on_anim_end        # when anim_is_done: picks the next action state by the motion that ended (e.g. 0x2C5 -> state 0x18)
+game.ovl:08E102E8 anim_ticks_for           # (rate, frames) -> whole steps at that rate
+game.ovl:08F1AE70 chara_slow_down          # (rec, dv): speed +0x1C -= dv, floor 0
+game.ovl:08F15D48 chara_speed_up           # (rec, target, rate): speed +0x1C towards target, rate scaled by fps; slower when tired or by the player's sheet byte +0x70 (inferred)
+# --- pads (struct of 0x58 per pad at 0x089EC278, PS2 DualShock layout): +0x14 pressed, +0x18 released, +0x1C held, +0x20 repeat (pressed + auto-repeat after 0x089EC53C frames, every 0x089EC540), +0x24 previous; +0x28..+0x34 the same for the 24-button analog set ---
+088249A0 pads_update                   # input_update + pad_update_edges for each pad
+08824A88 pad_update_edges              # dead zone 0x26 on the sticks, pressed/released/held/repeat masks
+08824908 pad_pressed                   # (pad, mask): all of mask newly pressed this frame (+0x14)
+088248A0 pad_repeat                    # (pad, mask): +0x20 (menu navigation)
+08824878 pad_pressed_mask              # (pad) -> +0x14
+08824850 pad_released_mask             # (pad) -> +0x18
+08824828 pad_held_mask                 # (pad) -> +0x1C
+08824800 pad_repeat_mask               # (pad) -> +0x20
+088247C8 pad_pressed_ext               # (pad, bit) in +0x28
+08824758 pad_held_ext                  # (pad, bit) in +0x30
+08824720 pad_repeat_ext                # (pad, bit) in +0x34
+08825A58 scene_get                     # (level) -> state at 0x089ECF88 + level * 8
+08825A70 scene_next                    # (level): state + 1, frame 0, clears the deeper levels
+# --- overlay entry points called by the EBOOT's scene handlers (docs/03 §2) ---
+edit.ovl:08F5C750 edit_main                # called every frame by scene6_edit
+league_common.ovl:08D54AB8 league_modes_frame  # scene7 state 5: every frame until the exit choice 0x08A0C998 is set; masterleague.ovl and leaguecup.ovl both hang from it
+league_common.ovl:08D549C0 ml_close_a      # scene7 state 7, before freeing resources 4, 5, 6 and 8
+league_common.ovl:08D65928 ml_close_b      # scene7 state 7
+league_common.ovl:08D89308 ml_leave        # scene7 state 8, then to scene 13/14/5/4 by 0x08A0C998 (4 match? 3 training, 2 loading, else menu)
+title.ovl:08D18858 title_frame             # called by scene3_title
+bootset.ovl:08D18E68 bootcheck_frame       # called by scene1_bootcheck
+training_common.ovl:090D3068 training_kind2_frame   # scene14_training, sub-mode 2
+training_common.ovl:090D0F50 training_kind3_frame   # sub-mode 3
+training_common.ovl:090CFB78 training_kind4_frame   # sub-mode 4
+training_common.ovl:090D45C0 training_kind5_frame   # sub-mode 5
+training_common.ovl:090CC530 training_kind6_frame   # sub-mode 6, argument from 0x090D9598
+result.ovl:08D20600 result_step3            # Resultsetup_main state 3
+result.ovl:08D20E30 result_step4            # Resultsetup_main state 4 (then 0x08D2AB90)
+result.ovl:08D2ABA8 result_step6            # Resultsetup_main state 6
+game.ovl:08DD34B0 referee_frame            # per frame, first that fires: 0x08FD7B60 (cause 1), foul_check, offside_check, ball_out_or_goal
+game.ovl:08DCF038 ball_out_or_goal         # classifies with 0x08DCF318, then ball_out_touchline / ball_out_goal_line / goal_scored
+game.ovl:08FD4E08 offside_check            # cause 5 -> restart 4 (indirect free kick); compares against the line of 0x08FE6168 (inferred)
+game.ovl:08FAEC18 foul_check               # ends in 0x08FACF88 = stoppage_start(4, ...) (inferred)
+game.ovl:08FD7B60 referee_check_cause1     # stoppage_start(1, ...): cause not identified yet
+088DE3EC players_frame_end                 # 0x088DE140 for each of the 22 players (records from 0x08A2C010)
+089258FC team_score                    # (team, with_extra): goals = *(s16 *)(*0x090B1110 + team * 0x2F4 + 8), plus 0x088FBCEC when with_extra == 1 (inferred: penalty shoot-out)
+game.ovl:09077810 hud_score_tens           # scoreboard: tens digit of a team's goals (capped at 99), hidden when 0
+# --- named by their debug/resource strings (build/names/cg_eboot.tsv strings column) ---
+08804534 utility_load_av_modules       # SCE_UTILITY_AV_MODULE_SASCORE / AVCODEC
+08804624 utility_load_usb_net_modules  # SCE_UTILITY_USB_MODULE_PSPCM / NET_MODULE_COMMON
+0880CE68 kt_thread_create              # "kt thread"
+0880F22C umd_callback_install          # "KT_UMD_CALLBACK"
+088212FC psmf_display_thread_start     # movie player: "psmf display sema/thread"
+08821EF4 psmf_sound_thread_start
+08822594 psmf_control_flags_create
+088295C4 path_build_dat                # "%s/%s", "dat%s/%s/%s"
+0882D0F8 path_build_dat_2
+0882B724 path_build_lbn                # "%s/sce_lbn0x%x_size0x%x": a file opened by its disc sector
+0882C0C0 path_build_lbn_2
+0882D4E8 disc_files_init               # 0_sound.afs, over.afs under /PSP_GAME/USRDIR/
+0884AD84 mnEasyHelpInit_create         # task_create sites of the menu tasks (names of the tasks)
+0884DA58 mnHeaderSetBasis_create
+0884E6F4 mnScrollHelpSetSub_create
+08850B44 mnPadEvInit_create
+08851990 mnNowLoadingIconStart_create
+088527B4 mnNowloadingMainInit_create
+08890630 mnSubMenuSetWork_create
+0893E258 mnScrollSetSub_create
+0893F750 mnCmncsrSetSub_create
+0893F9A4 mnCmncsrSetSub_create_2
+08970410 Mn_MeterInit_create
+0893D330 init_obj_create
+0893D3E4 init_obj_create_2
+088D6220 PauseEvSet_create
+088D6BD8 Pausesetup_create
+088D77C4 Resultsetup_create
+0899853C enter_set_create
+088B6B58 Plsl_PadIn_create
+08890818 memstick_check                # "memory stick", "fatms0:"
+08895DE0 str_unregistered              # returns "MI TOU ROKU" (Japanese for "unregistered")
+088B2DF0 options_keyconfig_release     # "opt_keyconfig_release"
+088C9DD4 sound_threads_start           # "thread 1/2" with sceKernelCreateThread/StartThread reports
+088C9F24 sound_threads_stop
+088CB8F8 at3_thread_create             # "At3 Sound Thread"
+088CBAF4 at3_sema_create               # "At3_sema"
+088D34A0 pad_button_names              # "L3 button", "left analog stick", ...
+088D8E28 sd_stop                       # "SD_stop": stops a sound started with sd_call
+08938028 crowd_cheer_start             # "TRAINING mode, skip cheer[%d]"
+0893817C crowd_cheer_start_2
+089382EC commentary_goal_voice_load    # "SOUND GAOL VOICE SET (WELANGUAGE_...)" per language
+0894855C memcard_ctrl                  # "MC_Ctrl_MemoryCard"
+08958A04 usb_start                     # USBBusDriver, USBPSPCommunicationDriver, usbpspcm:
+08958AB4 usb_stop
+0895973C usb_open
+08983D6C sceGuInit                     # creates the "SceGuSignal" event flag, as the SDK's sceGuInit does
+08992594 wave_init                     # "SceWaveMain" thread
+08995D0C net_set_game_id               # "ULES00476" (ad hoc matching)
+0899691C net_game_name                 # "GAME%03x"
+08996C94 net_matching_sema_create      # "Matching_Sema"
+# newlib / libm (strings and structure match newlib's sources)
+089767A8 _dtoa_r                       # "Infinity"
+0897AD00 _getreent                     # "libc:%s: no reent structure found", "_getmodreent"
+0897E4E4 _vfprintf_r                   # "bug in vfprintf: bad base"
+089804D4 _setlocale_r                  # "C-UTF-8", "C-SJIS", "C-EUCJP", "C-JIS"
+0898DD30 acosf
+0898DE50 asinf
+0898DF70 atan2f
+0898E0B4 fmodf
+0898EAD8 sqrtf_checked                 # "sqrtf" error wrapper (errno path)
+08993F2C _exit                         # "libc:%s: should be called from main thread"
+08993FF4 _sbrk                         # "UserSbrk" partition
+# --- shared movement primitives of game.ovl (inferred from fields, callees and callers) ---
+game.ovl:08E14660 chara_locomotion         # 104 KB: speed +0x1C, heading +0x26 towards +0x2C, run/turn motions; called by chara_user_control and many states
+game.ovl:08F12D90 chara_steer_anim         # turns +0x26 with angle_turn_towards_fps, speeds up, picks/blends motions; 10+ states call it
+game.ovl:08EC6A58 chara_steer_anim_2       # (rec, heading, speed): same family, used by dribble, go_to_ball, AI run, keeper...
+game.ovl:08EC3460 chara_steer_anim_3       # wraps chara_steer_anim (8 calls) with slow-downs
+game.ovl:08EC4890 chara_reach_estimate     # distances, sqrtf and frames_scaled: how long a player needs to reach a point (used by the keeper's parts)
+# --- teams (table of 296 x 16 bytes at 0x089AA89C, docs/21 §2c) ---
+08890E10 team_name                     # (team id, 0 name / 1 abbreviation, ...): clubs 0x40..0xCB from the edited club data (0x58 per club), else the table
+08890E08 team_name_2                   # second entry of team_name
+08895D08 club_edit_data                # -> base of the editable club data (0x58 bytes per club, from id 0x40)
+08891F9C team_nation                   # u16 at +0xA for national teams (ids < 0x40, 0xCC..0xDC)
+0893B920 team_flag_bit0                # bit 0 of the u16 at +0xE of a team's entry
+defaultdataset.ovl:08D4FEB0 default_club_data_build   # fills the club data (names, abbreviations) from team_name for ids 0x40..
+# --- player command word (record +0xB0, docs/21 §1d): pad and AI write the same "virtual buttons" ---
+08916E0C chara_command_from_pad        # fills +0xB0 from the pad (keeps the direction bits & 0xF0); same code as game.ovl 0x08DBBC08
+game.ovl:08DBBC08 chara_command_from_pad_g
+game.ovl:08F44060 chara_command_clear_some # clears bits 15 (square), 14 (cross), 1 and others: consumes presses
+game.ovl:08F43F80 chara_command_clear_mask_a  # & 0xFFF08FFF
+game.ovl:08F43FB8 chara_command_clear_mask_b  # & 0xFFF02FFF
+game.ovl:08F43FF0 chara_command_clear_mask_c  # & 0xFFF00FFF
+game.ovl:08F44028 chara_command_clear_mask_d  # & 0xFFF06FFF
+# --- option file in RAM: section pointers at 0x08A059F4.. (docs/21 §2b-bis) ---
+08895D8C of_players                    # -> *0x08A05A20: player records, id k at + k * 0x7C (5000 slots)
+08895D80 of_section_a24                # -> *0x08A05A24
+08895D98 of_section_a1c                # -> *0x08A05A1C
+08895DA4 of_section_a18                # -> *0x08A05A18
+08892D34 of_sections_init              # sets the section pointers 0x08A05A18..0x08A05A44 (inferred)
+memorycard.ovl:08AA65E8 of_player_record      # (id < 5000) -> record
+memorycard.ovl:08AA6570 of_player_shirt_name  # (id) -> record + 0x20
+memorycard.ovl:08AA6530 of_player_field_30    # (id) -> record + 0x30
+memorycard.ovl:08AA6758 of_club_record        # (club id 0x40..0xCB) -> club data + (id - 0x40) * 0x58
+defaultdataset.ovl:08D4EEA0 of_default_build  # builds the default option-file data (all sections)
+# --- sound driver around sd_call / sd_stop ---
+088D9188 sd_frame                      # per frame: counter 0x08A2B01C (also the debug channel of sd_call), then the driver's updates
+089640A4 sd_resolve_id                 # 9 KB switch: request id -> playable id (0 = none); sd_call/sd_stop use bits 25..28 of the result as the kind
+088D8DC8 sd_set_volume                 # (handle, 0..100 clamped, id)
+088D8D74 sd_set_param                  # (handle, id) after resolving the id
+0895A034 dbg_log_nop                   # empty in the release build: sd_call/sd_stop log through it
+0895A014 dbg_nop_1
+0895A024 dbg_nop_2
+game.ovl:08E25098 chara_side_without_ball  # (rec) -> 1 if the player's side (+0x13) is not the side of the current holder 0x08A2F619 (or nobody holds it)
+game.ovl:08DB5340 chara_has_setpiece_role  # (rec) -> 1 if the player is in one of the 8 set-piece slots 0x08A2FFE4
+game.ovl:08EB6650 chara_metric_11C         # target metrics block +0x10C..+0x124 (chara_target_metrics)
+game.ovl:08EB72C0 chara_metric_120
+game.ovl:08EB66C0 chara_metric_124
+game.ovl:08E0F810 chara_scale_by_sheet_8C  # (rec, v) -> v * ((sheet[+0x8C] >> 2) + 0x94) / 0xB7
+
+# ---- critical path, iteration 42 (docs/20 §7: tools/names/name_stats.py, dossier.py) ----------
+# libgu, the "Gup" flavour (context in *0x08AA2EA4) linked without symbols. Evidence: the GE
+# commands each one writes (cmd << 24) or the sceGup* it wraps, matched against pspsdk's libgu.
+08983EA8 sceGuStart                    # (cid, list, size): list base, then draw buffer 9C/9D/D2
+08984110 sceGuFinishId                 # FINISH 0x0F | id, END 0x0C, then sceGeListUpdateStallAddr
+08984368 sceGuCallList                 # CALL 0x0A (or 0x0E signal form)
+0898441C sceGuSendList                 # sceGeListEnQueue / EnQueueHead with the GE callback id
+089844C0 gu_set_display_buffer         # (psm, w, h, bp, bw) stored + sceDisplaySetFrameBuf
+0898459C sceGuSwapBuffers              # swaps the draw/display offsets, sceDisplaySetFrameBuf
+08984664 sceGuDrawBuffer               # PSM 0xD2, FBP 0x9C, FBW 0x9D, stored in every context
+08984828 sceGuSetDither                # DITH0..3 0xE2..0xE5
+08984954 gu_sublist_end                # pops a call frame: patches its JUMP to the current point
+089849F0 sceGuPatchDivide              # 0x36
+08984A1C sceGuColorMaterial            # 0x53
+08984A44 sceGuSpecular                 # 0x5B
+08984A70 sceGuTexScale                 # 0x48 / 0x49
+08984AB4 gu_set_swap_callbacks         # four callbacks around swap and display (0x08AA3394..33A0)
+08984B20 sceGuTerm                     # deletes the event flag, sceGeUnsetCallback
+08984B98 sceGuFinish                   # sceGuFinishId(0)
+08984BB4 sceGuGetMemory                # reserves n bytes in the list behind a JUMP 0x08
+08984CF8 sceGuSetCallback              # (1 signal | 4 finish, fn) -> previous
+08984DC0 sceGuSync                     # (0 draw, 3/4 list) sceGeDrawSync / sceGeListSync
+08984E48 sceGuDisplay                  # on/off: sceDisplaySetFrameBuf
+08984EB4 gu_set_framebuffer            # gu_set_display_buffer + the size in all 5 contexts
+08984F28 gu_draw_buffer_current        # 0xD2/0x9C/0x9D, stored in the current context only
+08984FE4 sceGuDrawBufferList           # 0xD2/0x9C/0x9D, nothing stored
+08985034 sceGuDepthBuffer              # ZBP 0x9E / ZBW 0x9F
+08985088 sceGuEnable                   # sceGupSetStatus(state, 1) + the state bit
+089850E0 sceGuDisable                  # sceGupSetStatus(state, 0)
+0898513C sceGuSetStatus                # (state, on)
+089851F8 sceGuSetMatrix                # (type: 0 projection, 1 view, 2 model, 3 texture; matrix)
+08985300 sceGuDrawArray                # VTYPE 0x12, IADDR 0x02, VADDR 0x01, PRIM 0x04
+089853D0 sceGuDrawArrayN               # as sceGuDrawArray, PRIM repeated n times
+08985584 sceGuDrawSpline               # (vtype, ucount, vcount, uedge, vedge, idx, vtx)
+089857C0 sceGuClearColor               # context +0x48
+089857D4 sceGuClearDepth               # context +0x4C
+089857E4 sceGuClearStencil             # context +0x50
+089857F4 sceGuClear                    # -> sceGupClear
+0898581C sceGuViewport                 # 0x42 0x43 0x45 0x46
+089858C4 sceGuDepthRange               # -> sceGupDepthRange
+08985918 sceGuOffset                   # OFFSETX/Y 0x4C / 0x4D
+08985954 sceGuPatchPrim                # -> sceGupPatchPrim
+0898597C sceGuAmbient                  # 0x5C / 0x5D
+089859BC sceGuMaterial                 # (mode, color) -> sceGupMaterial
+089859E8 sceGuColor                    # sceGupMaterial(7, color)
+08985A14 sceGuAmbientColor             # 0x55 / 0x58
+08985A90 sceGuFrontFace                # -> sceGupFrontFace
+08985AB8 sceGuShadeModel               # -> sceGupShadeModel
+08985AE0 sceGuLight                    # -> sceGupLight
+08985B1C sceGuLightMode                # 0x5E
+08985C4C sceGuLightColor               # -> dl_write_light_color
+08985C80 sceGuTexMode                  # -> sceGupTexMode
+08985CBC sceGuTexFilter                # 0xC6
+08985CE8 sceGuTexFunc                  # 0xC9
+08985D50 sceGuTexWrap                  # 0xC7
+08985D7C sceGuTexLevelMode             # 0xC8
+08985DD4 sceGuTexMapMode               # 0xC0 / 0xC1
+08985E5C sceGuTexSync                  # 0xCC
+08985E7C sceGuTexImage                 # (level, w, h, tbw, texels): TBP/TBW/TSIZE + TFLUSH 0xCB
+08985EFC sceGuTexOffset                # 0x4A / 0x4B
+08985F40 sceGuTexFlush                 # 0xCB
+08985FC8 sceGuClutLoad                 # CBP 0xB0 / 0xB1, CLOAD 0xC4
+089860E4 sceGuAlphaFunc                # 0xDB
+08986120 sceGuDepthFunc                # 0xDE
+08986144 sceGuDepthMask                # 0xE7
+089861A8 sceGuScissor                  # -> sceGupScissor
+089861E4 sceGuStencilFunc              # 0xDC
+08986240 sceGuStencilOp                # 0xDD
+08986B1C sceGupClear                   # CLEAR 0xD3 + a sprite over the viewport
+08986E78 sceGupDepthRange              # 0x44 / 0x47 and min/max Z 0xD6 / 0xD7
+08986F20 sceGupDepthOffset             # the same commands with a new offset
+08986FCC sceGupPatchPrim               # 0x37
+089873E4 gu_ge_finish_handler          # GE finish callback: ring of ids, user callback, event flag
+08987460 gu_ge_signal_handler          # GE signal callback: calls the user one
+08987490 gu_init_ge_callbacks          # sceGuInit helper (inferred)
+# camera and projection (block 0x089D6580..0x089D68A4; dirty flag 0x089D68A2)
+0880C274 mat4_perspective              # (scale, 1, -1, cx, cy, w, h, near, out): far from the stack
+0880C9C8 camera_update_matrices        # projection 0x089D6650, view-projection 0x089D6750, GE projection 0x089D67D0
+0880C4FC camera_get_projection         # updates if dirty, -> 0x089D67D0 (render_frame_begin loads it as GU projection)
+0880C564 camera_get_view_proj          # updates if dirty, -> 0x089D6750 = view x projection
+0880C6D0 camera_set_viewport           # 4 words -> 0x089D6580..658C
+0880C76C camera_set_far                # 0x089D65B0 (the far plane in mat4_perspective)
+0880C784 camera_set_near               # 0x089D65AC
+0880C7BC camera_set_fov                # 0x089D6590, the projection scale
+0880C988 camera_set_view               # 4x4 -> 0x089D66D0
+# frame and display list ring
+08804478 frame_stats_update            # screen size, near/far, frame counter 0x089D608C
+08804B38 frame_end_and_flip            # three end-of-frame steps, display_flip(hold)
+08813CE0 dl_ring_submit                # sceGuFinishId + sceGuSendList, advances the 128-entry ring 0x089D7354
+08813EBC dl_ring_begin                 # sceGuStart(2, dl_ring_free_finished(), size)
+08814354 dl_ring_set_done_id           # 0x089D7760: lists with a lower id can be reused
+08814D5C screen_height                 # 272
+08814D64 screen_width                  # 480
+# full-screen fade (state 0x089D7774, level 0..128 in 0x089D7778)
+08814360 screen_fade_draw              # black quad with alpha from the level
+088144D4 screen_fade_update            # 1 fade in, 3 fade out, 5/6 hold, counts 0x089D777C frames
+088147E8 screen_fade_frame             # update + draw
+08814850 screen_fade_set_color         # (r, g, b, a) -> 0x089D7790
+088209B4 screen_fade_apply_color       # screen_fade_set_color from 0x089B010C..0118
+08820868 menu_fade_step                # level 0x089EA368 up or down, sets the fade (inferred)
+# render state block 0x089E3AC0.. (z test, blend, fog) applied when models are drawn
+08815BAC rstate_reset                  # all fields to defaults; blend 0, 2, 3 = sceGuBlendFunc(ADD, SRC_ALPHA, 1-SRC_ALPHA)
+08815CA4 rstate_clear_flag_3B29
+08815CDC rstate_set_byte_pairs         # (a, b) -> 0x089E3AE0..E3 (inferred: cull/face modes)
+08815D00 rstate_reset_blend            # 0, 2, 3 = the default blend
+08815D34 rstate_set_depth_func         # material bits 17-18 -> z function 0/1/7/6
+08815DA8 rstate_reset_depth            # z test on, function 7, mask off
+08815DE4 rstate_reset_depth_func
+08815E08 rstate_from_material          # alpha ref (bits 4-11), blend and z from the material flags
+08812710 rstate_set_lighting_flags     # 0x089D694C / 6950 = 1 (inferred)
+# textures
+0881881C tex_find                      # id -> texture header, hash chains 0x089E84B8 (+ last-hit cache)
+08818C78 tex_take_pending              # unlinks id from the pending list 0x089EA2D0 -> (tex, clut)
+08813B40 tex_bind                      # (tex, clut): sceGuTexMode, every mip level, CLUT
+08813CB4 tex_bind_by_id                # tex_take_pending + tex_bind
+# 3D scene
+08816418 model_render                  # fog, matrices and the draw of one model (param +0x44: extra pass)
+088165CC render_frame_begin            # rstate_reset, clear colour, sceGuStart, projection and view
+088195A8 frame_hooks_run               # 8 (fn, arg) slots at 0x089EA320
+088238A0 overlay_draw_blink            # on display_flip: blinking 2D overlay (every 30 / 15 frames)
+08824494 frame_systems_update          # vcount, then input, sound (sd_frame), tasks... once per frame
+0882461C pads_read_all                 # the 8 pad records 0x089EC278 + i*0x58: input_update + edges
+08824680 pad_analog_repeat             # pad record + 0x2C: stick directions as bits 20-23, repeat (with pad_repeat_mask)
+088246A8 pad_analog_held               # pad record + 0x28 (combined with pad_held_mask)
+088246D0 pad_analog_released           # pad record + 0x24 (combined with pad_released_mask)
+088246F8 pad_analog_pressed            # pad record + 0x20 (combined with pad_pressed_mask)
+08824790 pad_test_analog_released      # (pad, bit) of record + 0x24
+088252E0 pads_update_hook              # empty
+08825778 frame_hook_empty              # empty
+08824380 frame_callback_empty          # empty
+0882446C boot_hook_empty               # empty
+088293B0 render_get_3d_enabled         # 0x089ED5F0 (gates the 3D passes and the flip hold)
+088293D0 render_get_shadows_enabled    # 0x089ED5F4 (inferred)
+0882663C render_pass_sky               # z off, fog table from the fov (inferred)
+08826758 render_pass_world             # the main 3D pass (inferred)
+08826B28 render_draw_list              # walks a draw list, model_render each (inferred)
+08827650 render_pass_shadows           # (inferred)
+088283D8 draw_list_reset               # slot * 0x1E0 at 0x089ED230: frees, clears, sets counts
+# background jobs (semaphore 0x089F5E5C, slots 0x089F5E00 + i*8), polled every frame (inferred)
+0882D4BC frame_poll_callbacks_and_jobs # sceKernelCheckCallback + bgjob_poll
+08829514 bgjob_poll                    # flags 0x089F5E6C from the busy state and slots 1, 2
+0882AC78 bgjob_poll_body
+08829C58 bgjob_slot_state              # 0x089F5E00 + slot * 8
+0882AFA8 bgjob_wake_if_waiting         # signals the semaphore when a thread waits on it
+0882CAA8 bgjob_is_busy                 # 0x089F5F58
+# camera object (*0x089F62F4: near, far, fov, viewport +0x10, view matrix +0x70)
+088391EC camera_apply                  # camera_set_near/far/fov/viewport/view from the object
+0883B2C8 camera_clamp_by_mode          # mode 0x089F62E0: 2 caps the distance at 5000 (inferred)
+08839564 camera_update_orientation     # target -> angles (asinf, atan2f), user hook 0x089F62DC
+08839348 camera_build_view             # mat4_look_at from the camera object (inferred)
+08839A4C camera_frame                  # update, then double-buffers 0xD0 bytes at 0x089F6300
+088390EC camera_get_60
+0883AFD4 camera_get_state_64E4
+0883B080 camera_get_state_64C8
+088390A4 scene3d_set_flags             # 4 bytes 0x089F5F70, 75..77 (inferred)
+0883C50C scene3d_set_66B0
+0883C518 scene3d_update_lights         # (inferred)
+08844B88 render_pass_effects           # uses the view-projection and the shadow switch (inferred)
+0882E854 layer2d_draw_a                # guarded by 0x089F5F7D, render state 0xD then 0x1001 (inferred)
+0882E8B8 layer2d_draw_b
+0882E8E4 layer2d_draw_c
+0882FA98 layer2d_update                # 4 layers 08831E20(i, 0) or a hook 0x089F6000 (inferred)
+# menu help box and pad events
+0884A56C easyhelp_update_layout        # (inferred from the task mnEasyHelpInitMain)
+0884A808 easyhelp_draw
+0884F56C padev_scan                    # registered events 0x089FA7EC / 0x089FA7F0
+08850BE8 padev_get_mode                # 0x089FFA98
+08850F20 padev_update                  # repeat / held / pressed / released per pad -> menu events
+0885142C pad_released_with_stick       # pad_released_mask | stick bits
+08851468 pad_held_with_stick
+088514A4 pad_repeat_with_stick
+0885150C pad_pressed_with_stick
+# task list (docs/20 §5)
+0884FC80 tlist_first                   # list + 4
+0884FB68 tlist_entry                   # node + 8
+0884FBC4 tlist_active_value            # node[0] if node[3] != 0
+088503F4 tasks_run_if_enabled          # unless 0x089D60A0
+088507AC tasks_run_list                # task_step over the list 0x089FFA8C
+# frame timing and the 3D material state (0x089FFAF8..)
+088542C8 frame_measure_vblanks         # vblanks since 0x089FFAE4 (+ fraction / 286) -> 0x089FFAE0
+08854440 fog_get_color                 # r, g, b of 0x089FFAED..EF
+08854664 tex_bind_filtered             # sceGuTexFilter(1, 1) + tex_bind
+0885469C material_apply                # stored blend/alpha state, cull 5 on/off, front face
+08854720 material_reset
+08854780 material_set_blend_31001      # (inferred)
+088547F8 render_batch_end              # fog off, dl_ring_submit
+0885482C render_batch_begin            # dl_ring_begin, fog, texture function/wrap/mapping defaults
+# 2D UI drawing: every drawer runs twice per frame, a measuring pass that adds its display list
+# size (0x08A00018) and an emitting pass (0x08A0001C = 1); phase flags 0x089B1894 (1 update, 2 draw)
+088656E8 draw2d_phase                  # 0x089B1894
+0886A7A4 draw2d_add_size               # 0x08A00018 += n (measuring pass)
+0886A7BC draw2d_is_emit_pass           # 0x08A0001C
+0886A8F8 draw2d_frame                  # dl_ring_begin(measured size), emit pass, dl_ring_submit
+0886A9AC draw2d_enqueue                # (draw fn, node, order, kind) into the frame's draw queue
+0886AB40 draw2d_sort_prepare           # grows the queue; shell-sort gap sequence
+0886AC04 draw2d_sort                   # shell sort of the queue by order
+0886B00C draw2d_draw_node
+0886B060 draw2d_node_visible           # walks the parents (+4) checking +0x34
+0886B0E0 draw2d_node_dispatch          # per-kind function tables 0x089B18B4 / 0x089B18D0
+0886B338 draw2d_quad_textured          # tex_bind_by_id + sceGuGetMemory + sceGuDrawArray
+0886B6A0 draw2d_quad_colored           # the same with a colour, coordinates /16 fixed point
+08864BE0 lyt_list_update_all_thunk
+0885BC58 lyt_list_head                 # 0x089FFB6C
+0885BCF4 lyt_list_update_all           # each layout not paused (+0x29 / +0x2A)
+08864C00 draw2d_state_defaults         # blend and texture function for 2D
+08864FB0 draw2d_state_for_node         # per-node blend flags (+0x3C)
+08864CD0 draw2d_setup_screen           # screen size and half sizes, viewport of the camera
+0886995C draw2d_update_all             # phase 1: setup, then each registered drawer's update
+0886A7C8 return_zero
+088650CC draw2d_enqueue_node           # if +0x3D: draw2d_enqueue(+0x38, +0x34, +0x3E, 0x90)
+# text objects (0x7C bytes, txt_create)
+0885F198 txt_set_scale                 # +0x54, dirty bit 2 (+0x74)
+0885F5D8 txt_set_align                 # +0x4B, dirty bit 4 (inferred)
+0885F694 txt_set_visible               # +0x78
+0885F8AC txt_set_pos                   # +0x1C / +0x20, dirty
+08861AD4 txt_draw                      # visible and not empty: txt_layout + draw2d_enqueue
+08861B58 txt_layout                    # in the draw phase, rebuilds the glyphs when dirty
+0885EC9C txt_draw_glyphs               # measuring pass: size; emitting pass: txt_emit_glyphs
+0885ED5C txt_emit_glyphs               # font texture bind, one quad per glyph
+# layouts and groups
+08858B14 lyt_get_play_mode             # +0xA8 (3 for no object)
+088595A4 lyt_draw                      # measuring pass: lyt_count_vertices; emitting pass: lyt_draw_panes
+08859630 lyt_draw_panes                # textured quads of every pane
+08859C60 lyt_count_vertices
+08859D94 lyt_update_thunk
+0886C3EC grp_set_rect                  # (grp, float[4]) -> +0x20..+0x2C if changed
+0886E5A4 grp_draw                      # the drawer grp_create registers
+0886E5FC grp_layout
+0886E730 grp_apply_colors              # children inherit +0xA0.. into +0xB0..
+08886DC0 bg_layout_ensure              # creates layout resource 0x1CA once (inferred)
+08890810 frame_hook_empty2
+# sound driver
+088BC5A0 sd_hook_empty
+088BC928 sd_stream_is_idle             # (slot < 4) handle 0x08A115E0[slot] finished (inferred)
+088BCE24 sd_queue_flush                # up to 8 queued requests (0x08A1162C, 16 bytes each) per frame
+088BCFDC sd_request                    # by class id >> 29: 2..4 streams, 0 effects
+088BD0E0 sd_play_special               # switch on fixed ids (0x22000029, 0x22000101...) -> sd_request
+# sound driver, per frame under sd_frame (structures 0x08A12258 + i*0x7C, voices 0x08A13404 + i*0xD4)
+088BDD20 sd_streams_frame
+088BDE18 sd_streams_update             # per stream: state +0xC switch, sd_stream_is_idle
+088BD450 sd_streams_update_volume      # (inferred)
+088BE4EC sd_stream_get                 # (stream, field) -> stream + offset of the field
+088BF020 sd_is_suspended               # 0x08A12630 == 1 skips the updates
+088BF05C sd_get_backend                # 0x08A1262C, function pointer
+088C1F60 sd_backend_call
+088C20D0 sd_queue_blocked              # always 0
+088C0F30 sd_driver_frame               # banks, sequences, voices, status
+088C18F8 sd_banks_update               # 0x1CB0-byte entries at 0x08A1373C (inferred)
+088BFC60 sd_sequences_update           # (inferred)
+088BF16C sd_voices_update_a            # voices 0x08A13404 + i*0xD4 (inferred)
+088BF3F8 sd_voices_update_b
+088C08C0 sd_voices_update_c
+088C0584 sd_status_update              # (inferred)
+088C1F3C sd_hook_empty2
+08959EBC sd_ambient_update             # sd_play_special(0x22000033) gives a channel mask (inferred)
+08963390 sd_fades_update               # 0x28-byte entries (inferred)
+088D86B8 sd_play_special_thunk
+# sound mixing thread (thread_thread_2) and SAS voices
+088C49E4 snd_thread_step
+088C2838 snd_thread_streams            # 0x598-byte streams at 0x08A1BA78
+088C4ED4 snd_thread_stream_slots       # 0x34-byte slots at 0x08A26E34
+088C4F7C snd_thread_voices_a           # (inferred)
+088C5188 snd_thread_voices_b
+088C53A8 snd_thread_voices_c
+088C5634 snd_thread_voices_d
+088C5754 snd_thread_voices_e
+088C7278 snd_thread_voices_f
+088C4284 sas_voice_play                # picks a voice, programs it (sas_voice_program)
+088C3874 sas_voice_program
+088C9B08 sas_voice_is_playing          # envelope height != 0 or end flag clear
+089935A0 __sceSasCore_w
+08993B88 __sceSasGetEndFlag_w
+08993BC4 __sceSasGetEnvelopeHeight_w
+088CB758 at3_thread_step               # (inferred)
+088CC0D8 at3_find_handle
+# 3D world around the match (render_get_shadows_enabled gates them)
+088DAF90 match_is_replay               # 0x08A2B24C != 0 during a replay (docs/21 §1)
+088E2490 shadows_frame
+088E4408 shadows_build                 # (inferred)
+088E4910 ball_shadow_update            # needs the ball (*0x089C43F4) (inferred)
+088E4A98 charas_render_prepare         # light colours unless in a replay (inferred)
+088E4B3C charas_visibility_update      # 23 records 0x08A2BDD0 (inferred)
+088E4BD4 charas_lod_update             # chara_get_pos per player (inferred)
+088E6DB8 render_hook_empty
+08920218 render_frame_counter          # 0x08A80748++ unless in a replay
+0892020C render_set_time               # 0x08A80744
+089201A4 render_hook_empty2
+089201AC render_hook_empty3
+089337A8 frame_hook_empty3
+08958BCC loader_wake_if_waiting        # semaphore 0x08A81EE8 (inferred: the file loader)
+# newlib math internals
+0898A7AC __rem_pio2f
+0898BF2C __kernel_cosf
+0898C80C __kernel_sinf
+0898D5B8 fabsf_bits                    # & 0x7FFFFFFF
+0885C00C lyt_pane_draw_texts           # in the draw phase, walks the panes (+0x2F) of a visible layout (inferred)
+0886E240 spr_set_rect4                 # (spr, float[4]) -> +0x10..+0x1C if changed, dirty
+088726D8 widget_notify_children        # calls each child's handler (+0x3C) with the pending flags, child list +0x2C/+0x38
+08886E24 ui3d_frame_if_ready           # both resources 0x08A0C85C / 860 loaded (bit 0) (inferred)
+0885798C lyt_pane_draw_text            # text at a pane's position + offset, scaled (inferred)
+089951E4 mat4_look_at                  # VFPU: cross products and normalisations of eye, target, up
+08995F38 net_session_frame             # WIRELESS session state 0x08AA5A14 (semaphores, scene 15 checks) (inferred)
+# GE state from the PS2-style material codes (blend letters '*', 'D', 'H'...)
+08994B0C gu_blend_mode                 # '*' off, 'D' alpha, 'H' additive...
+08994978 gu_alpha_depth_mode           # alpha test and z function from a packed code
+08994AA0 gu_tex_wrap_mode              # clamp/repeat for u and v
+0899490C gu_tex_filter_mode
+0899482C gu_scissor_rect               # clamped to 480 x 272
+08994820 gu_depth_mask_reset           # 0x08AA59D4 = 0
+089948E4 gu_depth_mask_request         # 0x08AA59D4 = 1 when bit 0
+08994814 gu_depth_mask_apply           # sceGuDepthMask(0x08AA59D4)
+08994788 color_ps2_to_rgba             # PS2 colour (0x80 = full) -> 0..255 per channel
+08994DBC input_pad_kind                # (inferred)
+088D8658 table12_set_entry             # (table id, i, value) for i < count, 12-byte entries (inferred)
+# game.ovl critical path and the helpers of chara_locomotion / chara_steer_anim (iteration 42)
+game.ovl:08D4E880 motion_length_frames      # frames of a motion at the current step, special motions 0x1CC... (inferred)
+game.ovl:08DB0108 cursor_player_is_free     # player 0x090BAC32 % 23 with record +0x12 == 0 (inferred)
+game.ovl:08DBB0B8 chara_input_dir8          # facing for input: motion 0x2B7 -> +0x34, state 2 -> +0x2C, else heading in 8 sectors
+game.ovl:08DBB180 chara_input_dir8_b        # the same (another table)
+game.ovl:08DBCEB0 match_clock_get           # (out min, out sec): ticks 0x08A2F5C4 - 0x08A2F60C scaled by 0x08A2F5C8, 0x08A2F3F0 ticks a second
+game.ovl:08DC0150 goal_net_needs_update
+game.ovl:08DC7F18 goal_net_step             # resets the net vertices when +0xD5, then integrates them (inferred)
+game.ovl:08DC9AB8 goal_net_update_main
+game.ovl:08DCFC20 kick_power_from_motion    # 0x08A2F670 = chara_scale_by_sheet_8C(motion key value) (inferred)
+game.ovl:08DCFDD8 motion_ball_contact_point # ball point from the keys of a motion (inferred)
+game.ovl:08E100C0 motion_steps_at_speed     # (step, motion, offset): how many steps the motion lasts
+game.ovl:08E10240 motion_steps              # motion length / step (*0x089C11AC)
+game.ovl:08E10378 angle_step_towards        # (rec, target, base, max step) clamped turn from the heading +0x28
+game.ovl:08E10420 chara_motion_is_trap      # motion 0x26, 0x32, 0x33, 0x34 (inferred: ball control)
+game.ovl:08E10470 locomotion_start_motion_36   # (inferred)
+game.ovl:08E10A70 locomotion_try_dribble_touch # good dribbling (+0xAC/+0x9E > 79), ball slow and close (inferred)
+game.ovl:08E10EB0 locomotion_try_turn_with_ball # motion 0x2E8 when the ball is slow or behind (inferred)
+game.ovl:08E11370 locomotion_try_turn_back_with_ball # ball slow or behind (angle to ball heading > 16) (inferred)
+game.ovl:08E11CD0 dribble_touch_select       # called by dribble, ball control and locomotion (inferred)
+game.ovl:08E13810 chara_pressure_level       # 4 when the nearest rival is far from the predicted ball (inferred)
+game.ovl:08E22F98 chara_rival_in_front       # slow, ball low, facing the target and a rival close (inferred)
+game.ovl:08E23E40 motion_trap_kind           # 1, 2... by trapping motion id (inferred)
+game.ovl:08E25430 steer_quick_turn           # motion 3, speed x1.2 when the turn is big (inferred)
+game.ovl:08E271E0 motion_is_aerial           # motion flag +0xD bit 1, or motions 0xC1 / 0xC8 (inferred)
+game.ovl:08E286A8 steer_needs_sharp_turn     # turn > 0x1400 for the current motion (inferred)
+game.ovl:08E2B968 chara_hook_empty
+game.ovl:08EB8B20 anim_turn_rate_to          # angle left / ticks left of the motion
+game.ovl:08EB8BE8 anim_ticks_total           # ticks of the current motion at its speed
+game.ovl:08EBDA10 rival_dist2_to_point       # marking rival 0x08A2F653[other team] -> chara_dist2_to(point)
+game.ovl:08EBDAC8 chara_nearest_rival_dist2  # huge (0x57E40000) when there is none
+game.ovl:08EBDF48 chara_angle_to_nearest_rival # (inferred)
+game.ovl:08ECE138 angle_turn_half_towards    # turn half of the difference
+game.ovl:08ECE468 chara_turn_rate            # angle diff to the heading / n
+game.ovl:08ECE540 anim_frames_left_per_step
+# HUD request flags 0x090B9CB8..0x090B9D5C, set by the match and read by the HUD (init_game2d_obj).
+# take = read the bit and clear it; test = read it. Named by pattern (iteration 42).
+game.ovl:08F3E828 hudreq_test_9D5C_b3
+game.ovl:08F3E840 hudreq_test_9D5C_b2
+game.ovl:08F3E858 hudreq_take_9D5C_b1
+game.ovl:08F3E8A8 hudreq_take_9D5C_b0
+game.ovl:08F3E9A0 hudreq_take_9D59_b0
+game.ovl:08F3EB50 hudreq_test_9D55_b1
+game.ovl:08F3EB68 hudreq_take_9D55_b0
+game.ovl:08F3EB90 hudreq_test_9D55_b2
+game.ovl:08F3ED00 hudreq_take_9D48_b6
+game.ovl:08F3EE88 hudreq_test_9D47_b2
+game.ovl:08F3EEA0 hudreq_test_9D47_b1
+game.ovl:08F3EEB8 hudreq_take_9D47_b0
+game.ovl:08F3EF50 hudreq_test_9D46_b2
+game.ovl:08F3EF68 hudreq_test_9D46_b1
+game.ovl:08F3EF80 hudreq_take_9D46_b0
+game.ovl:08F3F0E8 hudreq_test_9D45_b3
+game.ovl:08F3F100 hudreq_test_9D45_b1
+game.ovl:08F3F1B0 hudreq_test_9D45_b0
+game.ovl:08F3F1E8 hudreq_test_9D44_b5
+game.ovl:08F3F290 hudreq_test_9D44_b4
+game.ovl:08F3F2A8 hudreq_test_9D44_b3
+game.ovl:08F3F398 hudreq_test_9D44_b2
+game.ovl:08F3F3F8 hudreq_test_9D44_b1
+game.ovl:08F3F438 hudreq_test_9D44_b0
+game.ovl:08F3F448 hudreq_take_9D18_b6
+game.ovl:08F3F488 hudreq_take_9D18_b5
+game.ovl:08F3F4C8 hudreq_take_9D18_b1
+game.ovl:08F3F4F8 hudreq_test_9D18_b4
+game.ovl:08F3F510 hudreq_test_9D18_b3
+game.ovl:08F3F558 hudreq_take_9D18_b2
+game.ovl:08F3F588 hudreq_take_9D18_b0
+game.ovl:08F3F8C8 hudreq_test_9D00_b1
+game.ovl:08F3F8E0 hudreq_take_9D00_b0
+game.ovl:08F3F960 hudreq_test_9CF8_b1
+game.ovl:08F3F978 hudreq_take_9CF8_b2
+game.ovl:08F3F9A8 hudreq_test_9CF4_b1
+game.ovl:08F3F9C0 hudreq_test_9CF4_b0
+game.ovl:08F3F9D0 hudreq_test_9CF0_b0
+game.ovl:08F3F9F0 hudreq_take_9CF8_b0
+game.ovl:08F3FA18 hudreq_take_9CF4_b2
+game.ovl:08F3FA48 hudreq_take_9CF0_b1
+game.ovl:08F3FDB8 hudreq_take_9CE4_b2
+game.ovl:08F3FE40 hudreq_test_9CE4_b1
+game.ovl:08F3FE58 hudreq_take_9CE4_b0
+game.ovl:08F3FF40 hudreq_test_9CDC_b1
+game.ovl:08F3FF58 hudreq_take_9CDC_b0
+game.ovl:08F40100 hudreq_take_9CD4_b1
+game.ovl:08F40130 hudreq_take_9CD4_b0
+game.ovl:08F40168 hudreq_take_9CD4_b2
+game.ovl:08F401C8 hudreq_take_9CC8_b1
+game.ovl:08F401F8 hudreq_take_9CC8_b0
+game.ovl:08F40240 hudreq_take_9CC8_b3
+game.ovl:08F40270 hudreq_take_9CC8_b2
+game.ovl:08F40338 hudreq_take_9CC5_b2
+game.ovl:08F40390 hudreq_test_9CC5_b1
+game.ovl:08F403A8 hudreq_take_9CC5_b0
+game.ovl:08F40418 hudreq_test_9CC4_b1
+game.ovl:08F40430 hudreq_take_9CC4_b0
+game.ovl:08F40548 hudreq_test_9D04_b5
+game.ovl:08F40560 hudreq_take_9D04_b4
+game.ovl:08F40590 hudreq_test_9D04_b3
+game.ovl:08F405A8 hudreq_test_9D04_b2
+game.ovl:08F405C0 hudreq_test_9D04_b0
+game.ovl:08F405D0 hudreq_take_9D04_b1
+game.ovl:08F40630 hudreq_take_9CB8_b2
+game.ovl:08F40660 hudreq_test_9CB8_b1
+game.ovl:08F40678 hudreq_take_9CB8_b0
+game.ovl:08F40758 hudreq_test_9CC0_b1
+game.ovl:08F40770 hudreq_take_9CC0_b0
+game.ovl:08F407E0 hudreq_test_9CC1_b1
+game.ovl:08F407F8 hudreq_take_9CC1_b0
+game.ovl:08F40868 hudreq_take_9CC2_b3
+game.ovl:08F40898 hudreq_test_9CC2_b2_08F40898
+game.ovl:08F408B0 hudreq_take_9CC2_b1
+game.ovl:08F408E0 hudreq_take_9CC2_b0
+game.ovl:08F40908 hudreq_test_9CC2_b2_08F40908
+game.ovl:08F40A38 hudreq_test_9CC3_b2
+game.ovl:08F40A50 hudreq_test_9CC3_b1
+game.ovl:08F40A68 hudreq_take_9CC3_b0
+game.ovl:08F40B68 hudreq_test_9CB4_b2
+game.ovl:08F40BE0 hudreq_take_9CB4_b0
+game.ovl:08F40C08 hudreq_test_9CB4_b3
+game.ovl:08F40D10 hudreq_take_9CB0_b1
+game.ovl:08F40D50 hudreq_take_9CB0_b0
+game.ovl:08F40DA8 hudreq_take_9CAB_b1
+game.ovl:08F40E00 hudreq_take_9CAB_b0
+game.ovl:08F40E50 hudreq_test_9CAA_b1
+game.ovl:08F40E68 hudreq_take_9CAA_b0
+game.ovl:08F40ED8 hudreq_test_9CA9_b1
+game.ovl:08F40EF0 hudreq_take_9CA9_b0
+game.ovl:08F40F60 hudreq_test_9CA8_b1
+game.ovl:08F40F78 hudreq_test_9CA8_b2
+game.ovl:08F40F90 hudreq_take_9CA8_b0
+game.ovl:08F41048 hudreq_test_9C9C_b2
+game.ovl:08F41060 hudreq_take_9C9C_b1
+game.ovl:08F41188 hudreq_test_9C9A_b1
+game.ovl:08F411A0 hudreq_take_9C9A_b0
+game.ovl:08F41238 hudreq_test_9C99_b1
+game.ovl:08F41250 hudreq_take_9C99_b3
+game.ovl:08F41280 hudreq_take_9C99_b2
+game.ovl:08F412B0 hudreq_take_9C99_b0
+game.ovl:08F41448 hudreq_take_9D24_b2
+game.ovl:08F41478 hudreq_take_9D24_b0
+game.ovl:09086838 hudreq_test_A6F8_b0
+game.ovl:0908A1B0 hudreq_test_A8E0_b3
+# set-piece predicates: phase level 0 == 4 (running), 0x08A2FEFD == 1 (a restart is pending),
+# restart type 0x08A2FEFF (0 kick-off, 1 throw-in, 2 goal kick, 3 corner, 4 free kick), stop cause 0x08A2FEFE
+game.ovl:08FE4540 is_throw_in_restart          # restart 1
+game.ovl:08FE45A0 is_free_kick_after_foul      # restart 4 or 5 and stop cause 4 (foul)
+game.ovl:08FE4730 is_corner_being_taken        # phase 4.14, restart 3, level 2 == 0x10 (inferred)
+game.ovl:08FE4860 is_free_kick_restart         # phase 4.14, restart 4 (kick_shot and setpiece kicks ask)
+game.ovl:08FE4960 is_restart_type_5            # phase 4.14, restart 5 (asked by the keeper's restart wait; penalty, inferred)
+game.ovl:08FE4A60 is_kickoff_restart           # phase 4.14, restart 0
+game.ovl:08FE4450 is_offside_stoppage_early    # stop cause 5 in phase 10, less than half of 0x08A2F3F0 ticks (inferred)
+game.ovl:08FFF820 stoppage_seq_kind            # 0x090BAFA0, read during phase 12 (2, 10, 15 seen) (inferred)
+game.ovl:08FFF810 stoppage_seq_get_AFB6        # 0x090BAFB6 (inferred)
+game.ovl:08FE3F68 is_stoppage_seq_10_level3_4  # phase 12, kind 10, level 3 == 4
+game.ovl:08FE3FD0 is_stoppage_seq_2_flag10     # phase 12, kind 2, flags 0x090BA95C & 0x10
+game.ovl:08FE4048 is_stoppage_seq_2_net        # phase 12, kind 2 and a WIRELESS check
+game.ovl:08FE40B0 is_stoppage_seq_2_step8      # phase 12, kind 2, 0x090BA95E == 8
+game.ovl:08FE4110 is_stoppage_seq_2_flag20     # phase 4.12, kind 2, flags & 0x20
+game.ovl:08FE4210 is_stoppage_seq_15           # phase 12, kind 15 and 090296A8()
+game.ovl:08F41110 hudreq_take_9C9C_block       # bit 0 of 0x090B9C9C: clears the 12-byte request
+game.ovl:08F416E0 is_player_index              # i < 23
+game.ovl:08F41718 hudreq_get_9C98
+game.ovl:0906EC00 hud_popup_frame              # when 0x090C9460 is set
+game.ovl:0906ECB8 hud_popup_update             # request bits 0x090C9478: layout animation, group visibility
+game.ovl:0906FED8 hud_markers_update_all       # 0x090C94A0 entries with flags at +0x21 (inferred)
+game.ovl:09070B40 hud_banner_frame
+game.ovl:09070B80 hud_banner_update            # text from res_get_data, layout animation (inferred)
+# HUD widgets (game2d, init_game2d_obj): hud_w<state block> = the widget whose state lives at 0x090C<block>
+game.ovl:090869C8 hud_frame_thunk
+game.ovl:090869E0 hud_frame                    # takes the request bits (hudreq_*) and runs every widget
+game.ovl:0908A530 hud_message_frame            # state machine 0x090CAD68
+game.ovl:0908AD28 hud_requests_apply           # hudreq_test_9D44_* -> sprites
+game.ovl:0908B978 hud_net_frame                # WIRELESS match (is_net_match, netlib)
+game.ovl:0908F848 hud_dispatch_dirty           # dirty bits 0x090CB130 -> handlers 0x090B2CF0
+game.ovl:0907A030 hud_w97F0_frame
+game.ovl:0907A240 hud_w97F0_update
+game.ovl:0907BBF8 hud_w9890_frame              # one per team
+game.ovl:0907BD38 hud_w9890_update
+game.ovl:0907CA50 hud_w9950_is_shown
+game.ovl:0907CBE8 hud_w9950_set_state
+game.ovl:0907CDF0 hud_w9950_frame              # one per team
+game.ovl:0907D108 hud_w9950_update
+game.ovl:0907D368 hud_w9950_draw_a
+game.ovl:0907D670 hud_w9950_draw_b
+game.ovl:0907D908 hud_w9950_draw_c             # sprite colours from ui_palette_color
+game.ovl:0907DDC8 hud_w9950_draw_d
+game.ovl:09091560 hud_w9950_place
+game.ovl:0907EF18 hud_w9A00_frame
+game.ovl:0907F090 hud_w9A00_update
+game.ovl:09080618 hud_w9AB0_update_anim
+game.ovl:09080A80 hud_w9AE8_release
+game.ovl:09080BD8 hud_text_panel_update        # res_get_data + txt_set_string (inferred)
+game.ovl:09080F28 hud_text_panel_layout
+game.ovl:090817F0 hud_side_change_check        # user side 0x08A2F5D8 changed (inferred)
+game.ovl:090863E0 hud_wA6F4_update             # sprintf of a value (inferred)
+game.ovl:090875C0 hud_wA728_update
+game.ovl:09088690 hud_sprite_set_rect          # sprite i < 0x51 of 0x090CA770
+game.ovl:090888C0 hud_sprite_set_visible
+game.ovl:09089CE8 hud_wA8E8_apply
+game.ovl:09089E00 tlist_call_hook10            # current entry's +0x10 function
+game.ovl:0908A1F8 hud_mode_bits_A8E0           # (0x090CA8E0 & 0x30) != 0 (inferred: HUD suppressed)
+game.ovl:0908A340 hud_marker_player            # from the last touch 0x08A2F64C (inferred)
+game.ovl:090922E8 hud_team_panels_frame        # two teams, sides swapped by 0x08A2F5D8
+game.ovl:09092490 hud_team_panel_update
+game.ovl:09092EC0 hud_table_2D88
+game.ovl:09093000 hud_table_2D38
+game.ovl:09092F70 hud_apply_table_2D38
+game.ovl:09093E80 match_pause_poll             # 0x08A2F5C1 == 1 and 0x08A2F5C3 == 0 (inferred)
+game.ovl:090983F0 match_hook_empty_a
+game.ovl:090983F8 match_hook_empty_b
+game.ovl:09073738 hud_select_player            # (i < 23) -> 0x090C95B4 = player record 0x08A2BDD0 + i*0x240
+game.ovl:090735F0 hud_player_sheet_value       # sheet (team, slot) +0x18 of the selected player as float (inferred)
+game.ovl:09073678 hud_player_index             # selected record +0x10
+game.ovl:090736A8 hud_player_slot              # selected record +0x11
+game.ovl:09074FB8 hud_w9668_frame
+game.ovl:090750B8 hud_w9668_update
+game.ovl:09078270 hud_w9720_frame
+game.ovl:09078440 hud_w9720_update             # animation 0..9 from 0x090C9754
+game.ovl:090787E8 hud_w9768_frame
+game.ovl:09078C78 hud_w9768_update
+game.ovl:090796A0 hud_w97A8_frame
+game.ovl:09079880 hud_w97A8_update             # animation < 7 from 0x090C97DC
+game.ovl:08DBBEE0 match_input_stick_dirs        # per user: direction bytes of the pad block 0x090B4050 -> angle and magnitude 0..8 at 0x090B4130
+game.ovl:08DBADD0 match_pads_update            # pressed / released masks of the users' pads (inferred)
+game.ovl:08DD3180 match_world_frame            # state 0x090B87CE: 1 load, 2 wait (-> 3 or 4), 4 play: setpieces, extras, goal nets; 6 end
+game.ovl:08DD0640 match_world_active           # 0x090B87CE != 0
+game.ovl:08DD0C80 match_world_get_87CC
+game.ovl:08DD0D00 match_world_get_87CB
+game.ovl:08DBC4E8 match_extras_update          # in state 4: random animations and positions of extra characters (inferred)
+game.ovl:08DBF730 match_get_544C
+game.ovl:08DBF740 match_get_5450
+game.ovl:09071120 match_frame_hook_toggle      # installs or removes the frame hook 08DBEB28 by 0x090B544C / 5450 (inferred)
+game.ovl:08F41700 team_get_F64F              # 0x08A2F64F[team * 2] (next to the last-touch bytes)
+game.ovl:08DAFC60 ai_situation_involves        # (rec) is player +8 of the AI situation *0x09098F18 (kinds 10, 15/6), rivals +0x48/+0x88 (inferred)
+game.ovl:08DBFBF0 goal_net_condition_a         # 0x08A2F5E2 set, training (0x08A2F415 == 5) checks (inferred)
+game.ovl:08DBFCA8 goal_net_condition_b
+game.ovl:08EE6958 chara_face_stoppage_spot     # from 0x09099178 and the chara position (inferred)
+game.ovl:08FE4270 phase5_hud_state             # phase level 1 == 5 (inferred)
+game.ovl:09071340 match_world_87CB_handshake   # 0x090B87CB == 2 -> steps 0x090C9580 (inferred)
+# menu overlays on the critical path (iteration 42; all inferred from the decompiled code)
+memorycard.ovl:08AAE2E0 mc_frame                   # memory-card flow at boot: state 0x08A816A8, dialog 0x08ABD2C8
+memorycard.ovl:08AB5ED8 mc_input_update            # per-button buffers 0x08ABDF58 / 0x08ABD758
+memorycard.ovl:08AB6260 mc_input_clear
+memorycard.ovl:08AAC2B0 mc_state_is_busy           # states 0xC..0xE, 0x1C..0x1E
+memorycard.ovl:08AAF8A0 mc_boot_load_flow          # state 0x08ABC430: check, load, messages
+memorycard.ovl:08AB82C8 mc_dialog_draw
+memorycard.ovl:08AA8790 mc_request_redraw          # 0x08ABB5E0 = 1
+memorycard.ovl:08AA8690 mc_redraw_if_requested
+memorycard.ovl:08AAC988 mc_get_message_index       # 0x08ABBFE0
+memorycard.ovl:08AAC998 mc_message_id              # 0x08ABA4A0[i]
+memorycard.ovl:08AAC9B0 mc_get_BFD8
+memorycard.ovl:08AB88F0 mc_dialog_set_alpha
+bootset.ovl:08D18048 bootcheck_flow                # state 0x08D1B800
+bootset.ovl:08D19460 bootcheck_input_update        # per-button buffers 0x08D1C160 / 0x08D1B960
+bootset.ovl:08D19800 bootcheck_input_clear
+bootset.ovl:08D19438 bootcheck_input_select_pad    # 0x08D1C180 = buffer of pad i
+bootset.ovl:08D1A470 bootcheck_dialog_draw
+bootset.ovl:08D183A0 bootcheck_handle_buttons      # 0x100 confirm, 0x20 / 2 move, with sounds
+title.ovl:08D18630 title_scroll_frame              # value 0x08D18E20 moves towards 0x08D18E24
+title.ovl:08D18140 title_press_start_update
+title.ovl:08D17880 title_menu_update
+select.ovl:08D534C8 select_menu_frame
+select.ovl:08D504E0 select_flow_frame              # state 0x08A1095E: 0 init, 1 run, 3 done
+select.ovl:08D4F6D8 select_team_flow               # state 0x08D82BA8
+select1.ovl:08CEAE00 select1_sprite_place
+select1.ovl:08CEA1E8 select1_draw_list
+formation.ovl:08CDCE08 formation_frame
+formation.ovl:08CFB358 formation_clear_slots      # 8 words 0x08D172C8..
+formation.ovl:08CDCDB0 formation_mode             # 0x08D0FBA8 & 0xF
+formation.ovl:08CDFA68 formation_mode_is_4_or_5
+formation.ovl:08D05730 formation_pitch_draw       # sprite colours per player marker (inferred)
+formation.ovl:08CD7DE8 formation_menu_event       # (inferred)
+formation.ovl:08CDB7A8 formation_net_sync         # memcmp/memmove of the settings and netlib calls (inferred)
+formation.ovl:08CD96A8 formation_input_update     # (inferred)
+formation.ovl:08CEBD40 formation_cursor_action    # (inferred)
+formation.ovl:08CFB4B0 formation_slot_get         # slot < 8 of 0x08D172C8
+formation.ovl:08CFB600 formation_slot_get_b
+formation.ovl:08CFEFA8 formation_player_edit      # (inferred)
+formation.ovl:08D07DB0 formation_highlight_select # (inferred)
+formation.ovl:08D07C20 formation_highlight_draw
+formation.ovl:08CDE408 formation_blink_phase      # from the frame counter 0x08A2F5FC (inferred)
+formation.ovl:08CF08B8 formation_option_select    # (inferred)
+formation.ovl:08CD9470 formation_list_count       # (inferred)
+formation.ovl:08D02130 formation_strategy_select  # (inferred)
+training_free.ovl:08D35D80 ai_situation_kind1_update   # AI situation *0x09098F18 kind 1 (inferred)
+training_free.ovl:08D34AE8 chara_ai_tick_due           # staggered thinking: index % n == frame 0x08A2F5D0 % n (n = 0x08A2FEDE)
+training_free.ovl:08D34BC0 chara_ai_set_flag           # (rec, bit < 4, 0/1) -> +0x208
+training_free.ovl:08D35080 chara_ai_lookup_ok          # (inferred)
+training_free.ovl:08D2C6D8 chara_clear_1D5
+training_free.ovl:08D42630 ai_decide_offball_a         # (inferred)
+training_free.ovl:08D32EA8 ai_decide_offball_b
+training_free.ovl:08D36DE0 ai_decide_offball_c         # skips the player marked by 0x08A2F64F[team] (inferred)
+training_free.ovl:08D33650 ai_decide_offball_d
+training_free.ovl:08D289F0 ai_team_update_a            # (inferred)
+training_free.ovl:08D27490 ai_team_update_b
+training_free.ovl:08D282C8 ai_team_update_c
+training_free.ovl:08D25B38 chara_near_defense_line     # |0x08A2F680[team] - x| < n * 256 (inferred: the defensive line)

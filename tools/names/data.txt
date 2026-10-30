@@ -1,0 +1,69 @@
+# PES6PORT — names and types of the game's global data (docs/21, docs/22).
+# "<address> <name> <type>  # where it was found". Types are C types of
+# runtime/common/pes6_types.h or stdint ones; "T[n]" is an array, "T*" a guest pointer.
+# Read by tools/ghidra/ApplyTypes.py (labels and types in the decompiled C) and by the
+# recompiler (ALLEGREX_DATA_NAMES: comments on the loads and stores of these addresses).
+# The port's own C uses runtime/common/pes6_addrs.h + pes6_game.h instead.
+
+# ---- scenes and frame loop (docs/03) ----
+089ECF88 scene_stack           uint32_t[16]       # (state, frame) pairs, entry 0 current
+089D608C frame_counter         uint32_t           # frame_stats_update
+089D7798 flip_hold             uint32_t           # display_flip holds a second vblank (docs/18 §5)
+089FFA8C task_list             uint32_t           # tasks_run_list (docs/20 §5)
+089EC278 pads                  uint8_t[704]       # 8 pad records of 0x58 (pads_read_all)
+
+# ---- camera and render state (iteration 42) ----
+089D6580 camera_viewport       float[4]
+089D6590 camera_fov            float
+089D65AC camera_near           float
+089D65B0 camera_far            float
+089D6650 camera_projection     float[16]
+089D66D0 camera_view           float[16]
+089D6750 camera_view_proj      float[16]
+089D67D0 camera_ge_projection  float[16]
+089D68A2 camera_dirty          uint8_t
+089D7774 fade_state            uint32_t           # screen_fade_update: 1 in, 3 out, 5/6 hold
+089D7778 fade_level            float              # 0..128
+089F62F4 camera_object_ptr     uint32_t           # camera_apply
+
+# ---- the match: characters, ball, sheets (docs/21 §1, §2, §2b) ----
+08A2BDD0 charas                pes6_chara[23]     # 0 special, 1..11 team 0, 12..22 team 1
+08A2B250 chara_anims           pes6_chara_anim[23]
+08A30158 sheets                pes6_sheet[64]     # team * 32 + slot
+089C43F4 ball_ptr              pes6_ball*
+08A05A20 player_db_ptr         pes6_db_player*    # id * 0x7C
+089AA89C team_table            pes6_team_entry[296]
+090B1110 team_stats_ptr        pes6_team_stats*   # 2 blocks of 0x2F4
+089C11AC motion_table_ptr      uint32_t           # animation: [0] float = step
+
+# ---- the match: phase, possession, stoppages (docs/21 §0, §0b, §2) ----
+090B9C18 match_phase           uint8_t[10]        # phase_get / phase_set, one byte per level
+08A2F415 match_mode            uint8_t            # 0 exhibition, 5 training...
+08A2F3C8 match_teams           uint16_t[2]        # indexes of team_table
+08A2F5D8 user_side             uint8_t            # swaps the HUD panels (hud_team_panels_frame)
+08A2F5D0 match_frames          uint32_t           # +1 per frame of play
+08A2F5C4 clock_ticks           uint32_t           # match_clock_get
+08A2F60C clock_ticks_start     uint32_t           # match_clock_get: ticks at the start of the half
+08A2F5C8 clock_scale           float              # match_clock_get: game seconds per tick
+08A2F3F0 clock_unit            uint8_t            # match_clock_get: ticks per displayed second (30 in exhibition)
+08A2F618 ball_owner            uint8_t            # 0 = loose ball
+08A2F64C last_touch            uint8_t
+08A2F653 marking_rival         uint8_t[4]         # [other team * 2]: the rival the code measures against
+08A2F667 team_defending        uint8_t[2]
+08A2F66C setpiece_ball_spot    pes6_vec3          # setpiece_place_ball
+08A2F680 defense_line_x        float[2]           # chara_near_defense_line (inferred)
+08A2FA9C trap_target           pes6_vec3          # ball_control_trap
+08A2FB72 goal_flag             uint8_t            # goal_check
+08A2FCB0 goal_team             uint8_t            # goal_scored
+08A2F710 own_goal              uint8_t
+08A2F724 stoppage_type         uint8_t            # restart_type_set
+08A2FED8 frames_since_touch    float
+08A2F3F8 speed_divisor         float              # chara_integrate_polar: velocity = polar(heading, speed) / this
+08A2FEFD restart_pending       uint8_t            # set-piece predicates (is_*_restart)
+08A2FEFE stop_cause            uint8_t            # 2 goal, 3 out, 4 foul, 5 offside
+08A2FEFF restart_type          uint8_t            # 0 kick-off, 1 throw-in, 2 goal kick, 3 corner, 4 free kick
+090B87CE match_world_state     uint8_t            # match_world_frame
+09098F18 ai_situation_ptr      uint32_t           # ai_situation_involves
+090B4050 user_pad_dirs         uint8_t[192]       # match_input_stick_dirs (0x18 per user)
+090B4130 user_sticks           uint8_t[32]        # angle and magnitude per user
+090B9C98 hud_requests          uint8_t[200]       # hudreq_* bits 0x090B9CB8..9D5C

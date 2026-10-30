@@ -1,0 +1,26 @@
+{
+ "note": "Colores de equipación de los clubes del Apertura 2007 (docs/16 §7): colores tradicionales de cada club, contrastados con sus escudos y con los iconos de colores de la tabla de clubes del artículo de Wikipedia del torneo. Aproximados: se corrigen aquí. pattern: plain | vstripes (camiseta a rayas verticales con 'stripe') | hband (franja horizontal 'stripe'). 'away' ausente = alternativa calculada (blanca si la titular es oscura, oscura si es clara). 'fallback' = escudo generado cuando no hay PNG en mods/apertura2007/emblems.",
+ "clubs": {
+  "COL": {"home": {"shirt": "FFFFFF", "shorts": "000000", "socks": "FFFFFF"}, "away": {"shirt": "000000", "shorts": "000000", "socks": "000000"}},
+  "UCH": {"home": {"shirt": "0033A0", "shorts": "FFFFFF", "socks": "0033A0"}, "away": {"shirt": "FFFFFF", "shorts": "0033A0", "socks": "FFFFFF"}},
+  "UCA": {"home": {"shirt": "FFFFFF", "pattern": "hband", "stripe": "1973B9", "shorts": "1973B9", "socks": "1973B9"}},
+  "AUD": {"home": {"shirt": "007A3D", "shorts": "FFFFFF", "socks": "007A3D"}},
+  "HUA": {"home": {"shirt": "1C3F94", "pattern": "vstripes", "stripe": "000000", "shorts": "000000", "socks": "000000"}},
+  "CLO": {"home": {"shirt": "F37021", "shorts": "FFFFFF", "socks": "F37021"}},
+  "CSL": {"home": {"shirt": "FFFFFF", "shorts": "F37021", "socks": "FFFFFF"}},
+  "NUB": {"home": {"shirt": "C8102E", "shorts": "FFFFFF", "socks": "C8102E"}},
+  "UES": {"home": {"shirt": "C8102E", "shorts": "002B7F", "socks": "C8102E"}},
+  "MEL": {"home": {"shirt": "FFFFFF", "shorts": "1C3F94", "socks": "FFFFFF"}},
+  "OHI": {"home": {"shirt": "6CACE4", "shorts": "FFFFFF", "socks": "6CACE4"}},
+  "DLS": {"home": {"shirt": "7B1C20", "shorts": "FFFFFF", "socks": "7B1C20"}, "fallback": {"color": "7B1C20", "text": "DLS"}},
+  "EVE": {"home": {"shirt": "1C2C6B", "pattern": "hband", "stripe": "FFD100", "shorts": "1C2C6B", "socks": "1C2C6B"}},
+  "DCO": {"home": {"shirt": "5B2C83", "shorts": "FFFFFF", "socks": "5B2C83"}, "fallback": {"color": "5B2C83", "text": "DCO"}},
+  "PAL": {"home": {"shirt": "FFFFFF", "pattern": "vstripes", "stripe": "007A3D", "shorts": "000000", "socks": "FFFFFF"}},
+  "ANT": {"home": {"shirt": "FFFFFF", "pattern": "vstripes", "stripe": "0033CC", "shorts": "0033CC", "socks": "FFFFFF"}},
+  "UDC": {"home": {"shirt": "FFD100", "shorts": "002B7F", "socks": "FFD100"}},
+  "DPM": {"home": {"shirt": "00843D", "shorts": "FFFFFF", "socks": "00843D"}},
+  "COQ": {"home": {"shirt": "FFD100", "shorts": "000000", "socks": "FFD100"}},
+  "SWA": {"home": {"shirt": "00563F", "pattern": "hband", "stripe": "FFFFFF", "shorts": "FFFFFF", "socks": "00563F"}},
+  "LOT": {"home": {"shirt": "FFFFFF", "shorts": "000000", "socks": "FFFFFF"}}
+ }
+}

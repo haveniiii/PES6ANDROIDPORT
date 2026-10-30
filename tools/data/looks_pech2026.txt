@@ -1,0 +1,25 @@
+# Looks set by hand for mods/pech2026 (tools/pes6_looks.py fix, docs/30 §4): <db id> field=value...
+# hairstyle 116 = short, 156 = short straight; hair_colour=pc takes the PC hair model's colour.
+# Primera chilena: "bald" in PECH (the PC drew their hair with its hair model), reviewed on the cards
+247 hairstyle=116 hair_colour=pc     # G. Graciani
+14 hairstyle=156 hair_colour=pc      # Franco Rami
+2745 hairstyle=116 hair_colour=pc    # César Pinares
+394 hairstyle=116 hair_colour=7      # Javier Correa (no PC hair model)
+2005 hairstyle=116 hair_colour=pc skin=1   # Claudio Aquino
+2616 hairstyle=116 hair_colour=7     # C. Riquelme (no PC hair model)
+1093 hairstyle=116 hair_colour=pc    # Gary Medel
+2091 hairstyle=116 hair_colour=pc    # Eugenio Mena
+2628 hairstyle=116 hair_colour=pc    # Fernando Zuqui
+1821 hairstyle=156 hair_colour=pc    # Diego Valencia
+1736 hairstyle=116 hair_colour=pc skin=1   # Lucas Alarcón
+1340 hairstyle=116 hair_colour=pc skin=1   # Eduardo Vargas
+1344 hairstyle=116 hair_colour=pc    # Diego Vargas
+2494 hairstyle=156 hair_colour=pc    # M. Morales
+853 hairstyle=116 hair_colour=pc     # B. Gazzolo
+1124 hairstyle=116 hair_colour=pc    # B. Chandía
+3918 hairstyle=116 hair_colour=pc skin=1   # César Dutra
+1980 hairstyle=156 hair_colour=pc    # José T. Movillo
+2929 hairstyle=156 hair_colour=pc    # M. Sarrafiore
+1535 hairstyle=156 hair_colour=pc    # J. P. Monreal
+2465 hairstyle=116 hair_colour=pc    # José L. Gamonal
+3750 hairstyle=116 hair_colour=pc    # Juan Jaime

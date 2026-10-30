@@ -1,0 +1,61 @@
+# Club -> crest of the PECH 2026 crest bank (tools/pech_crests.py, docs/28 §3.6).
+# The bank's order (its abbreviations bank, 0_text.afs member 535, labels each crest) is not the
+# option file's club order everywhere. Clubs not listed keep crest = club.
+# <club> <crest>   # club (abbreviation in the save) <- crest label in member 535
+
+# Primera chilena: four clubs moved around
+11 18     # Universidad de Concepción (UDC) <- UDC
+12 31     # Deportes Concepción (CON) <- CON
+18 11     # Deportes Iquique (IQQ) <- IQU
+31 12     # Unión Española (UE) <- UE
+
+# Argentina: the bank keeps 32-39 for the clubs that the option file put at 122-129
+122 32    # Tigre <- TIG
+123 33    # Sarmiento <- SAR
+124 34    # Platense <- PLA
+125 35    # Instituto <- INS
+126 36    # Independiente Rivadavia <- IRM
+127 37    # Deportivo Riestra <- RIE
+128 38    # Central Córdoba <- CCO
+129 39    # Barracas Central <- BAR
+130 60    # Aldosivi <- ALD
+
+# Copa Libertadores clubs
+62 63     # Independiente del Valle <- IDV
+63 64     # Liga de Quito <- LDU
+65 71     # Peñarol <- PEÑ
+67 70     # Bolívar <- BOL
+70 69     # Cerro Porteño <- CCP
+71 65     # Libertad <- LIB
+72 62     # Universitario <- UNI
+
+# Europe
+107 111   # Juventus <- JUV
+108 110   # Atalanta <- ATA
+110 131   # Qarabağ <- QAR
+111 128   # Club Brujas <- BRU
+112 127   # Bodø/Glimt <- BOD
+113 126   # Benfica <- BEN
+116 113   # Atlético Madrid <- ATM
+118 125   # Galatasaray <- GAL
+121 123   # Sporting Lisboa <- SPO
+
+# No crest of their own in the bank: the patch's own badge (157) rather than another club's
+27 157    # Deportes Puerto Montt (the bank's 27 is Santiago Morning)
+51 157    # Estudiantes de Río Cuarto (51 is Godoy Cruz)
+60 157    # Sporting Cristal (60 is Aldosivi)
+61 157    # Barcelona SC (61 is San Martín)
+64 157    # Nacional
+66 157    # Always Ready
+68 157    # Independiente Santa Fe
+69 157    # Junior
+73 157    # Cusco
+74 157    # Universidad Central
+75 157    # Deportivo La Guaira
+76 157    # Independiente Medellín
+77 157    # Deportes Tolima
+81 157    # Coritiba (81 is Fortaleza)
+92 157    # Athletico Paranaense (92 is Juventude)
+96 157    # Chapecoense (96 is Sport)
+97 157    # Remo (97 is Ceará)
+131 157   # Gimnasia de Mendoza
