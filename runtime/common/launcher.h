@@ -42,7 +42,17 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *rgba, int scale);
  * still in the menu, PES6_LAUNCHER_PICK_ISO when the host should open its file
  * picker (the ISO row, or Play without a valid ISO). */
 #define PES6_LAUNCHER_PICK_ISO (-2)
+/* ...or PES6_LAUNCHER_EDIT_CONTROLS when the player asks to move the touch controls (the
+ * BOTONES button beside JUGAR, Android). */
+#define PES6_LAUNCHER_EDIT_CONTROLS (-3)
 int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, float ty);
+
+/* The touch controls' editor (Android, docs/19 §7): the host draws the controls over this
+ * backdrop, which has a title, a line of help and four buttons along the top. `focus` is the
+ * button lit by a pad (-1 none); editor_hit gives the button at a tap (0..1 of the picture). */
+enum { PES6_EDITOR_SMALLER, PES6_EDITOR_BIGGER, PES6_EDITOR_RESET, PES6_EDITOR_DONE, PES6_EDITOR_BUTTONS };
+void pes6_launcher_draw_editor(uint32_t *rgba, int scale, const char *help, int focus);
+int  pes6_launcher_editor_hit(float tx, float ty);
 
 /* A point of a win_w x win_h window -> (tx, ty) on the picture, which the hosts
  * letterbox to 480:272 (ge_gl.c). Outside the picture gives values beyond 0..1. */

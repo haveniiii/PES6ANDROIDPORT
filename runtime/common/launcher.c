@@ -227,6 +227,10 @@ static const font_style PLAY  = { 14, 0.88f, 0.0f, 0.36f, 0.7f, 1 };
 #define PLAY_H    32
 #define PLAY_X    ((W - PLAY_W) / 2)
 #define PLAY_Y    214
+#define EDIT_W    104        /* BOTONES (Android): the touch controls' editor, left of JUGAR */
+#define EDIT_H    26
+#define EDIT_X    ROW_X
+#define EDIT_Y    (PLAY_Y + (PLAY_H - EDIT_H) / 2)
 
 /* The backdrop, made once per scale: deep blue fading to black, a cool glow up on the right,
  * a faint horizon line with its bloom and a few slow diagonal light bands -- the PS2's
@@ -278,21 +282,24 @@ static void rrect(uint32_t *px, float x, float y, float w, float h, float r, flo
 
 /* ---- the rows ------------------------------------------------------------ */
 
-enum { ROW_ISO, ROW_VERSION, ROW_RENDER, ROW_CONTROLS, ROW_HAND, ROW_RES, ROW_QUALITY, ROW_KINDS };
+enum { ROW_ISO, ROW_VERSION, ROW_RENDER, ROW_CONTROLS, ROW_HAND, ROW_SCREEN, ROW_CAMERA, ROW_RES, ROW_QUALITY,
+       ROW_KINDS };
 
 /* The rows on this host, top to bottom; JUGAR comes after them. */
 static int rows(const pes6_launcher *l, int *kind) {
     int n = 0;
     if (l->iso) kind[n++] = ROW_ISO;
     if (l->n > 1) kind[n++] = ROW_VERSION;
-    if (l->android) { kind[n++] = ROW_CONTROLS; kind[n++] = ROW_HAND; }
+    if (l->android) { kind[n++] = ROW_CONTROLS; kind[n++] = ROW_HAND; kind[n++] = ROW_SCREEN; }
     else kind[n++] = ROW_RENDER;
+    kind[n++] = ROW_CAMERA;
     kind[n++] = ROW_RES;
     kind[n++] = ROW_QUALITY;
     return n;
 }
 
-static float row_dy(int nrows) { return nrows > 5 ? 24.0f : nrows > 4 ? 28.0f : 34.0f; }
+static float row_dy(int nrows) { return nrows > 7 ? 19.0f : nrows > 6 ? 21.0f : nrows > 5 ? 24.0f : nrows > 4 ? 28.0f : 34.0f; }
+static float row_y0(int nrows) { return nrows > 6 ? 45.0f : ROW_Y0; }   /* top of the first row */
 
 /* The product's version row is a switch (docs/29): the patch, [0], or the original, [1]. */
 static int league_switch(const pes6_launcher *l) {
@@ -301,7 +308,8 @@ static int league_switch(const pes6_launcher *l) {
 }
 
 static const char *row_label(const pes6_launcher *l, int kind) {
-    static const char *label[ROW_KINDS] = { "ISO", "Version", "Motor", "Controles", "Mano", "Resolucion", "Calidad" };
+    static const char *label[ROW_KINDS] = { "ISO", "Version", "Motor", "Controles", "Mano", "Pantalla", "Camara",
+                                            "Resolucion", "Calidad" };
     return kind == ROW_VERSION && league_switch(l) ? "Liga chilena" : label[kind];
 }
 
@@ -325,7 +333,9 @@ static int row_choices(const pes6_launcher *l, int kind, const char **out, int *
         return l->n < 4 ? l->n : 4;
     case ROW_RENDER:   out[0] = "GPU"; out[1] = "Software"; *current = !s->gpu; return 2;
     case ROW_CONTROLS: out[0] = "Clasico"; out[1] = "Cruceta"; out[2] = "Pro"; out[3] = "Pro atajos";
-                       *current = s->controls; return CTRL_COUNT;
+                       out[4] = "Pro + cruceta"; *current = s->controls; return CTRL_COUNT;
+    case ROW_SCREEN:   out[0] = "Completa"; out[1] = "16:9"; *current = s->screen; return SCREEN_COUNT;
+    case ROW_CAMERA:   out[0] = "Normal"; out[1] = "Lejana"; out[2] = "Muy lejana"; *current = s->camera; return CAMERA_COUNT;
     case ROW_HAND:     out[0] = "Derecha"; out[1] = "Izquierda"; *current = s->hand; return 2;
     case ROW_RES:      out[0] = "Auto"; out[1] = "1x  480x272"; out[2] = "2x  960x544"; out[3] = "3x  1440x816";
                        *current = s->res; return RES_COUNT;
@@ -334,29 +344,18 @@ static int row_choices(const pes6_launcher *l, int kind, const char **out, int *
     }
 }
 
-/* What the focused choice does, one line under the rows. */
+/* What the focused row says, one line under the rows: the control scheme, and the ISO's state. */
 static const char *row_help(const pes6_launcher *l, int kind) {
-    const pes6_settings *s = l->s;
     switch (kind) {
     case ROW_ISO:     return l->iso_help ? l->iso_help : "";
-    case ROW_VERSION:
-        if (!league_switch(l)) return "Version del juego (desarrollo).";
-        return l->ver == 0 ? "Equipos, plantillas y escudos de Chile 2026." :
-                             "El PES6 original, con sus propios guardados.";
-    case ROW_RENDER:  return s->gpu ? "Dibuja con la tarjeta grafica." : "Dibuja con el procesador (referencia).";
     case ROW_CONTROLS:
-        switch (s->controls) {
-        case CTRL_CLASSIC: return "Stick que corre en el borde y los botones de la PSP.";
+        switch (l->s->controls) {
+        case CTRL_CLASSIC: return "Stick y cruceta, con los botones de la PSP; el stick corre en el borde.";
         case CTRL_DPAD:    return "Cruceta fija y los botones de la PSP; R para correr.";
         case CTRL_PRO:     return "Stick fino, corre en la zona de fuera. Desliza un boton: arriba +L, abajo +R.";
-        default:           return "Como Pro, con botones L+\x01  R+\x01  L+\x02  R+\x02 en vez de deslizar.";
+        case CTRL_PRO_KEYS: return "Como Pro, con botones L+\x01  R+\x01  L+\x02  R+\x02 en vez de deslizar.";
+        default:           return "Como Pro, con una cruceta ademas del stick.";
         }
-    case ROW_HAND:    return s->hand == HAND_LEFT ? "Stick a la derecha, botones a la izquierda." :
-                                                   "Stick a la izquierda, botones a la derecha.";
-    case ROW_RES:     return s->res == RES_AUTO ? "Resolucion interna segun la pantalla (hasta 3x)." :
-                             "Resolucion interna fija: mas alta se ve mejor y pide mas.";
-    case ROW_QUALITY: return s->quality == QUALITY_LOW ? "Imagen nitida sin suavizar: la mas ligera." :
-                             s->quality == QUALITY_HIGH ? "Texturas suavizadas." : "Como la PSP, escalada suave.";
     default: return "";
     }
 }
@@ -368,6 +367,8 @@ static void row_set(pes6_launcher *l, int kind, int choice) {
     case ROW_RENDER:   s->gpu = choice == 0; break;
     case ROW_CONTROLS: pes6_settings_set_controls(s, choice); break;
     case ROW_HAND:     s->hand = choice; break;
+    case ROW_SCREEN:   s->screen = choice; break;
+    case ROW_CAMERA:   s->camera = choice; break;
     case ROW_RES:      s->res = choice; break;
     case ROW_QUALITY:  s->quality = choice; break;
     default: break;
@@ -375,7 +376,7 @@ static void row_set(pes6_launcher *l, int kind, int choice) {
 }
 
 static void row_step(pes6_launcher *l, int kind, int d) {
-    const char *names[4];
+    const char *names[8];
     int current = 0;
     const int n = row_choices(l, kind, names, &current);
     if (n > 0) row_set(l, kind, (current + n + d) % n);
@@ -434,7 +435,7 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     fill(px, ROW_X, 38, ROW_W, 1, RGB(60, 84, 150));
 
     for (int i = 0; i < nrows; i++) {
-        const float y = ROW_Y0 + i * dy, cy = y + dy / 2;
+        const float y = row_y0(nrows) + i * dy, cy = y + dy / 2;
         const int focus = i == l->sel;
         if (focus) {                                  /* the PS2's translucent blue bar */
             rrect2(px, ROW_X, y + 2, ROW_W, dy - 4, 4, 0, RGB(52, 104, 230), RGB(24, 56, 150), 0.55f);
@@ -445,7 +446,7 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
         const uint32_t lc = focus ? RGB(255, 255, 255) : RGB(168, 182, 214);
         text_draw(px, ROW_X + 14, cy - LABEL.cap / 2, row_label(l, kind[i]), &LABEL, lc, lc, 0);
 
-        const char *names[4];
+        const char *names[8];
         int current = 0;
         const int n = row_choices(l, kind[i], names, &current);
         if (n <= 0) continue;
@@ -460,7 +461,7 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     }
 
     /* What the focused row's choice does. */
-    const float help_y = ROW_Y0 + nrows * dy + 6;
+    const float help_y = row_y0(nrows) + nrows * dy + 6;
     if (l->sel < nrows)
         text_draw(px, ROW_X + 14, help_y, row_help(l, kind[l->sel]), &HELP, RGB(150, 170, 215), RGB(150, 170, 215), 0);
 
@@ -474,19 +475,71 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     text_draw(px, PLAY_X + (PLAY_W - pw) / 2, PLAY_Y + (PLAY_H - PLAY.cap) / 2, "Jugar", &PLAY,
               RGB(255, 255, 255), RGB(210, 225, 255), 0);
 
+    /* BOTONES: the same lozenge, smaller and quieter; focus is one step left of JUGAR. */
+    if (l->android) {
+        const int ef = l->sel == nrows + 1;
+        if (ef) rrect(px, EDIT_X - 3, EDIT_Y - 3, EDIT_W + 6, EDIT_H + 6, 9, 0, RGB(130, 180, 255), 0.30f);
+        rrect2(px, EDIT_X, EDIT_Y, EDIT_W, EDIT_H, 6, 0, ef ? RGB(60, 104, 200) : RGB(30, 52, 110),
+               ef ? RGB(24, 50, 130) : RGB(14, 26, 64), 1);
+        rrect(px, EDIT_X, EDIT_Y, EDIT_W, EDIT_H, 6, 0.75f, RGB(150, 180, 240), ef ? 0.8f : 0.4f);
+        const float ew = text_width("Botones", &VALUE);
+        text_draw(px, EDIT_X + (EDIT_W - ew) / 2, EDIT_Y + (EDIT_H - VALUE.cap) / 2, "Botones", &VALUE,
+                  RGB(230, 238, 255), RGB(190, 210, 245), 0);
+    }
+
     /* The gamepad, if there is one, and the keys. */
     char pad[96];
-    if (l->pad_name[0]) {
+    if (l->pad_name[0] && !l->android) {
         snprintf(pad, sizeof pad, "Mando conectado: %s", l->pad_name);
         disc(px, ROW_X + 4, 258, 2.5f, 0, RGB(90, 230, 130), 1);
         text_draw(px, ROW_X + 12, 254.5f, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
+    } else if (l->pad_name[0]) {              /* Android: BOTONES sits there; the pad goes top right */
+        snprintf(pad, sizeof pad, "Mando: %s", l->pad_name);
+        const float w = text_width(pad, &HELP);
+        disc(px, ROW_X + ROW_W - w - 8, 23.5f, 2.5f, 0, RGB(90, 230, 130), 1);
+        text_draw(px, ROW_X + ROW_W - w, 20, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
     }
     const char *keys = "\x04 Aceptar   < > Cambiar";
     text_draw(px, ROW_X + ROW_W - text_width(keys, &HELP), 254.5f, keys, &HELP, RGB(120, 136, 180), RGB(120, 136, 180), 0);
 }
 
+/* ---- the touch controls' editor ------------------------------------------------------------ */
+
+static const struct { const char *label; float x, w; } EDITOR_BTN[PES6_EDITOR_BUTTONS] = {
+    { "-", 220, 30 }, { "+", 256, 30 }, { "Restablecer", 292, 100 }, { "Listo", 398, 46 },
+};
+#define EDITOR_BTN_Y 12
+#define EDITOR_BTN_H 22
+
+void pes6_launcher_draw_editor(uint32_t *px, int scale, const char *help, int focus) {
+    K = scale < 1 ? 1 : scale > PES6_LAUNCHER_MAX_SCALE ? PES6_LAUNCHER_MAX_SCALE : scale;
+    const uint32_t *bg = backdrop();
+    if (bg) memcpy(px, bg, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+    text_draw(px, ROW_X, 16, "Botones", &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
+    for (int i = 0; i < PES6_EDITOR_BUTTONS; i++) {
+        const float x = EDITOR_BTN[i].x, w = EDITOR_BTN[i].w;
+        const int f = i == focus, done = i == PES6_EDITOR_DONE;
+        rrect2(px, x, EDITOR_BTN_Y, w, EDITOR_BTN_H, 5, 0, done || f ? RGB(70, 130, 245) : RGB(36, 60, 124),
+               done || f ? RGB(26, 64, 170) : RGB(16, 30, 72), 1);
+        rrect(px, x, EDITOR_BTN_Y, w, EDITOR_BTN_H, 5, 0.75f, RGB(170, 200, 250), f ? 0.95f : 0.5f);
+        const float tw = text_width(EDITOR_BTN[i].label, &VALUE);
+        text_draw(px, x + (w - tw) / 2, EDITOR_BTN_Y + (EDITOR_BTN_H - VALUE.cap) / 2, EDITOR_BTN[i].label, &VALUE,
+                  RGB(255, 255, 255), RGB(215, 228, 255), 0);
+    }
+    fill(px, ROW_X, 40, ROW_W, 1, RGB(60, 84, 150));
+    text_draw(px, ROW_X, 46, help ? help : "", &HELP, RGB(150, 170, 215), RGB(150, 170, 215), 0);
+}
+
+int pes6_launcher_editor_hit(float tx, float ty) {
+    const float x = tx * W, y = ty * H;
+    for (int i = 0; i < PES6_EDITOR_BUTTONS; i++)
+        if (x >= EDITOR_BTN[i].x - 3 && x < EDITOR_BTN[i].x + EDITOR_BTN[i].w + 3 &&
+            y >= EDITOR_BTN_Y - 6 && y < EDITOR_BTN_Y + EDITOR_BTN_H + 6) return i;
+    return -1;
+}
+
 int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, float ty) {
-    const uint32_t pressed = buttons & ~l->held;
+    uint32_t pressed = buttons & ~l->held;
     l->held = buttons;
     int kind[ROW_KINDS];
     const int nrows = rows(l, kind);
@@ -497,14 +550,25 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
             l->sel = nrows;
             return l->iso && !l->iso_ready ? PES6_LAUNCHER_PICK_ISO : l->ver;
         }
+        if (l->android && x >= EDIT_X - 8 && x < EDIT_X + EDIT_W + 8 && y >= EDIT_Y - 8 && y < EDIT_Y + EDIT_H + 8) {
+            l->sel = nrows + 1;
+            return PES6_LAUNCHER_EDIT_CONTROLS;
+        }
         for (int i = 0; i < nrows; i++) {
-            const float y0 = ROW_Y0 + i * dy;
+            const float y0 = row_y0(nrows) + i * dy;
             if (y < y0 || y >= y0 + dy || x < ROW_X - 10 || x >= ROW_X + ROW_W + 10) continue;
             l->sel = i;                               /* left of the value's middle: back; right: on */
             if (kind[i] == ROW_ISO) return PES6_LAUNCHER_PICK_ISO;
             row_step(l, kind[i], x < VALUE_R - VALUE_W / 2 && x >= VALUE_R - VALUE_W - 6 ? -1 : 1);
             return -1;
         }
+    }
+    if (l->sel > nrows) {                         /* BOTONES: up and down as JUGAR, right back to it */
+        if (pressed & (BTN_UP | BTN_DOWN | BTN_RIGHT)) { l->sel = nrows; pressed &= ~BTN_RIGHT; }
+        else if (pressed & BTN_CROSS) return PES6_LAUNCHER_EDIT_CONTROLS;
+    } else if (l->sel == nrows && l->android && (pressed & BTN_LEFT)) {
+        l->sel = nrows + 1;
+        return -1;
     }
     if (pressed & BTN_UP)   l->sel = (l->sel + nrows) % (nrows + 1);
     if (pressed & BTN_DOWN) l->sel = (l->sel + 1) % (nrows + 1);

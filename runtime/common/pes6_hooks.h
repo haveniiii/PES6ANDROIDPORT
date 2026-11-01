@@ -26,3 +26,7 @@ PES6_HOOK(model_render, "EBOOT.elf", 0x08816418u, "renderer: one model instance"
  * one. Entering WIRELESS runs it (from 0x08968A74, scene 15) so both consoles play the factory
  * data; a mod version keeps its own instead (rules.c, docs/29 §5c) */
 PES6_HOOK(of_default_build, "defaultdataset.ovl", 0x08D4EEA0u, "factory option-file data over the loaded one")
+
+/* camera: the view matrix from the camera's eye (0x089F64E0) and target (0x089F64F0) with
+ * mat4_look_at, each frame (camera_frame); rules.c moves the eye back for a wider match camera */
+PES6_HOOK(camera_build_view, "EBOOT.elf", 0x08839348u, "camera: view matrix from eye and target")

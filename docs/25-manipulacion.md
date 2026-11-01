@@ -114,6 +114,25 @@ usuario): **sin demo al dejar quietos los menús**.
    debe dar **PASS**, porque el original no cambia nada).
 5. Pruébalo con `PES6_TUNE=nombre=valor tools/tuning_demo.sh nombre=valor`.
 
+## 2b. La cámara del partido más lejos (2026-10-31)
+
+`camera_build_view` (`0x08839348`, gancho `camera_build_view` en `pes6_hooks.h`) arma la vista con
+`mat4_look_at` desde el ojo (`0x089F64E0`) y el punto al que mira (`0x089F64F0`), cada cuadro. El
+gancho (`rules.c`, `camera_farther`) aleja el ojo del objetivo por la misma recta, solo para esa
+llamada, y lo devuelve: el movimiento propio de la cámara no cambia. Solo en escenas de partido
+(8, 14, 15). Factor: ajuste **Cámara** del menú (1, 1,3, 1,6) o `PES6_CAMERA=<factor>` sin menú.
+Medido en el guion de referencia: a 1,35 se ve casi un tercio más de cancha; a 1,7 media cancha,
+con el borde de la grada arriba.
+
+**Saques de arco y córners** (informe del usuario, 31/10): su cámara se pone detrás de la línea de
+fondo y, alejada, se metía bajo el césped o detrás de la grada. Con el balón parado
+(`PES6_MATCH_PHASE`: nivel 0 = 4 y nivel 1 ≠ 1) y el saque `PES6_RESTART_TYPE` 2 (de arco) o 3
+(córner, **confirmado** en captura: COM contra COM, 8@8899) el factor vuelve a 1, y tras sacar
+vuelve al del ajuste, siempre suavizado (8 % del camino por vista, ~1 s). Comprobado con
+COM contra COM (en Player Settings: abajo, ×, derecha, ×, arriba) a 1,6: en el saque de arco de
+8@4650 y el córner de 8@8950–9080 la imagen es la misma que a 1,0, y a 8@4800 y 9200 vuelve a
+estar lejos.
+
 ## 3. Reglas: sustituir funciones del juego
 
 `runtime/common/pes6_hooks.h` lista funciones que el port puede **reemplazar**: su entrada comprueba

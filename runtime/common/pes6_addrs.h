@@ -92,6 +92,13 @@ enum {
 #define PES6_PLAYER_CALLNAME   0x30u         /* record + : u16 clip of the name in a PS2 ?_sound.afs */
 #define PES6_TEAM_STATS_PTR    0x090B1110u   /* -> 2 x 0x2F4 per-team stats; + 8 = goals (s16) */
 #define PES6_TEAM_STATS_SIZE   0x2F4u
+/* Replays (game.ovl, 31/10): the viewer the player drives -- d-pad left / right rewind and play
+ * fast, up / down zoom, the stick picks whom the camera follows -- runs while a replay is on and
+ * its mode indexes the viewer's handlers in the table at 0x0909D190 (0, 4, 7, 8; 5 = the
+ * automatic replay after a goal, 6 its lead-in). */
+#define PES6_REPLAY_ON         0x08A2B24Cu   /* != 0 during any replay (match_is_replay) */
+#define PES6_REPLAY_MODE       0x090B87C7u   /* u8 */
+#define PES6_REPLAY_BUSY       0x090B87CBu   /* u8: != 0 runs another path, not the viewer */
 
 /* ---- the port's own guest memory --------------------------------------------
  * Below the module image, unused by the game: kernel-ish scratch the boot code

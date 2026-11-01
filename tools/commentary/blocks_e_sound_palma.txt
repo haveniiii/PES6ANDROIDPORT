@@ -9,7 +9,9 @@ goal          1380-1439  golazo|violento|increíble
 goal_after    180-299
 goal_after    1320-1379
 goal_after    1440-1499
-own_goal      1680-1739
+own_goal      1680-1682  *         # "¡autogol!"; 1683-1739 are substitutions and injuries (clip by clip, 31/10)
+own_goal      1684-1684  *
+own_goal      1686-1686  *
 score         3000-3239
 shot          4200-4379  le peg|peg[oó]
 shot_miss     4500-4514                # 4515-4559: chatter, offside, fouls
@@ -17,11 +19,15 @@ shot_miss     3540-3659  desperdici|cerca|peligros|disparo
 woodwork      4380-4439  palo|cerca
 save          3420-3479  portero|arquero|tapad|manotazo
 save          3960-4079  partero|portero|manotazo|puñetazo|portentoso|atento
-offside       3660-3719
-offside       4560-4619
-foul          4680-4739
-foul          4800-4859
-penalty       4740-4799
+offside       3660-3679  *         # "adelantado, dice el juez asistente"; 3680-3719: fouls, injuries
+offside       4560-4572  *         # 4573-4619: "eso no fue falta", "me pareció que no", not offside
+foul          4680-4694  *         # "la infracción será tiro libre" (clip by clip, 31/10)
+foul          4706-4709  *         # "algunas muestras de dolor", "le entraron fuerte"
+foul          4714-4719  *         # "y más encima reclama"
+foul          4800-4819  *         # "hubo falta", "fue infracción"; 4820-4859: "con efecto retroactivo cobró", over and over
+drop foul     4817                 # garbled
+penalty       4695-4704  *         # "hay penal": was in foul and sounded at every foul (the user, 31/10)
+penalty       4730-4739  *         # "hay penal... se va expulsado"
 red_card      4860-4919  roja|expuls
 throw_in      3900-3959  banda|lateral
 throw_in      4080-4139  banda|lateral
@@ -46,9 +52,174 @@ back_pass     7367-7367  .   # "mira por los retrovisores": only a pass played b
 back_pass     7410-7410  .
 back_pass     7438-7438  .
 kickoff       6001-6002  max=11 .   # clip by clip: "saludos para los chilenos en el mundo... la cancha se ve en muy buen estado", "...hasta sus hogares en alta definición" (the tsv text of 6000-6029 is misaligned)
-chatter       6120-6299  ^(?!.*(?:gol|c[oó]rner|esquina|penal|lateral|banda|tiro|saque|habilitad|cuenta|marcador|empat|gana|pierde|minuto|roja|amarill|expuls|palo|peg[oó]|centro|arquero|portero|cambio|segundo tiempo|final|termin|resultado|desventaja|ventaja|clasifica|marc[oó])).
-chatter       6720-7019  ^(?!.*(?:gol|c[oó]rner|esquina|penal|lateral|banda|tiro|saque|habilitad|cuenta|marcador|empat|gana|pierde|minuto|roja|amarill|expuls|palo|peg[oó]|centro|arquero|portero|cambio|segundo tiempo|final|termin|resultado|desventaja|ventaja|clasifica|marc[oó])).
-chatter       7080-7259  ^(?!.*(?:gol|c[oó]rner|esquina|penal|lateral|banda|tiro|saque|habilitad|cuenta|marcador|empat|gana|pierde|minuto|roja|amarill|expuls|palo|peg[oó]|centro|arquero|portero|cambio|segundo tiempo|final|termin|resultado|desventaja|ventaja|clasifica|marc[oó])).
+# chatter: said in open play when nothing happened for a while, so only lines true of any moment of any
+# match, picked clip by clip (31/10): the blocks also had "¡qué bonito pase!", "mía tuya", "en un dos",
+# score lines ("dos a uno", "partido liquidado", "un descuento") and cut fragments.
+chatter       6120-6120  *
+chatter       6121-6121  *
+chatter       6122-6122  *
+chatter       6123-6123  *
+chatter       6124-6124  *
+chatter       6125-6125  *
+chatter       6128-6128  *
+chatter       6131-6131  *
+chatter       6132-6132  *
+chatter       6135-6135  *
+chatter       6136-6136  *
+chatter       6137-6137  *
+chatter       6138-6138  *
+chatter       6140-6140  *
+chatter       6142-6142  *
+chatter       6143-6143  *
+chatter       6146-6146  *
+chatter       6148-6148  *
+chatter       6149-6149  *
+chatter       6150-6150  *
+chatter       6151-6151  *
+chatter       6152-6152  *
+chatter       6153-6153  *
+chatter       6155-6155  *
+chatter       6156-6156  *
+chatter       6157-6157  *
+chatter       6158-6158  *
+chatter       6159-6159  *
+chatter       6161-6161  *
+chatter       6162-6162  *
+chatter       6163-6163  *
+chatter       6164-6164  *
+chatter       6165-6165  *
+chatter       6166-6166  *
+chatter       6167-6167  *
+chatter       6168-6168  *
+chatter       6169-6169  *
+chatter       6170-6170  *
+chatter       6172-6172  *
+chatter       6173-6173  *
+chatter       6174-6174  *
+chatter       6176-6176  *
+chatter       6177-6177  *
+chatter       6185-6185  *
+chatter       6187-6187  *
+chatter       6192-6192  *
+chatter       6196-6196  *
+chatter       6197-6197  *
+chatter       6200-6200  *
+chatter       6201-6201  *
+chatter       6202-6202  *
+chatter       6204-6204  *
+chatter       6205-6205  *
+chatter       6207-6207  *
+chatter       6208-6208  *
+chatter       6209-6209  *
+chatter       6213-6213  *
+chatter       6215-6215  *
+chatter       6216-6216  *
+chatter       6724-6724  *
+chatter       6725-6725  *
+chatter       6727-6727  *
+chatter       6728-6728  *
+chatter       6729-6729  *
+chatter       6730-6730  *
+chatter       6731-6731  *
+chatter       6732-6732  *
+chatter       6734-6734  *
+chatter       6735-6735  *
+chatter       6736-6736  *
+chatter       6742-6742  *
+chatter       6744-6744  *
+chatter       6746-6746  *
+chatter       6762-6762  *
+chatter       6763-6763  *
+chatter       6764-6764  *
+chatter       6777-6777  *
+chatter       6778-6778  *
+chatter       6789-6789  *
+chatter       6792-6792  *
+chatter       6793-6793  *
+chatter       6796-6796  *
+chatter       6814-6814  *
+chatter       6815-6815  *
+chatter       6818-6818  *
+chatter       6823-6823  *
+chatter       6826-6826  *
+chatter       6827-6827  *
+chatter       6831-6831  *
+chatter       6833-6833  *
+chatter       6834-6834  *
+chatter       6835-6835  *
+chatter       6836-6836  *
+chatter       6837-6837  *
+chatter       6838-6838  *
+chatter       6839-6839  *
+chatter       6841-6841  *
+chatter       6843-6843  *
+chatter       6845-6845  *
+chatter       6847-6847  *
+chatter       6849-6849  *
+chatter       6851-6851  *
+chatter       6853-6853  *
+chatter       6855-6855  *
+chatter       6856-6856  *
+chatter       6857-6857  *
+chatter       6858-6858  *
+chatter       6859-6859  *
+chatter       6861-6861  *
+chatter       6863-6863  *
+chatter       6865-6865  *
+chatter       6866-6866  *
+chatter       6867-6867  *
+chatter       6868-6868  *
+chatter       6900-6900  *
+chatter       6904-6904  *
+chatter       6920-6920  *
+chatter       6923-6923  *
+chatter       6929-6929  *
+chatter       6930-6930  *
+chatter       6931-6931  *
+chatter       6932-6932  *
+chatter       6936-6936  *
+chatter       6937-6937  *
+chatter       6939-6939  *
+chatter       6944-6944  *
+chatter       6946-6946  *
+chatter       6948-6948  *
+chatter       6949-6949  *
+chatter       6951-6951  *
+chatter       6953-6953  *
+chatter       6954-6954  *
+chatter       6955-6955  *
+chatter       6962-6962  *
+chatter       6963-6963  *
+chatter       6964-6964  *
+chatter       6965-6965  *
+chatter       6966-6966  *
+chatter       6967-6967  *
+chatter       6968-6968  *
+chatter       6969-6969  *
+chatter       6970-6970  *
+chatter       6972-6972  *
+chatter       6974-6974  *
+chatter       6975-6975  *
+chatter       6976-6976  *
+chatter       6978-6978  *
+chatter       6980-6980  *
+chatter       6981-6981  *
+chatter       6983-6983  *
+chatter       6984-6984  *
+chatter       6985-6985  *
+chatter       6987-6987  *
+chatter       6993-6993  *
+chatter       6994-6994  *
+chatter       6998-6998  *
+chatter       7000-7000  *
+chatter       7010-7010  *
+chatter       7011-7011  *
+chatter       7013-7013  *
+chatter       7014-7014  *
+chatter       7121-7121  *
+chatter       7122-7122  *
+chatter       7135-7135  *
+chatter       7138-7138  *
 goal_after    7080-7092  ^(?!.*honor).*\bgol\b
 goal_after    6888-6890  gol
 full_time     2280-2699
@@ -66,3 +237,8 @@ drop shot          4235 4305                             # "acá puede estar", "
 drop woodwork      4384 4398 4399 4401 4403 4405 4406 4407   # "se fue por sobre el arquero", "algunos separaban..."
 drop cross         5181 5182 5184 5185                   # "va una larga": a long ball, not a cross
 drop goal_kick     5019                                  # something else
+drop tackle        7871 7875 7876 7877 7880 7881 7884 7888 7889 7893 7903 7905 7912 7913 7914 7915 7916 7917 7918 7919   # "muchas gracias", "es terrible", "se equivocó la entrega", "apertura por derecha" (31/10)
+drop dribble       7353 7592                             # "¡el rapidito! ¿este dice lo que era?" (31/10)
+drop throw_in      4081 4082                             # "¡no será lateral!", garbled
+drop save          3976 3990 4005 4021 4035 4057         # garbled
+drop goal_after    182 183 184 185 186 190 194 195 197 198 200 201 204 209 196 199 202 203 222 237 244 245 246 248 249 250 253 1320 1321 1331 1332 1333 1334 1335 1336 1337 1340 1344 1349 1351 1353 1354 1355 1356 1357 1358 1359 1360 1361 1362 1363 1364 1365 1366 1367 1368 1369 1370 1371 1372 1373 1374 1375 1376 1377 1378 1379 1453 1464 1479 1493 1494 1498 1499   # said after any goal: no headers, free kicks, chilenas, "segundo personal", "arranque del segundo tiempo", "diferencia de dos goles", garbled (31/10)

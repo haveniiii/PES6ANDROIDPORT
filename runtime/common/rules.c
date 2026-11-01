@@ -42,6 +42,52 @@ static void keep_mod_data(void) {
     psp_orig_of_default_build();
 }
 
+/* Not a rule either: the match camera farther back (the launcher's Camara setting). The game
+ * builds its view from an eye and the point it looks at (camera_build_view: mat4_look_at at
+ * 0.2 of the eye's coordinates, the direction cached until the eye changes); the eye is moved
+ * away from the target along the same line for that call only and put back, so the game's own
+ * camera movement is untouched. Only in a match (training, WIRELESS): the menus' 3D stays. */
+#define CAM_EYE    0x089F64E0u
+#define CAM_TARGET 0x089F64F0u
+static float g_cam_k = 1.0f;
+
+static float rd_f(uint32_t a) { uint32_t w = psp_read32(a); float f; memcpy(&f, &w, 4); return f; }
+static void wr_f(uint32_t a, float f) { uint32_t w; memcpy(&w, &f, 4); psp_write32(a, w); }
+
+/* Goal kicks and corners (the user's report, 31/10): their camera stands behind the goal line,
+ * and pulled back it went under the pitch or behind the stand. While the ball is dead before one
+ * the camera eases back to the game's distance, and out again once the ball is in play. */
+#define CAM_EASE 0.08f        /* of the way per view built (about a second at 30 fps) */
+static float g_cam_now = 1.0f;
+
+static int camera_near_restart(void) {
+    const uint8_t r = psp_read8(PES6_RESTART_TYPE);
+    return psp_read8(PES6_MATCH_PHASE) == 4 && psp_read8(PES6_MATCH_PHASE + 1) != 1 && (r == 2 || r == 3);
+}
+
+static void camera_farther(void) {
+    const uint32_t s = pes6_scene();
+    if (s != PES6_SCENE_MATCH && s != PES6_SCENE_TRAINING && s != PES6_SCENE_WIRELESS) {
+        psp_orig_camera_build_view();
+        return;
+    }
+    const float want = camera_near_restart() ? 1.0f : g_cam_k;
+    g_cam_now += (want - g_cam_now) * CAM_EASE;
+    float eye[3];
+    for (int i = 0; i < 3; i++) {
+        eye[i] = rd_f(CAM_EYE + 4u * i);
+        wr_f(CAM_EYE + 4u * i, rd_f(CAM_TARGET + 4u * i) + (eye[i] - rd_f(CAM_TARGET + 4u * i)) * g_cam_now);
+    }
+    psp_orig_camera_build_view();
+    for (int i = 0; i < 3; i++) wr_f(CAM_EYE + 4u * i, eye[i]);
+}
+
+void pes6_camera_set_distance(float k) {
+    g_cam_k = g_cam_now = k;
+    psp_hook_camera_build_view = k > 0.99f && k < 1.01f ? NULL : camera_farther;
+    if (psp_hook_camera_build_view) fprintf(stderr, "[camera] match camera at %.2f of the game's distance\n", k);
+}
+
 static const struct { const char *name; void (**hook)(void); void (*fn)(void); const char *what; } g_rules[] = {
     { "no_offside", &psp_hook_offside_check, rule_no_offside, "the referee never calls offside" },
     { "no_fouls",   &psp_hook_foul_check,    rule_no_fouls,   "the referee never calls a foul" },
@@ -71,6 +117,8 @@ void pes6_rules_init(const char *io_root) {
             enable(tok, "PES6_RULES");
         free(copy);
     }
+    const char *cam = getenv("PES6_CAMERA");          /* development: PES6_CAMERA=1.3 */
+    if (cam && *cam) pes6_camera_set_distance((float)atof(cam));
     pes6_rules_report(stderr);
 }
 

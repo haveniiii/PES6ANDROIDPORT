@@ -52,7 +52,7 @@ static inline int pes6_team_goals(int team) {
 }
 
 /* ---- characters, sheets and the player database (docs/21 §1, §2b) -------- */
-enum { PES6_CHARAS = 23 };                     /* 0 special, 1..11 team 0, 12..22 team 1 */
+enum { PES6_CHARAS = 23 };                     /* 0 special, 1..11 and 12..22 the two sides (1 and 12 the keepers); which team each side is changes at half time: read ->team */
 
 static inline pes6_chara *pes6_chara_at(int i) {
     return (unsigned)i < PES6_CHARAS ? PES6_VIEW(pes6_chara, PES6_PLAYERS + (uint32_t)i * PES6_PLAYER_SIZE) : 0;

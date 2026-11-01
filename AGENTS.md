@@ -188,6 +188,11 @@ GPL-3.0; la APK `iso` firmada con la clave propia (`~/.android/pes6-release.jks`
 sin ella no hay actualizaciones) se publica en GitHub Releases y cada uno pone su ISO. Sigue sin
 publicarse nada del disco (ISO, EBOOT, datos): la `bundle` es solo del usuario.
 
+**Pedidos de los jugadores (31/10, `docs/19` §7, `docs/25` §2b):** editor para mover y
+redimensionar los controles de cualquier esquema (botón Botones; `layout.txt`), esquema Pro + cruceta, Pantalla
+Completa/16:9, Cámara Normal/Lejana/Muy lejana (gancho en `camera_build_view`) y pantalla completa
+sin barras de Android (`Device.immersive`). Regresión PASS; falta probarlo en el teléfono.
+
 **Interruptor «Liga chilena» (30/10, `docs/29` §5e):** el menú previo ofrece Sí (el parche) / No (el
 PES6 original, guardado aparte, con su música y su fondo de menú: `mods/music` y `mods/common` solo
 con el parche, y sin comentarista, como la PSP; `PES6_COMMENTARY=` lo fuerza en escritorio). Regresión PASS.

@@ -86,7 +86,7 @@ R a la vez que □ o △).
 **El menú** (`launcher.c`). Fondo azul profundo que se oscurece hacia abajo, un brillo frío
 arriba a la derecha y una línea de horizonte. Título «PES6 · AJUSTES». Una fila grande por
 ajuste («Etiqueta ‹ valor ›»); la enfocada va sobre una barra azul translúcida y su valor en
-amarillo. Debajo, una línea explica la opción enfocada, y abajo el botón **JUGAR**. Pie: «Mando
+amarillo. Debajo, una línea explica el esquema de Controles (y el estado de la ISO) cuando están enfocados; el resto de opciones no lleva descripción (pedido del usuario, 31/10), y abajo el botón **JUGAR**. Pie: «Mando
 conectado: <nombre>» (si lo hay) y «✕ Aceptar ‹ › Cambiar».
 - **Táctil:** tocar la mitad izquierda del valor lo retrocede; el resto de la fila lo avanza.
 - **Mando o teclado:** como antes.
@@ -112,7 +112,7 @@ punto, bit a bit. En PES6 de PSP la dirección es todo o nada y la velocidad la 
 «caminar despacio». La finura entre trotar y correr está en controlar el sprint.
 
 **Esquemas** (`settings.h` `CTRL_*`, `runtime/android/main.c`):
-- **Clásico:** el stick que corre en el borde y el rombo de la PSP (lo de antes).
+- **Clásico:** el stick que corre en el borde y el rombo de la PSP (lo de antes); desde el 31/10 también una cruceta pequeña arriba en el lado del stick, como Pro + cruceta.
 - **Cruceta:** la cruceta fija, el rombo y R grande.
 - **Pro** (por defecto), pensado para dos pulgares:
   - **Stick:** sprint por zona con histéresis: entra al 80 % del radio y sale bajo el 65 %. Vibra
@@ -139,3 +139,56 @@ se ha tocado la pantalla desde su último uso; un toque los vuelve a mostrar.
 **Verificado:** el menú en el Mac (capturas a 1920×1088), compilación Android sin avisos y
 regresión 9/9. **Pendiente: probarlo en el teléfono**, sobre todo el tiempo de los deslizamientos y
 la zona de sprint.
+
+## 7. Controles que se mueven, Pro + cruceta, pantalla, cámara (2026-10-31)
+
+Pedidos de los jugadores tras la v1.0.
+
+- **Editor de controles** (botón **Botones** a la izquierda de Jugar, en Android): los controles del
+  esquema elegido sobre el fondo del menú. Se arrastran con un dedo; el último tocado cambia de
+  tamaño con **−** y **+** (×0,6 a ×1,8); **Restablecer** vuelve a la disposición de fábrica y
+  **Listo** (o ○ / START en un mando) la guarda. En todos los esquemas: los cuatro botones, L, R,
+  los atajos de Pro atajos, la cruceta (Cruceta, Pro + cruceta), SELECT y START. El stick es
+  flotante y no se mueve. Hay tres disposiciones, Clásico, Cruceta y los Pro, porque
+  parten de sitios distintos (la cruceta de Clásico es pequeña y la de Cruceta ocupa el sitio del stick). Clásico y Cruceta ya no tocan por zonas: un dedo pulsa el botón más
+  cercano (hasta 1,9 radios, así el centro del rombo sigue pulsando el más próximo) y puede
+  deslizarse de uno a otro como antes. Se guarda en `<files>/layout.txt` (`classic.nombre x y
+  tamaño`, `dpad.nombre …` o `pro.nombre …`; x e y en fracciones de la pantalla como si fuera diestro, la zurda los
+  refleja salvo SELECT y START). Un control que nunca
+  se movió sigue a los valores por defecto, que dependen de la forma de la pantalla
+  (`runtime/android/main.c`: `ctl_pos`, `edit_controls`; el fondo y sus botones en `launcher.c`).
+- **L y R como en Pro** (pedido del usuario, 31/10): en Clásico y Cruceta, L y R van a los dos
+  lados del rombo, por encima, a la misma altura y del mismo tamaño (`DIAMOND_LR_DX` 0,21 y
+  `DIAMOND_LR_DY` 0,245 del alto desde su centro; radio 0,062). R ya no es pequeño en la esquina.
+- **Pro + cruceta** (`CTRL_PRO_DPAD`): Pro con una cruceta fija arriba en el lado del stick
+  (`PDPAD_*`); un dedo que cae cerca de ella pulsa la dirección y no crea el stick.
+- **Pantalla:** Completa (el partido a lo ancho del teléfono, `docs/31`) o 16:9 (la imagen de la
+  PSP con bandas). `settings.screen`.
+- **Cámara:** Normal, Lejana (×1,3) o Muy lejana (×1,6), en escritorio también. Ver `docs/25` §2b.
+- **Pantalla completa de verdad:** `Device.immersive` oculta la barra de estado y los botones de
+  navegación (vuelven un momento al deslizar desde el borde); se pide al arrancar, al volver a la
+  app y al recuperar el foco. Durante el juego la llamada a Java la hace `wifi_thread`, porque
+  `pump_events` corre entonces en las pilas de los hilos del juego.
+- El menú con ocho filas (APK `iso`) las aprieta: 19 unidades de alto desde y = 45.
+
+## 8. Repeticiones con el táctil (2026-10-31)
+
+Pedido del usuario: manejar la repetición controlable con gestos. Medido en el Mac (guion de
+referencia, START durante la repetición del gol, capturas con cada dirección): en el visor la
+**cruceta** ← / → retrocede y adelanta, ↑ acerca y ↓ aleja; el **stick** ← / → cambia a quién
+sigue la cámara (balón, jugadores); ○ reproduce, △ pausa, L/R giran, SELECT oculta el panel, □
+guarda y START termina. El visor es la función de game.ovl `0x08FDAC18` (con `0x08FDB810`, que lee
+SELECT), elegida por el modo de repetición `0x090B87C7` en la tabla `0x0909D190`: modos 0, 4, 7 y 8;
+el 5 es la repetición automática tras el gol y el 6 su entrada (perfil de funciones `PES6_FNPROF`
+y volcados de RAM; direcciones en `pes6_addrs.h`, `PES6_REPLAY_*`).
+
+En Android (`replay_viewer`, `replay_touch`, `replay_buttons` en `runtime/android/main.c`), con el
+visor abierto, un dedo que cae fuera de los botones no crea el stick sino un gesto:
+
+- **arrastrar a un lado y mantener:** atrás o adelante (cruceta ← / →) mientras el dedo siga
+  desplazado más de 0,06 del alto de la pantalla;
+- **arrastrar arriba o abajo**, o **pellizcar con dos dedos** (abrir acerca, cerrar aleja): el zoom;
+- **doble toque:** sigue al siguiente (el stick a la derecha 120 ms).
+
+El eje de un dedo se fija al pasar el umbral (con un toque de vibración). Los botones dibujados
+siguen funcionando igual. Falta probarlo en el teléfono.

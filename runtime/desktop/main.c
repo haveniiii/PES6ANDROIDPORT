@@ -519,6 +519,7 @@ int main(int argc, char **argv) {
         }
         if (menu) pes6_window_apply(&settings);
         pes6_settings_current = settings;
+        if (menu) pes6_camera_set_distance(pes6_settings_camera_distance(&settings));
         if (pes6_version_apply(&v[i], psp_io_root(), mods) != 0) {
             fprintf(stderr, "version %s: cannot prepare its save\n", v[i].id);
             return 1;

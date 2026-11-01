@@ -234,3 +234,57 @@ v9559 tiro, silbato con saque de arco, v9629 «save».
   - el sentido de ataque de cada equipo se deduce de dónde está su arquero (`attack_dir`, registros 1
     y 12).
   Los pases rasos se juzgan ahora 6 frames después del toque, como los tiros.
+
+**Revisión COM contra COM (2026-10-31).** El usuario oyó «hay penal» en faltas en cualquier parte
+de la cancha. Método: partidos COM contra COM (guion de referencia; en Player Settings abajo, ×,
+derecha, ×, arriba deja el mando en el centro), `PES6_COMMENTARY_LOG=1` (cada línea lleva ahora el
+frame de la escena, `f<N>`), capturas cada 20 frames y cada frase comparada con su imagen y con la
+transcripción clip a clip (`build/comm_pech/cat/phrases_clip.tsv`). Con el mando en el centro el
+partido sigue solo; un × cada 150 frames pasa el descanso y el final (y empieza otro partido: el
+frame de la escena vuelve a contar desde el saque).
+
+Catálogo (`blocks_e_sound_palma.txt`), leyendo cada bloque clip a clip:
+- **foul** 4680–4739 traía «hay penal / cobró penal» (4695–4704, 4730–4739): ahora son `penalty`,
+  que el motor no dispara. Fuera también «con efecto retroactivo cobró» (4820–4859, la misma frase
+  40 veces), amarillas y peleas: 120 → 44 frases.
+- **offside** 3680–3719 y 4573–4619 eran faltas, lesiones y «eso no fue falta»: 120 → 33 («adelantado,
+  dice el juez asistente»).
+- **own_goal** 1683–1739 eran cambios y lesiones: quedan las 5 de «¡autogol!».
+- **tackle**: fuera «muchas gracias», «es terrible», «se equivocó la entrega», «apertura por derecha».
+- **goal_after** (tras cualquier gol): fuera cabezazos, tiros libres, chilenas, «segundo personal»,
+  «arranque del segundo tiempo», «diferencia de dos goles» y charla general («echar malicia en la
+  bebida»): 243 → 171.
+- throw_in y save: fuera clips ilegibles.
+- `full_time` y `half_time` no se disparan (no hay evento en el motor); su bloque mezcla autogoles,
+  «campeones», «eliminado» y «empataron»: revisarlo antes de usarlo.
+
+Motor (`commentary.c`), visto en 12 partidos:
+- **Atajadas: no sonaba ninguna.** La atajada exigía `last_shot`, y el toque del propio arquero lo
+  borraba antes. Ahora se recuerda el tiro (`shot_at`, `shooter`). Es atajada si un arquero
+  (registro 1 o 12) toca el balón en los 2 s siguientes y no hay gol en los 20 vblanks después,
+  tanto si lo atrapa como si lo desvía, incluso al córner. La estirada sola no sirve: el arquero se
+  estira también en tiros que entran o se van afuera. Comprobado: suena en atajadas reales y no
+  antes de un gol ni en un tiro desviado que acaba en saque de arco.
+- **`setpiece_wait`** («se mueven todos en el área», «cuánto nervio») solo en córners y en tiros
+  libres **por falta** a menos de ~28 m de un arco (|x| > 7 000; la línea de gol está en 13 465).
+  Sonaba en tiros libres en mitad de cancha y en uno por fuera de juego junto al área del que
+  defiende: un tiro libre por fuera de juego nunca es ocasión. No se logró saber con fiabilidad qué
+  equipo saca: el estado 0x30 y el jugador más cercano al balón dieron el equipo equivocado.
+- **`woodwork`** («¡qué cerca!»): el código de toque 0xD incluye el banderín del córner; ahora
+  exige |z| < 1 500 (los postes están en ±939).
+- Catálogo: fuera de `dribble` 7353 y 7592 («¿este dice lo que era?»).
+
+**Segunda prueba del usuario en el teléfono (2026-10-31, noche).**
+- **«¡Qué bonito pase!» sin que pasara nada.** Era la charla de relleno (`chatter`, se dice cuando
+  no pasa nada en 25 s): sus bloques tenían frases de jugada («qué bonito pase», «el pase entre
+  líneas», «mía tuya», «en un dos»), del marcador («dos a uno», «partido liquidado», «un descuento»)
+  y fragmentos cortados. Ahora es una lista de 165 clips elegidos uno a uno, ciertos en cualquier
+  momento: «¡qué partido!», «de pronóstico reservado», «acá estamos en vivo», saludos y bromas.
+- **«¡Balón al área!» con el balón en el área propia.** El pase alto (código 1) solo se juzgaba por
+  |x|, cerca de cualquier arco: un jugador junto a su córner mandándola a su arquero era un centro.
+  Ahora tiene que ir al arco que ataca el que patea. Dos cosas salieron al probarlo:
+  - con el balón en el aire, `pes6_last_touch()` ya es 0: el que patea es `W.last_toucher`;
+  - **los registros cambian de equipo en el descanso** (en el segundo tiempo el registro 1 es del
+    equipo 1). `attack_dir` suponía que el registro 1 era siempre del equipo 0, así que en el
+    segundo tiempo daba el sentido al revés (también para «mira por los retrovisores»). Ahora busca el
+    arquero de cada equipo por su campo `team`.

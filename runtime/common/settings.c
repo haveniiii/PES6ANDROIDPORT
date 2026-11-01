@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DEFAULTS { MOVE_STICK, 1, HAND_RIGHT, 1, 1, CTRL_PRO, RES_AUTO, QUALITY_NORMAL, "" }
+#define DEFAULTS { MOVE_STICK, 1, HAND_RIGHT, 1, 1, CTRL_PRO, RES_AUTO, QUALITY_NORMAL, SCREEN_FULL, CAMERA_NORMAL, "" }
 
 pes6_settings pes6_settings_current = DEFAULTS;
 
@@ -31,6 +31,8 @@ void pes6_settings_load(pes6_settings *s, const char *io_root) {
         else if (!strcmp(line, "controls")) s->controls = clampi(atoi(v), 0, CTRL_COUNT - 1);
         else if (!strcmp(line, "res")) s->res = clampi(atoi(v), 0, RES_COUNT - 1);
         else if (!strcmp(line, "quality")) s->quality = clampi(atoi(v), 0, QUALITY_COUNT - 1);
+        else if (!strcmp(line, "screen")) s->screen = clampi(atoi(v), 0, SCREEN_COUNT - 1);
+        else if (!strcmp(line, "camera")) s->camera = clampi(atoi(v), 0, CAMERA_COUNT - 1);
         else if (!strcmp(line, "version")) snprintf(s->version, sizeof s->version, "%s", v);
     }
     fclose(f);
@@ -42,6 +44,12 @@ void pes6_settings_set_controls(pes6_settings *s, int controls) {
     s->controls = clampi(controls, 0, CTRL_COUNT - 1);
     s->move = s->controls == CTRL_DPAD ? MOVE_DPAD : MOVE_STICK;
     s->rim_run = s->controls != CTRL_DPAD;   /* the stick sprints at its edge (zone, in PRO) */
+}
+
+/* Measured on the reference match (docs/25 §2b): 1.3 shows about a third more of the pitch,
+ * 1.6 most of a half, as the PS2 camera mods do. */
+float pes6_settings_camera_distance(const pes6_settings *s) {
+    return s->camera == CAMERA_FARTHEST ? 1.6f : s->camera == CAMERA_FAR ? 1.3f : 1.0f;
 }
 
 int pes6_settings_gpu_cap = 3;
@@ -87,8 +95,9 @@ int pes6_settings_save(const pes6_settings *s, const char *io_root) {
     snprintf(path, sizeof path, "%s/settings.txt", io_root && *io_root ? io_root : ".");
     FILE *f = fopen(path, "w");
     if (!f) return -1;
-    fprintf(f, "move=%d\nrim_run=%d\nhand=%d\ngpu=%d\ncommentary=%d\ncontrols=%d\nres=%d\nquality=%d\nversion=%s\n",
-            s->move, s->rim_run, s->hand, s->gpu, s->commentary, s->controls, s->res, s->quality, s->version);
+    fprintf(f, "move=%d\nrim_run=%d\nhand=%d\ngpu=%d\ncommentary=%d\ncontrols=%d\nres=%d\nquality=%d\nscreen=%d\ncamera=%d\nversion=%s\n",
+            s->move, s->rim_run, s->hand, s->gpu, s->commentary, s->controls, s->res, s->quality, s->screen,
+            s->camera, s->version);
     return fclose(f) == 0 ? 0 : -1;
 }
 

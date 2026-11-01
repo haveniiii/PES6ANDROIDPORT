@@ -342,7 +342,7 @@ static void event(int e) {
     g_last[e] = g_clips[e][k];
     const int ok = queue_clip(g_clips[e][k], k_prio[e]);
     if (ok) { g_nseq = 0; g_event_at[e] = g_vblank; }    /* what was still to come is stale now */
-    if (g_log) fprintf(stderr, "[commentary] v%u %s -> clip %d%s\n", g_vblank, k_event[e], g_clips[e][k],
+    if (g_log) fprintf(stderr, "[commentary] v%u f%u %s -> clip %d%s\n", g_vblank, pes6_scene_frame(), k_event[e], g_clips[e][k],
                        ok ? "" : pes6_audio_sink_active() ? " (busy)" : " (no audio device)");
 }
 
@@ -386,6 +386,9 @@ static struct {
     int faded;                        /* the goal shout was cut short when the replay ended */
     int last_shot;                    /* the last touch before the ball went dead was a shot */
     uint32_t kick_at;                 /* vblank of a hard kick (touch 4) or header still to judge */
+    uint32_t shot_at;                 /* vblank of the last shot, 0 none: a keeper touching it soon after saved it */
+    uint32_t save_at;                 /* vblank the keeper touched that shot: a save once no goal follows */
+    uint8_t shooter;
     int16_t kick_touch;
     int kick_team;                    /* team of the player who kicked it */
 } W;
@@ -424,9 +427,13 @@ static int kick_is_cross(const pes6_ball *b) {
            x * vx > -20.0f * fabsf(x);                          /* not back towards midfield */
 }
 
-/* +1 when team t attacks towards +x: its keeper (record 1 or 12) stands at the other end. */
+/* +1 when team t attacks towards +x: its keeper stands at the other end. The keepers are records 1
+ * and 12, but which team each belongs to changes at half time (seen 31/10: record 1 is team 1 in the
+ * second half), so the team field says which one is t's. */
 static int attack_dir(int t) {
-    return pes6_chara_at(t ? 12 : 1)->pos.x < 0.0f ? 1 : -1;
+    const pes6_chara *k = pes6_chara_at(1);
+    if (k->team != t) k = pes6_chara_at(12);
+    return k->pos.x < 0.0f ? 1 : -1;
 }
 
 static int match_running(void) {
@@ -545,7 +552,12 @@ void pes6_commentary_frame(void) {
         }
         if (p1 == 14 && !W.setpiece_said && g_vblank - W.restart_since > 150) {
             const uint8_t r = pes6_restart_type();
-            if (r > 2) event(EV_SETPIECE_WAIT);          /* free kicks and corners: players get ready */
+            /* corners, and free kicks for a foul within shooting range (|x| > 7 000, ~28 m from the
+             * goal line at 13 465): "se mueven todos en el área" was said of free kicks at midfield
+             * and of an offside one by the defenders' own box -- an offside free kick never is a
+             * chance. Who takes it could not be told reliably (31/10). */
+            if (r == 3 || (r > 3 && pes6_stop_cause() == 4 && ball && fabsf(ball->pos.x) > 7000.0f))
+                event(EV_SETPIECE_WAIT);
             W.setpiece_said = 1;
         }
         if (p1 == 1 && W.phase1 == 14) {
@@ -567,7 +579,7 @@ void pes6_commentary_frame(void) {
             else if (cause == 3 && W.last_shot) event(EV_SHOT_MISS);
             else if (cause == 3 && r == 2) event(g_nclips[EV_GOAL_KICK] ? EV_GOAL_KICK : EV_SHOT_MISS);
             else if (cause == 3 && r == 3) event(EV_CORNER);   /* 3 corner: inferred (2 seen after a shot wide) */
-            if (g_log) fprintf(stderr, "[commentary] whistle cause %u restart %u\n", cause, r);
+            if (g_log) fprintf(stderr, "[commentary] v%u f%u whistle cause %u restart %u\n", g_vblank, pes6_scene_frame(), cause, r);
             W.last_shot = 0;                             /* the keeper picking it up for the goal kick is no save */
             if (cause != 0 && cause != 2) W.dead = 1;    /* a goal after this whistle is not given */
         }
@@ -578,7 +590,7 @@ void pes6_commentary_frame(void) {
             const int back = W.kick_touch == 5 && ball &&
                              (ball->pos.x - ball->prev_pos.x) * attack_dir(W.kick_team) < -60.0f;
             W.last_shot = (W.kick_touch == 4 || W.kick_touch == 8) && kick_is_shot(ball);
-            if (W.last_shot) event(EV_SHOT);
+            if (W.last_shot) { event(EV_SHOT); W.shot_at = g_vblank; W.save_at = 0; W.shooter = holder; }
             else if (cross) event(EV_CROSS);
             else if (W.kick_touch == 8) event(EV_HEADER);
             else if (back) { if (rand() % 3 == 0) event(EV_BACK_PASS); }
@@ -597,9 +609,18 @@ void pes6_commentary_frame(void) {
             switch (touch) {
             case 4:   W.kick_at = g_vblank; W.kick_touch = 4; break;
             case 8:   if (bx > 9000.0f) { W.kick_at = g_vblank; W.kick_touch = 8; } else event(EV_HEADER); break;
-            case 1:   if (bx > CROSS_RANGE_X) { W.kick_at = g_vblank; W.kick_touch = 1; } break;
+            case 1: { /* a lofted ball near the goal the kicker attacks, not out of his own box (31/10); the
+                       * game's last touch is already 0 with the ball in the air: the kicker is the last
+                       * player seen on it */
+                      const uint8_t k = holder && holder < 23 ? holder : W.last_toucher;
+                      if (bx > CROSS_RANGE_X && k && k < 23 && ball &&
+                          ball->pos.x * (float)attack_dir(pes6_chara_at(k)->team) > 0.0f) {
+                          W.kick_at = g_vblank; W.kick_touch = 1;
+                      }
+                      break;
+                  }
             case 3:   event(EV_THROUGH); break;
-            case 0xD: event(EV_WOODWORK); break;
+            case 0xD: if (fabsf(ball ? ball->pos.z : 0.0f) < 1500.0f) event(EV_WOODWORK); break;   /* not the corner flag */
             case 10:  event(EV_TACKLE); break;
             case 5:   if (g_vblank - W.live_since > 90 && holder && holder < 23) {   /* not the kick-off tap */
                           W.kick_at = g_vblank; W.kick_touch = 5; W.kick_team = pes6_chara_at(holder)->team;
@@ -613,11 +634,19 @@ void pes6_commentary_frame(void) {
             g_vblank - g_last_name > 90 && g_vblank - g_name_at[holder] > NAME_GAP && rand() % 2 == 0)
             say_name(holder, 2, g_vblank - g_last_name < 240 ? NV_AND :       /* a passing move: "y X" */
                                 rand() % 3 == 0 ? NV_THERE : -1);
-        for (int t = 0; t < 2; t++)                      /* 0x83 catch, 0x8C claim (ball held): a save */
-            if ((ks[t] == 0x83 || ks[t] == 0x8C) && ks[t] != W.keeper_state[t] && W.last_shot && !goal && p1 == 1) {
-                event(EV_SAVE);
-                W.last_shot = 0;
-            }
+    }
+    /* A save: a keeper (record 1 or 12) touches the ball within 2 s of a shot -- a catch or a parry,
+     * even out for a corner -- and no goal follows within 20 vblanks. Not by last_shot (the keeper's
+     * own touch clears it) nor by his dive alone (he dives at shots that go in or wide). COM v COM,
+     * 31/10: no save was ever said before. */
+    if (p0 == 4 && W.shot_at && !W.save_at && g_vblank - W.shot_at < 120 && (holder == 1 || holder == 12) &&
+        holder != W.shooter)
+        W.save_at = g_vblank;
+    if (W.save_at && g_vblank - W.save_at >= 20) {
+        if (!goal) { event(EV_SAVE); W.last_shot = 0; }
+        W.save_at = W.shot_at = 0;
+    }
+    if (p0 == 4) {
         /* nothing said for a while in open play: a line of colour */
         if (p1 == 1 && g_vblank - g_last_line > 60u * 25 && g_vblank - W.live_since > 600) {
             event(EV_CHATTER);

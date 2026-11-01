@@ -154,36 +154,19 @@ static int in_match(void) {
 static int lefty(void) { return pes6_settings_current.hand == HAND_LEFT; }
 static float mirror_x(float x) { return lefty() ? 1.0f - x : x; }   /* 0..1 */
 
-/* SELECT / START, at the bottom middle in both layouts. */
-static uint32_t center_buttons(float x, float y) {
-    if (y > 0.84f && x > 0.445f && x < 0.5225f) return 0x0001;        /* SELECT */
-    if (y > 0.84f && x >= 0.5225f && x < 0.60f) return 0x0008;        /* START */
-    return 0;
-}
-
-/* The touch d-pad (docs/19, "Cruceta"): fixed, where the stick would appear;
- * a finger anywhere on its side presses the direction it points to from the
- * centre, eight ways. */
+/* The touch d-pad (docs/19, "Cruceta"): where the stick would appear; a finger anywhere on its
+ * side presses the direction it points to from its centre, eight ways. */
 #define DPAD_X   0.17f        /* centre, right-handed, in widths */
 #define DPAD_Y   0.62f        /* ...and heights */
 #define DPAD_ARM 0.135f       /* centre to each arrow, in heights */
 static int dpad_mode(void) { return pes6_settings_current.move == MOVE_DPAD; }
 
-static uint32_t dpad_dir(float x, float y) {                     /* x, y in 0..1 */
-    const float dx = (x - mirror_x(DPAD_X)) * (float)g_w, dy = (y - DPAD_Y) * (float)g_h;
-    const float d = sqrtf(dx * dx + dy * dy);
-    if (d < 0.035f * (float)g_h) return 0;                       /* the dead centre */
-    uint32_t b = 0;
-    if (dx > 0.38f * d) b |= 0x0020; else if (dx < -0.38f * d) b |= 0x0080;
-    if (dy > 0.38f * d) b |= 0x0040; else if (dy < -0.38f * d) b |= 0x0010;
-    return b;
-}
-
-/* R as a full button (by the diamond) when the stick's rim does not sprint:
- * with the d-pad, or with rim running switched off. */
-static int big_r(void) { return dpad_mode() || !pes6_settings_current.rim_run; }
-#define BIG_R_X 0.95f
-#define BIG_R_Y 0.25f
+#define DIAMOND_X 0.84f       /* the CLASSIC / DPAD diamond: centre in widths, heights... */
+#define DIAMOND_Y 0.58f
+#define DIAMOND_D 0.135f      /* ...centre to each button, and their radius, in heights */
+#define DIAMOND_R 0.072f
+#define DIAMOND_LR_DX 0.21f   /* L and R: left and right of its centre, and above it, in heights */
+#define DIAMOND_LR_DY 0.245f
 
 /* The PRO schemes (settings.h, docs/19 §6): for two thumbs. PES6 reads the analog stick as a
  * direction only (measured: 25 % of its travel does nothing, 50 % moves exactly as 100 %), so
@@ -217,23 +200,135 @@ static const pro_button PRO_BTN[] = {
     { 0.25f, 0.26f, 0.045f, 0x1200, OV_COMBO, 0 },   /*           R+triangle */
 };
 static int pro_mode(void) {
-    return pes6_settings_current.controls == CTRL_PRO || pes6_settings_current.controls == CTRL_PRO_KEYS;
+    const int c = pes6_settings_current.controls;
+    return c == CTRL_PRO || c == CTRL_PRO_KEYS || c == CTRL_PRO_DPAD;
 }
 static int pro_count(void) { return pes6_settings_current.controls == CTRL_PRO_KEYS ? 10 : 6; }
-static int pro_flicks(void) { return pes6_settings_current.controls == CTRL_PRO; }
-static float pro_x(const pro_button *p) { return lefty() ? p->a * (float)g_h : (float)g_w - p->a * (float)g_h; }
-static float pro_y(const pro_button *p) { return p->b * (float)g_h; }
+static int pro_flicks(void) { return pes6_settings_current.controls != CTRL_PRO_KEYS; }
+static int pro_dpad(void) { return pes6_settings_current.controls == CTRL_PRO_DPAD; }
 
+/* The PRO schemes' layout (docs/19 §7): every control can be moved and resized by the player
+ * (the editor, edit_controls), and <files>/layout.txt keeps it as "name x y size" lines. x and y
+ * are fractions of the screen as if right-handed (the left hand mirrors them, except SELECT and
+ * START, which stay where they are put); a control never moved sits where the defaults put it,
+ * which follow the screen's shape: the diamond from the right edge in units of the height. */
+enum { C_DPAD = 10, C_SELECT, C_START, C_COUNT };       /* 0..9: PRO_BTN */
+static const char *const C_NAME[C_COUNT] = { "square", "cross", "circle", "triangle", "l", "r", "l_square",
+                                             "r_square", "l_triangle", "r_triangle", "dpad", "select", "start" };
+static const char *const C_LABEL[C_COUNT] = { "Cuadrado", "Equis", "Circulo", "Triangulo", "L", "R", "L + cuadrado",
+                                              "R + cuadrado", "L + triangulo", "R + triangulo", "Cruceta", "Select",
+                                              "Start" };
+/* Three layouts, as their defaults differ: 0 CLASSIC, 1 the PRO schemes, 2 DPAD. */
+static struct { int set; float x, y, s; } g_lays[3][C_COUNT];
+#define g_lay (g_lays[pro_mode() ? 1 : dpad_mode() ? 2 : 0])
+static const char *const LAYOUT_NAME[3] = { "classic", "pro", "dpad" };
+static char g_layout_path[800];
+#define PDPAD_A   0.25f       /* PRO_DPAD's and CLASSIC's d-pad: centre from the left edge, in heights... */
+#define PDPAD_B   0.33f       /* ...and from the top */
+#define PDPAD_ARM 0.085f      /* centre to each arrow, in heights */
+
+static void ctl_default(int c, float *x, float *y) {
+    const float W = (float)(g_w ? g_w : 1), H = (float)(g_h ? g_h : 1);
+    if (c >= C_SELECT) { *x = c == C_SELECT ? 0.485f : 0.560f; *y = 0.93f; return; }
+    if (pro_mode()) {
+        if (c < C_DPAD) { *x = (W - PRO_BTN[c].a * H) / W; *y = PRO_BTN[c].b; }
+        else { *x = PDPAD_A * H / W; *y = PDPAD_B; }
+        return;
+    }
+    static const float dx[4] = { -1, 0, 1, 0 }, dy[4] = { 0, 1, 0, -1 };   /* square cross circle triangle */
+    if (c < 4) { *x = DIAMOND_X + dx[c] * DIAMOND_D * H / W; *y = DIAMOND_Y + dy[c] * DIAMOND_D; }
+    else if (c < C_DPAD) {        /* L and R as in PRO (the user's choice, 31/10): either side above the diamond */
+        *x = DIAMOND_X + (c == 4 ? -DIAMOND_LR_DX : DIAMOND_LR_DX) * H / W;
+        *y = DIAMOND_Y - DIAMOND_LR_DY;
+    }
+    else if (dpad_mode()) { *x = DPAD_X; *y = DPAD_Y; }
+    else { *x = PDPAD_A * H / W; *y = PDPAD_B; }                                    /* CLASSIC's, above the stick */
+}
+static int ctl_mirrored(int c) { return lefty() && c < C_SELECT; }
+static float ctl_size(int c) { return g_lay[c].set ? g_lay[c].s : 1.0f; }
+static void ctl_pos(int c, float *px, float *py) {           /* the centre, in pixels */
+    float x, y;
+    if (g_lay[c].set) { x = g_lay[c].x; y = g_lay[c].y; } else ctl_default(c, &x, &y);
+    *px = (ctl_mirrored(c) ? 1.0f - x : x) * (float)g_w;
+    *py = y * (float)g_h;
+}
+/* A button's radius in pixels: PRO's own sizes; CLASSIC's diamond, L and R. */
+static float pro_r(int i) {
+    float r = pro_mode() ? PRO_BTN[i].r : i < 4 ? DIAMOND_R : 0.062f;
+    return r * (float)g_h * ctl_size(i);
+}
+
+/* layout.txt: "<layout>.<control> x y size" (a bare name is PRO's, as the first editor wrote). */
+static void layout_load(const char *dir) {
+    snprintf(g_layout_path, sizeof g_layout_path, "%s/layout.txt", dir);
+    FILE *f = fopen(g_layout_path, "r");
+    char name[48];
+    float x, y, s;
+    while (f && fscanf(f, "%47s %f %f %f", name, &x, &y, &s) == 4) {
+        const char *dot = strchr(name, '.');
+        const int k = !dot ? 1 : !strncmp(name, "classic.", 8) ? 0 : !strncmp(name, "dpad.", 5) ? 2 : 1;
+        for (int c = 0; c < C_COUNT; c++)
+            if (!strcmp(dot ? dot + 1 : name, C_NAME[c])) { g_lays[k][c].set = 1; g_lays[k][c].x = x; g_lays[k][c].y = y; g_lays[k][c].s = s; }
+    }
+    if (f) fclose(f);
+}
+
+static void layout_save(void) {
+    FILE *f = fopen(g_layout_path, "w");
+    if (!f) return;
+    for (int k = 0; k < 3; k++)
+        for (int c = 0; c < C_COUNT; c++)
+            if (g_lays[k][c].set)
+                fprintf(f, "%s.%s %.4f %.4f %.2f\n", LAYOUT_NAME[k], C_NAME[c], g_lays[k][c].x, g_lays[k][c].y, g_lays[k][c].s);
+    fclose(f);
+}
+
+/* The button a finger takes: the nearest within reach -- 1.25 radii in PRO, more in CLASSIC,
+ * whose diamond was zones once, so a touch between its buttons still takes the nearest. */
 static int pro_hit(float px, float py) {
     int best = -1;
-    float best_q = 1.25f;
+    float best_q = pro_mode() ? 1.25f : 1.9f;
     for (int i = 0; i < pro_count(); i++) {
-        const pro_button *p = &PRO_BTN[i];
-        const float dx = px - pro_x(p), dy = py - pro_y(p);
-        const float q = sqrtf(dx * dx + dy * dy) / (p->r * (float)g_h);
+        float x, y;
+        ctl_pos(i, &x, &y);
+        const float q = sqrtf((px - x) * (px - x) + (py - y) * (py - y)) / pro_r(i);
         if (q < best_q) { best_q = q; best = i; }
     }
     return best;
+}
+
+/* The d-pad, small beside the stick (PRO_DPAD, CLASSIC) or in its place (DPAD): a finger near it
+ * (DPAD: anywhere on its side) presses the way it points from the centre. */
+static int has_dpad(void) { return pro_dpad() || dpad_mode() || pes6_settings_current.controls == CTRL_CLASSIC; }
+static float pdpad_arm(void) { return (dpad_mode() ? DPAD_ARM : PDPAD_ARM) * (float)g_h * ctl_size(C_DPAD); }
+static int pdpad_hit(float px, float py) {
+    if (!has_dpad()) return 0;
+    if (dpad_mode()) return mirror_x(px / (float)(g_w ? g_w : 1)) < STICK_ZONE;
+    float x, y;
+    ctl_pos(C_DPAD, &x, &y);
+    const float r = pdpad_arm() * 1.8f;
+    return (px - x) * (px - x) + (py - y) * (py - y) < r * r;
+}
+static uint32_t pdpad_dir(float px, float py) {
+    float x, y;
+    ctl_pos(C_DPAD, &x, &y);
+    const float dx = px - x, dy = py - y, d = sqrtf(dx * dx + dy * dy);
+    if (d < pdpad_arm() * 0.25f) return 0;
+    uint32_t b = 0;
+    if (dx > 0.38f * d) b |= 0x0020; else if (dx < -0.38f * d) b |= 0x0080;
+    if (dy > 0.38f * d) b |= 0x0040; else if (dy < -0.38f * d) b |= 0x0010;
+    return b;
+}
+
+/* SELECT / START: pills 12 x 5.2 % of the height, touched a good deal wider. */
+static uint32_t pro_center_buttons(float px, float py) {
+    for (int c = C_SELECT; c <= C_START; c++) {
+        float x, y;
+        ctl_pos(c, &x, &y);
+        const float hw = 0.09f * (float)g_h * ctl_size(c), hh = 0.06f * (float)g_h * ctl_size(c);
+        if (fabsf(px - x) < hw && fabsf(py - y) < hh) return c == C_SELECT ? 0x0001 : 0x0008;
+    }
+    return 0;
 }
 
 /* The fingers on the PRO buttons: each keeps the button it landed on. `variant`: -1 the flick
@@ -311,26 +406,100 @@ static uint32_t pro_buttons(uint32_t *shown) {
     return b;
 }
 
-static uint32_t touch_to_buttons(float x0, float y) {     /* x, y in 0..1 */
-    const uint32_t c = center_buttons(x0, y);
+/* CLASSIC / DPAD: what a finger presses where it is now (it may slide from one button to the next,
+ * as on the old zones): SELECT / START, the d-pad, the nearest button. */
+static uint32_t classic_touch(float px, float py) {
+    const uint32_t c = pro_center_buttons(px, py);
     if (c) return c;
-    const float x = mirror_x(x0);             /* as if right-handed */
-    if (x < STICK_ZONE) return dpad_mode() ? dpad_dir(x0, y) : 0;    /* the stick's side */
-    if (big_r()) {
-        const float dx = (x - BIG_R_X) * (float)g_w, dy = (y - BIG_R_Y) * (float)g_h;
-        if (dx * dx + dy * dy < 0.10f * (float)g_h * 0.10f * (float)g_h) return 0x0200;
-    } else if (y < 0.17f && x > 0.90f) {
-        return 0x0200;                                                /* R: small, in the corner */
+    if (pdpad_hit(px, py)) return pdpad_dir(px, py);
+    if (mirror_x(px / (float)(g_w ? g_w : 1)) < STICK_ZONE) return 0;     /* the stick's side */
+    const int i = pro_hit(px, py);
+    return i < 0 ? 0 : PRO_BTN[i].mask;
+}
+
+/* The replay viewer (docs/19 §8): the game drives it with the d-pad (left / right rewind and play
+ * fast, up / down zoom) and the stick (left / right: whom the camera follows). On a touch screen,
+ * a finger that lands off the buttons drags instead: sideways and held there, back or forward;
+ * up or down, or two fingers pinching, the zoom; a double tap follows the next one. */
+#define REPLAY_DRAG   0.06f   /* of the screen height: a drag past this holds the way */
+#define REPLAY_TAP_MS 250
+static struct {
+    int n, axis;                      /* fingers (up to 2); a single one's axis: 0 not yet, 1 x, 2 y */
+    int32_t id[2];
+    float x0[2], y0[2], x[2], y[2];
+    int moved;                        /* it went past REPLAY_DRAG: not a tap */
+    uint64_t t0, tap_at, next_until;  /* the finger's landing, the last tap, the stick's push */
+} g_rp;
+
+static int replay_viewer(void) {
+    if (!in_match() || !psp_read32(PES6_REPLAY_ON) || psp_read8(PES6_REPLAY_BUSY)) return 0;
+    const uint8_t m = psp_read8(PES6_REPLAY_MODE);
+    return m == 0 || m == 4 || m == 7 || m == 8;
+}
+
+static int replay_finger(int32_t id) {
+    for (int i = 0; i < g_rp.n; i++)
+        if (g_rp.id[i] == id) return i;
+    return -1;
+}
+
+static void replay_rebase(void) {     /* the fingers changed: measure from where they are now */
+    for (int i = 0; i < g_rp.n; i++) { g_rp.x0[i] = g_rp.x[i]; g_rp.y0[i] = g_rp.y[i]; }
+    g_rp.axis = 0;
+}
+
+static void replay_touch(int32_t id, float px, float py, uint64_t now) {
+    int i = replay_finger(id);
+    if (i < 0) {
+        if (g_rp.n == 2) return;
+        i = g_rp.n++;
+        g_rp.id[i] = id;
+        g_rp.x[i] = px;
+        g_rp.y[i] = py;
+        if (g_rp.n == 1) { g_rp.moved = 0; g_rp.t0 = now; }
+        else g_rp.moved = 1;
+        replay_rebase();
+        return;
     }
-    {   /* L (change player): a round button up and to the left of the diamond */
-        const float dx = (x - 0.745f) * (float)g_w, dy = (y - 0.36f) * (float)g_h;
-        if (dx * dx + dy * dy < 0.10f * (float)g_h * 0.10f * (float)g_h) return 0x0100;
+    g_rp.x[i] = px;
+    g_rp.y[i] = py;
+    const float lim = REPLAY_DRAG * (float)g_h;
+    if (fabsf(px - g_rp.x0[i]) > lim || fabsf(py - g_rp.y0[i]) > lim) g_rp.moved = 1;
+}
+
+/* Fingers no longer down are dropped; a short one that did not move is a tap, two a double tap. */
+static void replay_lift_missing(const int32_t *ids, int n, uint64_t now) {
+    for (int i = g_rp.n - 1; i >= 0; i--) {
+        int still = 0;
+        for (int k = 0; k < n; k++) still |= ids[k] == g_rp.id[i];
+        if (still) continue;
+        if (g_rp.n == 1 && !g_rp.moved && now - g_rp.t0 < REPLAY_TAP_MS) {
+            if (now - g_rp.tap_at < 2 * REPLAY_TAP_MS) { g_rp.next_until = now + 120; g_rp.tap_at = 0; haptic(12); }
+            else g_rp.tap_at = now;
+        }
+        g_rp.id[i] = g_rp.id[g_rp.n - 1];
+        g_rp.x[i] = g_rp.x[g_rp.n - 1];
+        g_rp.y[i] = g_rp.y[g_rp.n - 1];
+        g_rp.n--;
+        replay_rebase();
     }
-    if (x > 0.62f) {                                                  /* face buttons */
-        const float dx = (x0 - mirror_x(0.84f)) * (float)g_w, dy = (y - 0.58f) * (float)g_h;
-        if (fabsf(dx) > fabsf(dy)) return dx > 0 ? 0x2000 : 0x8000;   /* circle / square */
-        return dy > 0 ? 0x4000 : 0x1000;                              /* cross / triangle */
+}
+
+static uint32_t replay_buttons(void) {
+    if (!g_rp.n) return 0;
+    const float lim = REPLAY_DRAG * (float)g_h;
+    if (g_rp.n == 2) {                                 /* pinch: apart zooms in, together out */
+        const float d0 = hypotf(g_rp.x0[0] - g_rp.x0[1], g_rp.y0[0] - g_rp.y0[1]);
+        const float d = hypotf(g_rp.x[0] - g_rp.x[1], g_rp.y[0] - g_rp.y[1]);
+        return d - d0 > lim ? 0x0010u : d0 - d > lim ? 0x0040u : 0;
     }
+    const float dx = g_rp.x[0] - g_rp.x0[0], dy = g_rp.y[0] - g_rp.y0[0];
+    if (!g_rp.axis && (fabsf(dx) > lim || fabsf(dy) > lim)) {
+        g_rp.axis = fabsf(dx) >= fabsf(dy) ? 1 : 2;
+        haptic(12);
+    }
+    if (g_rp.axis == 1) return dx > lim ? 0x0020u : dx < -lim ? 0x0080u : 0;
+    if (g_rp.axis == 2) return dy < -lim ? 0x0010u : dy > lim ? 0x0040u : 0;
     return 0;
 }
 
@@ -354,8 +523,72 @@ static int face_index(int32_t code) {
     }
 }
 
+/* The touch controls' editor (edit_controls): one finger drags a control or presses one of the
+ * buttons along the top (launcher.c); the control last touched is the one - and + resize. */
+static struct { int on, sel, drag, btn, done; float offx, offy; } g_ed = { 0, -1, 0, -1, 0, 0, 0 };
+
+static int ctl_visible(int c) {
+    if (c < 6 || c >= C_SELECT) return 1;
+    return c == C_DPAD ? has_dpad() : pes6_settings_current.controls == CTRL_PRO_KEYS;
+}
+static float ctl_reach(int c) {                  /* how near a finger must land to take it */
+    if (c < C_DPAD) return pro_r(c) * 1.2f;
+    if (c == C_DPAD) return pdpad_arm() * 1.6f;
+    return 0.09f * (float)g_h * ctl_size(c);
+}
+static void ctl_place(int c, float x, float y, float s) {    /* x, y in pixels as drawn */
+    float fx = x / (float)(g_w ? g_w : 1), fy = y / (float)(g_h ? g_h : 1);
+    fx = fx < 0.03f ? 0.03f : fx > 0.97f ? 0.97f : fx;
+    fy = fy < 0.05f ? 0.05f : fy > 0.97f ? 0.97f : fy;
+    g_lay[c].set = 1;
+    g_lay[c].x = ctl_mirrored(c) ? 1.0f - fx : fx;
+    g_lay[c].y = fy;
+    g_lay[c].s = s;
+}
+
+static void editor_action(int b) {
+    if (b == PES6_EDITOR_DONE) { g_ed.done = 1; return; }
+    if (b == PES6_EDITOR_RESET) { memset(g_lay, 0, sizeof g_lay); g_ed.sel = -1; return; }
+    if (g_ed.sel < 0) return;
+    float s = ctl_size(g_ed.sel) + (b == PES6_EDITOR_BIGGER ? 0.1f : -0.1f), x, y;
+    s = s < 0.6f ? 0.6f : s > 1.8f ? 1.8f : s;
+    ctl_pos(g_ed.sel, &x, &y);
+    ctl_place(g_ed.sel, x, y, s);
+}
+
+static void editor_touch(int32_t what, float px, float py) {
+    float tx, ty;
+    pes6_launcher_window_point(px, py, g_w, g_h, &tx, &ty);
+    if (what == AMOTION_EVENT_ACTION_DOWN) {
+        g_ed.btn = pes6_launcher_editor_hit(tx, ty);
+        if (g_ed.btn >= 0) return;
+        float best = 1e9f;
+        for (int c = 0; c < C_COUNT; c++) {
+            if (!ctl_visible(c)) continue;
+            float x, y;
+            ctl_pos(c, &x, &y);
+            const float d = sqrtf((px - x) * (px - x) + (py - y) * (py - y));
+            if (d < ctl_reach(c) && d < best) { best = d; g_ed.sel = c; g_ed.offx = x - px; g_ed.offy = y - py; }
+        }
+        g_ed.drag = best < 1e9f;
+    } else if (what == AMOTION_EVENT_ACTION_MOVE) {
+        if (g_ed.drag && g_ed.sel >= 0) ctl_place(g_ed.sel, px + g_ed.offx, py + g_ed.offy, ctl_size(g_ed.sel));
+    } else if (what == AMOTION_EVENT_ACTION_UP || what == AMOTION_EVENT_ACTION_CANCEL) {
+        if (g_ed.btn >= 0 && what == AMOTION_EVENT_ACTION_UP && pes6_launcher_editor_hit(tx, ty) == g_ed.btn)
+            editor_action(g_ed.btn);
+        g_ed.btn = -1;
+        g_ed.drag = 0;
+    }
+}
+
 static int32_t on_input(struct android_app *app, AInputEvent *ev) {
     (void)app;
+    if (g_ed.on && AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION &&
+        (AInputEvent_getSource(ev) & AINPUT_SOURCE_TOUCHSCREEN) == AINPUT_SOURCE_TOUCHSCREEN) {
+        editor_touch(AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK, AMotionEvent_getX(ev, 0),
+                     AMotionEvent_getY(ev, 0));
+        return 1;
+    }
     if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION &&
         (AInputEvent_getSource(ev) & AINPUT_SOURCE_CLASS_JOYSTICK) == AINPUT_SOURCE_CLASS_JOYSTICK) {
         /* A gamepad's sticks, hat and triggers. */
@@ -395,8 +628,9 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
         }
         int stick_seen = 0;
         const uint64_t now = now_ms();
-        int32_t ids[MAX_FINGERS + 2];
-        int nids = 0;
+        int32_t ids[MAX_FINGERS + 2], rids[MAX_FINGERS + 2];
+        int nids = 0, nrids = 0;
+        const int viewer = replay_viewer();
         g_last_touch_ms = now;
         for (size_t i = 0; !all_up && i < AMotionEvent_getPointerCount(ev); i++) {
             if (what == AMOTION_EVENT_ACTION_POINTER_UP && i == lifted) continue;
@@ -407,7 +641,15 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
             const float nx = px / (float)(g_w ? g_w : 1), ny = py / (float)(g_h ? g_h : 1);
             int on_button = 0;
             for (int k = 0; k < MAX_FINGERS; k++) on_button |= g_fing[k].used && g_fing[k].down && g_fing[k].id == id;
-            if (!dpad_mode() && g_stick_id < 0 && !on_button && mirror_x(nx) < STICK_ZONE && !center_buttons(nx, ny)) {
+            const int fixed = pro_center_buttons(px, py) || pdpad_hit(px, py);
+            /* In the replay viewer a finger off the buttons drags the replay instead of a stick. */
+            if (viewer && id != g_stick_id && !on_button &&
+                (replay_finger(id) >= 0 || (!fixed && pro_hit(px, py) < 0))) {
+                replay_touch(id, px, py, now);
+                if (nrids < MAX_FINGERS + 2) rids[nrids++] = id;
+                continue;
+            }
+            if (!dpad_mode() && g_stick_id < 0 && !on_button && mirror_x(nx) < STICK_ZONE && !fixed) {
                 g_stick_id = id;
                 g_stick_ox = px;
                 g_stick_oy = py;
@@ -423,16 +665,18 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
                 stick_seen = 1;
                 continue;
             }
-            if (pro_mode()) {                /* SELECT / START as ever; the rest by finger */
-                const uint32_t c = center_buttons(nx, ny);
+            if (pro_mode()) {                /* SELECT / START and the d-pad as ever; the rest by finger */
+                const uint32_t c = pro_center_buttons(px, py);
                 if (c) b |= c;
+                else if (pdpad_hit(px, py) && !on_button) b |= pdpad_dir(px, py);
                 else pro_touch(id, px, py, now);
                 if (nids < MAX_FINGERS + 2) ids[nids++] = id;
                 continue;
             }
-            b |= touch_to_buttons(px / (float)(g_w ? g_w : 1), py / (float)(g_h ? g_h : 1));
+            b |= classic_touch(px, py);
         }
         pro_lift_missing(ids, nids, now);
+        replay_lift_missing(rids, nrids, now);
         if (!stick_seen) { g_stick_id = -1; g_stick_x = g_stick_y = 0; }
         g_touch_buttons = b;
         return 1;
@@ -510,7 +754,8 @@ static uint32_t pad_buttons(int stick_dpad) {
 }
 
 static uint32_t android_buttons(void) {
-    return g_touch_buttons | g_key_buttons | stick_buttons() | pad_buttons(!in_match()) |
+    if (g_rp.n && !replay_viewer()) g_rp.n = 0;         /* the viewer closed under the fingers */
+    return g_touch_buttons | g_key_buttons | stick_buttons() | pad_buttons(!in_match()) | replay_buttons() |
            (pro_mode() ? pro_buttons(NULL) : 0);
 }
 extern uint32_t (*pes6_input_extra_analog)(void);
@@ -523,6 +768,7 @@ static uint32_t android_analog(void) {
         const int ly = 128 + (int)(fmaxf(-1, fminf(1, g_pad_ly)) * 127.0f);
         return (uint32_t)(lx & 0xFF) | ((uint32_t)(ly & 0xFF) << 8);
     }
+    if (now_ms() < g_rp.next_until) return 0x80FFu;       /* the replay's double tap: stick right */
     const float d = sqrtf(g_stick_x * g_stick_x + g_stick_y * g_stick_y);
     if (d < STICK_DEAD || !in_match()) return 0x8080u;       /* menus take the stepped d-pad only */
     const int lx = 128 + (int)(g_stick_x / d * 127.0f), ly = 128 + (int)(g_stick_y / d * 127.0f);
@@ -550,7 +796,7 @@ static void load_env(const char *dir) {
 
 /* ---- on-screen controls --------------------------------------------------- */
 
-/* The touch zones of touch_to_buttons(), drawn over the picture. Each control
+/* The touch controls (ov_layout), drawn over the picture. Each control
  * is one quad; the fragment shader draws it from signed distances -- a dark
  * glass body, a light rim and the button's symbol -- so edges are smooth at
  * any size and nothing needs a texture. */
@@ -677,12 +923,12 @@ static int pad_in_use(void) {
 
 /* The PRO buttons, lit as pro_buttons() says; in PRO, square and triangle carry a faint L above
  * and R below (the flicks), lit while one is held. */
-static void ov_pro(void) {
-    uint32_t lit = 0;
-    pro_buttons(&lit);
+static void ov_pro(uint32_t lit) {
     for (int i = 0; i < pro_count(); i++) {
         const pro_button *p = &PRO_BTN[i];
-        const float x = pro_x(p), y = pro_y(p), r = p->r * (float)g_h;
+        float x, y;
+        ctl_pos(i, &x, &y);
+        const float r = pro_r(i);
         const uint32_t face = p->mask & 0xF000u;
         const float *c = face == 0x8000u ? (const float[3]){ 0.95f, 0.56f, 0.86f } :
                          face == 0x4000u ? (const float[3]){ 0.48f, 0.66f, 1.00f } :
@@ -703,31 +949,14 @@ static void ov_pro(void) {
     }
 }
 
-/* The first layouts' buttons (CLASSIC, DPAD): the PSP diamond, L, R. */
-static void ov_classic(uint32_t held, float W, float H, float u) {
-#define ON(mask) ((held & (mask)) != 0)
-    /* face buttons: the diamond, in the PlayStation colours */
-    const float fx = mirror_x(0.84f) * W, fy = 0.58f * H, d = 13.5f * u, r = 7.2f * u;
-    ov_quad(fx, fy - d, r, r, OV_TRIANGLE, ON(0x1000), 0.30f, 0.86f, 0.66f, 1);
-    ov_quad(fx + d, fy, r, r, OV_CIRCLE,   ON(0x2000), 0.98f, 0.40f, 0.40f, 1);
-    ov_quad(fx, fy + d, r, r, OV_CROSS,    ON(0x4000), 0.48f, 0.66f, 1.00f, 1);
-    ov_quad(fx - d, fy, r, r, OV_SQUARE,   ON(0x8000), 0.95f, 0.56f, 0.86f, 1);
-
-    /* L (change player) by the diamond, R in the corner, SELECT and START */
-    ov_quad(mirror_x(0.745f) * W, 0.36f * H, 6.2f * u, 6.2f * u, OV_L, ON(0x0100), 1, 1, 1, 1);
-    /* R is only needed in menus (the stick's rim does the dashing): small,
-     * faint and out of the way. Its last parameter is an opacity factor. */
-    if (big_r()) ov_quad(mirror_x(BIG_R_X) * W, BIG_R_Y * H, 6.2f * u, 6.2f * u, OV_R, ON(0x0200), 1, 1, 1, 1);
-    else         ov_quad(mirror_x(0.955f) * W, 0.085f * H, 4.3f * u, 4.3f * u, OV_R, ON(0x0200), 1, 1, 1, 0.5f);
-#undef ON
-}
+static void ov_layout(uint32_t lit, int chosen);
+static void ov_submit(void);
 
 static void ov_draw(void) {
     if (!OV.prog) ov_init();
     if (pad_in_use()) return;
     const uint32_t held = g_touch_buttons;
-    const float W = (float)g_w, H = (float)g_h, u = H * 0.01f;      /* u: 1% of the height */
-#define ON(mask) ((held & (mask)) != 0)
+    const float H = (float)g_h;
     OV.n = 0;
 
     /* stick: only while a finger holds it -- the well with its walk/run
@@ -736,13 +965,7 @@ static void ov_draw(void) {
     const int moving = g_stick_x != 0 || g_stick_y != 0;
     const int running = in_match() && (pro_mode() ? g_sprinting : pes6_settings_current.rim_run &&
                         sqrtf(g_stick_x * g_stick_x + g_stick_y * g_stick_y) >= STICK_RUN);
-    if (dpad_mode()) {
-        const float cx = mirror_x(DPAD_X) * W, cy = DPAD_Y * H, a = DPAD_ARM * H, r = 6.6f * u;
-        ov_quad(cx, cy - a, r, r, OV_ARROW, ON(0x0010), 0.92f, 0.92f, 0.92f, 0);
-        ov_quad(cx + a, cy, r, r, OV_ARROW, ON(0x0020), 0.92f, 0.92f, 0.92f, 1);
-        ov_quad(cx, cy + a, r, r, OV_ARROW, ON(0x0040), 0.92f, 0.92f, 0.92f, 2);
-        ov_quad(cx - a, cy, r, r, OV_ARROW, ON(0x0080), 0.92f, 0.92f, 0.92f, 3);
-    } else if (g_stick_id >= 0) {
+    if (!dpad_mode() && g_stick_id >= 0) {
         /* the dashed walk/run ring only when the rim runs (radius > 1 hides it) */
         ov_quad(sx, sy, sr, sr, OV_STICK, moving, 1.0f, 1.0f, 1.0f,
                 pro_mode() ? SPRINT_ON : pes6_settings_current.rim_run ? STICK_RUN : 2.0f);
@@ -750,12 +973,57 @@ static void ov_draw(void) {
         else         ov_quad(sx + g_stick_x * sr, sy + g_stick_y * sr, sr * 0.36f, sr * 0.36f, OV_KNOB, moving, 0.88f, 0.90f, 0.94f, 1);
     }
 
-    if (pro_mode()) ov_pro();
-    else ov_classic(held, W, H, u);
-    ov_quad(0.485f * W, 0.93f * H, 6.0f * u, 2.6f * u, OV_SELECT, ON(0x0001), 0.9f, 0.9f, 0.9f, 6.0f / 2.6f);
-    ov_quad(0.560f * W, 0.93f * H, 6.0f * u, 2.6f * u, OV_START,  ON(0x0008), 0.9f, 0.9f, 0.9f, 6.0f / 2.6f);
-#undef ON
+    uint32_t lit = 0;
+    if (pro_mode()) pro_buttons(&lit);
+    ov_layout(lit | held, -1);
+    ov_submit();
+}
 
+/* Every control of the scheme where its layout puts it: the buttons (PRO's, or CLASSIC's diamond,
+ * L and R -- R small and faint in the corner when the stick's rim sprints), the d-pad, SELECT and
+ * START; `lit` as pressed, and the control `chosen` (the editor's) lit as well. */
+static void ov_layout(uint32_t lit, int chosen) {
+    const float u = (float)g_h * 0.01f;
+    uint32_t show = lit;
+    if (chosen >= 0 && chosen < C_DPAD) show |= PRO_BTN[chosen].mask;
+    if (pro_mode()) {
+        ov_pro(show);
+    } else {
+        for (int i = 0; i < 6; i++) {
+            float x, y;
+            ctl_pos(i, &x, &y);
+            const uint32_t m = PRO_BTN[i].mask;
+            const float r = pro_r(i);
+            const float *c = m == 0x8000u ? (const float[3]){ 0.95f, 0.56f, 0.86f } :
+                             m == 0x4000u ? (const float[3]){ 0.48f, 0.66f, 1.00f } :
+                             m == 0x2000u ? (const float[3]){ 0.98f, 0.40f, 0.40f } :
+                             m == 0x1000u ? (const float[3]){ 0.30f, 0.86f, 0.66f } : (const float[3]){ 1, 1, 1 };
+            ov_quad(x, y, r, r, PRO_BTN[i].shape, (show & m) != 0, c[0], c[1], c[2], 1.0f);
+        }
+    }
+    if (has_dpad()) {
+        float cx, cy;
+        ctl_pos(C_DPAD, &cx, &cy);
+        const float a = pdpad_arm(), r = (dpad_mode() ? 6.6f : 5.6f) * u * ctl_size(C_DPAD);
+        const int all = chosen == C_DPAD;
+        ov_quad(cx, cy - a, r, r, OV_ARROW, all || (lit & 0x0010), 0.92f, 0.92f, 0.92f, 0);
+        ov_quad(cx + a, cy, r, r, OV_ARROW, all || (lit & 0x0020), 0.92f, 0.92f, 0.92f, 1);
+        ov_quad(cx, cy + a, r, r, OV_ARROW, all || (lit & 0x0040), 0.92f, 0.92f, 0.92f, 2);
+        ov_quad(cx - a, cy, r, r, OV_ARROW, all || (lit & 0x0080), 0.92f, 0.92f, 0.92f, 3);
+    }
+    for (int c = C_SELECT; c <= C_START; c++) {
+        float x, y;
+        ctl_pos(c, &x, &y);
+        const float k = ctl_size(c);
+        const uint32_t m = c == C_SELECT ? 0x0001u : 0x0008u;
+        ov_quad(x, y, 6.0f * u * k, 2.6f * u * k, c == C_SELECT ? OV_SELECT : OV_START, chosen == c || (lit & m),
+                0.9f, 0.9f, 0.9f, 6.0f / 2.6f);
+    }
+}
+
+/* The quads gathered in OV, drawn over whatever is on the screen. */
+static void ov_submit(void) {
+    const float W = (float)g_w, H = (float)g_h;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, g_w, g_h);
     glDisable(GL_SCISSOR_TEST);
@@ -797,6 +1065,11 @@ static void surface_create(void) {
     surface_size();
 }
 
+static int g_immersive = 1;          /* the system bars are to be hidden (again): Device.immersive */
+static int g_bars_req;               /* ...asked of the JNI thread once the game runs (wifi_thread) */
+static int g_jni_thread;             /* wifi_thread is up */
+static void immersive(void);
+
 static void on_cmd(struct android_app *app, int32_t cmd) {
     (void)app;
     switch (cmd) {
@@ -805,6 +1078,10 @@ static void on_cmd(struct android_app *app, int32_t cmd) {
         break;
     case APP_CMD_RESUME:
         g_paused = 0;
+        g_immersive = 1;
+        break;
+    case APP_CMD_GAINED_FOCUS:
+        g_immersive = 1;
         break;
     case APP_CMD_TERM_WINDOW:
         if (g_dpy != EGL_NO_DISPLAY && g_surf != EGL_NO_SURFACE) {
@@ -815,6 +1092,7 @@ static void on_cmd(struct android_app *app, int32_t cmd) {
         break;
     case APP_CMD_INIT_WINDOW:
         if (g_ctx != EGL_NO_CONTEXT) surface_create();
+        g_immersive = 1;
         break;
     case APP_CMD_DESTROY:
         LOGI("activity destroyed after %llu vblanks, exiting", (unsigned long long)g_frames);
@@ -831,6 +1109,13 @@ static void pump_events(int wait_ms) {
     while (ALooper_pollOnce(wait_ms, NULL, &events, (void **)&src) >= 0) {
         if (src) src->process(g_app, src);
         wait_ms = 0;
+    }
+    /* Java only from a thread's own stack: in the menu this one, once the game runs (its
+     * threads on stacks of their own, where pump_events also runs) the JNI thread. */
+    if (g_immersive) {
+        g_immersive = 0;
+        if (!g_jni_thread) immersive();
+        else { pthread_mutex_lock(&g_wifi_mu); g_bars_req = 1; pthread_cond_signal(&g_wifi_cv); pthread_mutex_unlock(&g_wifi_mu); }
     }
     surface_size();
 }
@@ -1110,8 +1395,9 @@ static JNIEnv *main_env(void) {
     return env;
 }
 
-static jclass iso_class(JNIEnv *env) {
-    if (I.cls) return I.cls;
+/* One of our classes (runtime/android/java), through the activity's class loader: FindClass on
+ * a native thread only sees the system's. A global reference, or NULL. */
+static jclass app_class(JNIEnv *env, const char *name) {
     jobject activity = g_app->activity->clazz;
     jclass act = (*env)->GetObjectClass(env, activity);
     jobject loader = (*env)->CallObjectMethod(env, activity,
@@ -1119,9 +1405,23 @@ static jclass iso_class(JNIEnv *env) {
     jclass lc = (*env)->FindClass(env, "java/lang/ClassLoader");
     jclass c = (jclass)(*env)->CallObjectMethod(env, loader,
         (*env)->GetMethodID(env, lc, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"),
-        (*env)->NewStringUTF(env, "com.pes6port.IsoPicker"));
+        (*env)->NewStringUTF(env, name));
     if (!c || (*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); return NULL; }
-    return I.cls = (jclass)(*env)->NewGlobalRef(env, c);
+    return (jclass)(*env)->NewGlobalRef(env, c);
+}
+
+/* Full screen: the navigation buttons and the status bar hidden (Device.immersive). */
+static void immersive(void) {
+    static jclass cls;
+    JNIEnv *env = main_env();
+    if (!env || (!cls && !(cls = app_class(env, "com.pes6port.Device")))) return;
+    (*env)->CallStaticVoidMethod(env, cls, (*env)->GetStaticMethodID(env, cls, "immersive", "(Landroid/app/Activity;)V"),
+                                 g_app->activity->clazz);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+}
+
+static jclass iso_class(JNIEnv *env) {
+    return I.cls ? I.cls : (I.cls = app_class(env, "com.pes6port.IsoPicker"));
 }
 
 static void *iso_copy_thread(void *arg) {
@@ -1246,6 +1546,38 @@ static void iso_step(pes6_launcher *l, int want_pick) {
  * the saved settings and PES6_VERSION. Returns the chosen version, or
  * NULL to quit; pes6_version_apply comes later, once the disc is open: a mod
  * patches the disc's banks (afs_mods.c: crests and more). */
+/* The editor of the PRO layout (BOTONES in the menu, docs/19 §7): the controls over the menu's
+ * backdrop, dragged where the player wants them; Listo (or circle on a pad) keeps the layout. */
+static int edit_controls(uint32_t *px) {
+    if (!OV.prog) ov_init();
+    memset(&g_ed, 0, sizeof g_ed);
+    g_ed.sel = g_ed.btn = -1;
+    g_ed.on = 1;
+    uint32_t held = ~0u;
+    while (!g_ed.done) {
+        pump_events(16);
+        if (g_app->destroyRequested) { g_ed.on = 0; return -1; }
+        const uint32_t b = g_key_buttons | pad_buttons(1), pressed = b & ~held;
+        held = b;
+        if (pressed & 0x2008u) g_ed.done = 1;                 /* circle or START */
+        if (g_surf == EGL_NO_SURFACE) continue;
+        char help[128];
+        if (g_ed.sel < 0) snprintf(help, sizeof help, "Arrastra un boton para moverlo. Toca uno y usa - y + para su tamano.");
+        else snprintf(help, sizeof help, "%s, tamano x%.1f: arrastralo, o - y + para el tamano.", C_LABEL[g_ed.sel],
+                      ctl_size(g_ed.sel));
+        const int k = pes6_launcher_scale_for(g_w, g_h);
+        pes6_launcher_draw_editor(px, k, help, -1);
+        pes6_ge_gl_present_image(px, 480 * k, 272 * k, g_w, g_h);
+        OV.n = 0;
+        ov_layout(0, g_ed.sel);
+        ov_submit();
+        eglSwapBuffers(g_dpy, g_surf);
+    }
+    g_ed.on = 0;
+    layout_save();
+    return 0;
+}
+
 static pes6_version g_versions[8];
 
 static const pes6_version *choose_version(const char *io_root, const char *mods) {
@@ -1277,6 +1609,14 @@ static const pes6_version *choose_version(const char *io_root, const char *mods)
             g_tap = 0;
             pes6_launcher_set_pad(&l, g_pad_name[0] ? g_pad_name : g_pad_seen ? "mando" : "");
             i = pes6_launcher_update(&l, g_touch_buttons | g_key_buttons | pad_buttons(1), tap, tx, ty);
+            if (i == PES6_LAUNCHER_EDIT_CONTROLS) {         /* the layout of the scheme now chosen */
+                pes6_settings_current = settings;
+                if (edit_controls(px) != 0) return NULL;
+                l.held = ~0u;
+                g_tap = 0;
+                i = -1;
+                continue;
+            }
             if (I.on) iso_step(&l, i == PES6_LAUNCHER_PICK_ISO);
             if (i == PES6_LAUNCHER_PICK_ISO) i = -1;
             if (g_surf == EGL_NO_SURFACE) continue;            /* paused: nothing to draw on */
@@ -1551,14 +1891,20 @@ static void *wifi_thread(void *arg) {
             struct timespec until;
             clock_gettime(CLOCK_REALTIME, &until);
             until.tv_sec += 1;
-            while ((g_wifi_want < 0 || g_wifi_want == held) && !g_osk_req && !g_haptic_ms)
+            while ((g_wifi_want < 0 || g_wifi_want == held) && !g_osk_req && !g_haptic_ms && !g_bars_req)
                 if (pthread_cond_timedwait(&g_wifi_cv, &g_wifi_mu, &until) != 0) break;
         }
         const int want = g_wifi_want < 0 ? held : g_wifi_want;
-        const int osk = g_osk_req, tick = g_haptic_ms;
-        g_haptic_ms = 0;
+        const int osk = g_osk_req, tick = g_haptic_ms, bars = g_bars_req;
+        g_haptic_ms = g_bars_req = 0;
         pthread_mutex_unlock(&g_wifi_mu);
         if (osk) osk_prompt(env, activity->clazz);
+        if (bars && device_class(env, activity->clazz)) {
+            jclass c = device_class(env, activity->clazz);
+            (*env)->CallStaticVoidMethod(env, c, (*env)->GetStaticMethodID(env, c, "immersive", "(Landroid/app/Activity;)V"),
+                                         activity->clazz);
+            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        }
         if (tick) device_poll(env, activity->clazz, tick);
         if (time(NULL) != pads_at) { pads_at = time(NULL); device_poll(env, activity->clazz, 0); }
 
@@ -1615,6 +1961,7 @@ void android_main(struct android_app *app) {
     if (freopen(path, "w", stderr)) setvbuf(stderr, NULL, _IOLBF, 0);
     LOGI("data directory: %s", dir);
     load_env(dir);
+    layout_load(dir);
 
     while (!app->window) pump_events(100);
     if (egl_init() != 0) { LOGE("EGL / OpenGL ES 3 unavailable"); return; }
@@ -1691,6 +2038,7 @@ void android_main(struct android_app *app) {
         pthread_t t;
         if (pthread_create(&t, NULL, wifi_thread, app->activity) == 0) {
             pthread_detach(t);
+            g_jni_thread = 1;
             pes6_net_on_link = wifi_on_link;
             pes6_osk_show = osk_show;
         }
@@ -1702,9 +2050,12 @@ void android_main(struct android_app *app) {
         scale = pes6_settings_scale(cs, g_h);
         pes6_ge_gl_configure(scale, cs->quality == QUALITY_HIGH, cs->quality != QUALITY_LOW);
         setup_commentary(dir, mods);
-        /* the match in the screen's shape (docs/31); env.txt PES6_WIDE=0 keeps it 480:272 */
+        pes6_camera_set_distance(pes6_settings_camera_distance(cs));
+        /* the match in the screen's shape (docs/31), unless the player keeps the PSP's 16:9
+         * (Pantalla); env.txt PES6_WIDE=0 keeps it 480:272 too */
         const char *wide = getenv("PES6_WIDE");
-        if (g_h > 0 && (float)g_w / (float)g_h > 480.0f / 272.0f + 0.01f && !(wide && *wide == '0')) {
+        if (g_h > 0 && (float)g_w / (float)g_h > 480.0f / 272.0f + 0.01f && !(wide && *wide == '0') &&
+            cs->screen == SCREEN_FULL) {
             pes6_widescreen_set_aspect((float)g_w / (float)g_h);
             psp_add_vblank_task(pes6_widescreen_frame);
             LOGI("widescreen match: %dx%d", g_w, g_h);
