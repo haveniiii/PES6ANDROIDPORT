@@ -15,6 +15,7 @@
 #                                            OUTDIR/{a,b}_timing.txt and OUTDIR/{a,b}_dump.txt
 #   NET_A_SLOW / NET_B_SLOW                  PES6_NET_SLOW for one instance (a host that cannot keep up)
 #   NET_VERSION=pech2026                     the game version of both (default original; docs/29)
+#   NET_ARGS="--gpu"                         extra host arguments for both (PES6_WIDE needs --gpu)
 #   (PES6_NET_LAG / PES6_NET_DROP in the environment apply to both instances)
 # Logs: OUTDIR/a.log, OUTDIR/b.log; captures OUTDIR/a_*.ppm, OUTDIR/b_*.ppm.
 set -e
@@ -33,8 +34,8 @@ rm -rf build/SAVEDATA/ULES004764001000 build/inst2/SAVEDATA/ULES004764001000 \
 
 PES6_NET_SLOW="${NET_B_SLOW:-}" PES6_NET_TIMING="${NET_TIMING:+$OUT/b_timing.txt}" PES6_NET_DUMP="${NET_TIMING:+$OUT/b_dump.txt}" PES6_AUDIO_DUMP="${NET_AUDIO:+$OUT/b}" PES6_FNPROF="${NET_B_FNPROF:-}" PES6_VERSION=$V PES6_NET_LOG=1 PES6_NET_PORT=27601 PES6_NET_PEERS=127.0.0.1:27600 PES6_IO_ROOT=build/inst2 PES6_OSK_TEXT=VISITA \
   PES6_INPUT="$B" PES6_CAPTURE_AT="$NET_CAPTURE" PES6_CAPTURE_PREFIX="$OUT/b" PES6_STOP_AT="$STOP" \
-  $BIN build/EBOOT.elf --window 1 --seconds "${NET_SECONDS:-600}" > "$OUT/b.log" 2>&1 &
+  $BIN build/EBOOT.elf --window 1 ${NET_ARGS:-} --seconds "${NET_SECONDS:-600}" > "$OUT/b.log" 2>&1 &
 PES6_NET_SLOW="${NET_A_SLOW:-}" PES6_NET_TIMING="${NET_TIMING:+$OUT/a_timing.txt}" PES6_NET_DUMP="${NET_TIMING:+$OUT/a_dump.txt}" PES6_AUDIO_DUMP="${NET_AUDIO:+$OUT/a}" PES6_FNPROF="${NET_A_FNPROF:-}" PES6_VERSION=$V PES6_NET_LOG=1 PES6_NET_PORT=27600 PES6_NET_PEERS=127.0.0.1:27601 PES6_OSK_TEXT=LOCAL \
   PES6_INPUT="$A" PES6_CAPTURE_AT="$NET_CAPTURE" PES6_CAPTURE_PREFIX="$OUT/a" PES6_STOP_AT="$STOP" \
-  $BIN build/EBOOT.elf --window 1 --seconds "${NET_SECONDS:-600}" > "$OUT/a.log" 2>&1 || true
+  $BIN build/EBOOT.elf --window 1 ${NET_ARGS:-} --seconds "${NET_SECONDS:-600}" > "$OUT/a.log" 2>&1 || true
 wait

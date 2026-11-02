@@ -388,6 +388,7 @@ static void pro_touch(int32_t id, float px, float py, uint64_t now) {
         g_fing[i].used = g_fing[i].down = 1;
         g_fing[i].id = id;
         g_fing[i].btn = b;
+        g_fing[i].flow = pes6_flow_control_at(g_flow_ctx, b);    /* never NULL, whatever the scheme */
         g_fing[i].t0 = g_fing[i].t_dec = now;
         g_fing[i].variant = PRO_BTN[b].flick && pro_flicks() ? -1 : 0;
         g_fing[i].y0 = g_fing[i].y = py;
@@ -413,13 +414,19 @@ static void pro_lift_missing(const int32_t *ids, int n, uint64_t now) {
     }
 }
 
-/* What the PRO buttons press now; `shown` gets the buttons to draw lit (with their L/R). */
+/* What the PRO buttons press now; `shown` gets the buttons to draw lit (with their L/R).
+ * A state machine over g_fing: the game's thread only (touches arrive there too). The GE thread
+ * draws from g_pro_lit, what the last call published: running it there as well raced pro_touch
+ * and crashed on a finger whose `flow` was not set yet (2/11, Completa + 60 Hz). */
+static _Atomic uint32_t g_pro_lit;
 static uint32_t pro_buttons(uint32_t *shown) {
     const uint64_t now = now_ms();
     uint32_t b = 0, lit = 0;
     for (int i = 0; i < MAX_FINGERS; i++) {
         if (!g_fing[i].used) continue;
         const pro_button *p = &PRO_BTN[g_fing[i].btn];
+        if (g_fing[i].variant < 0 && flow_mode() && !g_fing[i].flow)    /* landed under another scheme */
+            g_fing[i].flow = pes6_flow_control_at(g_flow_ctx, g_fing[i].btn);
         if (g_fing[i].variant < 0 && flow_mode()) {
             const float dx = (g_fing[i].x - g_fing[i].x0) / (float)(g_h ? g_h : 1);
             const float dy = (g_fing[i].y - g_fing[i].y0) / (float)(g_h ? g_h : 1);
@@ -460,6 +467,7 @@ static uint32_t pro_buttons(uint32_t *shown) {
         lit |= flow_mode() ? p->mask : m;
     }
     if (shown) *shown = lit;
+    atomic_store_explicit(&g_pro_lit, lit, memory_order_relaxed);
     return b;
 }
 
@@ -1213,8 +1221,8 @@ static void ov_draw(void) {
         else         ov_quad(sx + g_stick_x * sr, sy + g_stick_y * sr, sr * 0.36f, sr * 0.36f, OV_KNOB, moving, 0.88f, 0.90f, 0.94f, 1);
     }
 
-    uint32_t lit = 0;
-    if (pro_mode()) pro_buttons(&lit);
+    /* on the GE thread: what the game's thread decided last, never pro_buttons() itself */
+    const uint32_t lit = pro_mode() ? atomic_load_explicit(&g_pro_lit, memory_order_relaxed) : 0;
     ov_layout(lit | held, -1);
     ov_submit();
 }

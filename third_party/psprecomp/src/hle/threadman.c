@@ -344,11 +344,14 @@ void psp_set_vblank_hook(void (*fn)(void)) { g_vblank_hook = fn; }
 /* PES6PORT: firmware services that need to run without being called (the
  * network: receive, time out peers, deliver events to guest handlers) get a
  * turn here, once per virtual vblank, in "interrupt context" like an alarm. */
-#define MAX_VBLANK_TASKS 4
+#define MAX_VBLANK_TASKS 16
 static void (*g_vblank_task[MAX_VBLANK_TASKS])(void);
 void psp_add_vblank_task(void (*fn)(void)) {
     for (int i = 0; i < MAX_VBLANK_TASKS; i++)
         if (!g_vblank_task[i] || g_vblank_task[i] == fn) { g_vblank_task[i] = fn; return; }
+    /* Android already registers 4 (60 Hz, network, commentary, widescreen): a dropped task is a
+     * feature silently off, so say it. */
+    fprintf(stderr, "psprecomp: no room for vblank task %p (max %d)\n", (void *)fn, MAX_VBLANK_TASKS);
 }
 
 /* Wake sleepers and fire alarms whose time has come. */

@@ -308,3 +308,34 @@ Salir de la app y volver, dos veces en pleno partido: 30 fps al volver y sin fal
 Android.
 
 `[slow]` separa ahora la espera al GE; `[fps]` añade la carga del hilo del GE y esa espera.
+
+### 11b. Crash con Pantalla «Completa» y 60 Hz: `pro_buttons` en dos hilos (2026-11-02)
+
+**Informe del usuario:** con Pantalla «Completa» el juego se cerraba; con 16:9, no. Empezó con
+`PES6_SIM60`. La pila del tombstone, simbolizada con el `.so` local (Build ID `c6511f68`):
+`ge_thread` → `show_job` → `pro_buttons`+0x2c4. `llvm-symbolizer` de la NDK sitúa esa dirección en
+`flow_decide` (`main.c:374`), metida en línea dentro de `pro_buttons`: lee `g_fing[i].flow->act[…]`
+con `flow == NULL`.
+
+**Causa:** `pro_buttons()` es la máquina de estados de los dedos (decide gestos y libera dedos), y
+se llamaba desde dos hilos:
+- el del juego, al leer el mando (`android_buttons`);
+- el del GE, desde `show_job`, solo para saber qué botones encender.
+
+`pro_touch`, en el hilo del juego, ocupa el dedo (`used = 1`, `variant = -1`) antes de asignarle
+`flow`. El hilo del GE podía verlo en ese intervalo. A 60 Hz `show_job` corre el doble de veces, y
+en pantalla ancha cada cuadro tarda más en el GE.
+
+**Arreglo:**
+- `pro_buttons` corre solo en el hilo del juego y publica los botones encendidos en `g_pro_lit`
+  (atómico), que es lo que lee `show_job`;
+- `pro_touch` asigna `flow` siempre;
+- un dedo sin `flow` bajo Flow toma el control de su casilla.
+
+En desktop no se reproduce porque los controles táctiles solo existen en Android.
+
+**Regla:** el hilo del GE solo **lee** estado del host. Nada que cambie el estado de los controles
+corre en `show_job`.
+
+`psp_add_vblank_task` admitía 4 tareas y descartaba la quinta sin avisar. Android ya registra 4
+(60 Hz, red, comentarista y pantalla ancha). Ahora admite 16 y avisa si se desborda.
