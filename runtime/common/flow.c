@@ -6,6 +6,8 @@
 #include "flow.h"
 
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <psprecomp/mem.h>
@@ -246,15 +248,42 @@ static int g_at_feet;
 
 int pes6_flow_at_feet(void) { return g_at_feet; }
 
+/* A corner given to team `team` and not taken yet: from the whistle (sub-phase 10) through the
+ * game's cut and the wait at the flag (14) until the kick, when the sub-phase goes back to 1 in
+ * play (measured 2/11, docs/37 §8). The defending side is the game's own flag. */
+static int corner_pending(int team) {
+    if (team < 0 || pes6_phase(0) != 4 || pes6_phase(1) == 1 || pes6_restart_type() != 3) return 0;
+    const uint8_t mine = psp_read8(PES6_TEAM_DEFENDS + (uint32_t)team);
+    const uint8_t theirs = psp_read8(PES6_TEAM_DEFENDS + ((uint32_t)team ^ 1u));
+    return theirs && !mine;
+}
+
+/* PES6_FLOW_SIDE=<0|1> (tests): the team taken as the player's while nobody is controlled, so a
+ * COM-against-COM match shows what Flow would for that side (docs/37 §8). */
+static int flow_side_override(int last_team) {
+    static int side = -2;
+    if (side == -2) { const char *e = getenv("PES6_FLOW_SIDE"); side = e && *e ? atoi(e) & 1 : -1; }
+    return side >= 0 ? side : last_team;
+}
+
 static pes6_flow_context read_situation(int dashing, int face) {
     static int last_team = -1;
     if (psp_read8(PES6_PAUSED)) return FLOW_OFF;
+    pes6_chara *c = controlled();
+    const int side = c ? psp_read8(PES6_PLAYERS + (uint32_t)(c - pes6_chara_at(0)) * PES6_PLAYER_SIZE + PES6_PLAYER_TEAM) & 1
+                       : flow_side_override(last_team);
     if (psp_read32(PES6_REPLAY_ON)) {                /* the viewer's panel names the PSP's buttons */
         const uint8_t m = psp_read8(PES6_REPLAY_MODE);
-        return !psp_read8(PES6_REPLAY_BUSY) && (m == 0 || m == 4 || m == 7 || m == 8) ? FLOW_OFF : FLOW_WAIT;
+        if (!psp_read8(PES6_REPLAY_BUSY) && (m == 0 || m == 4 || m == 7 || m == 8)) return FLOW_OFF;
+        if (!corner_pending(side)) return FLOW_WAIT;
+    }
+    /* His corner, before the kick: its controls all along, not the open play's (the user's
+     * report, 2/11: they came only once the ball was struck). The kicker charging it: the gauge. */
+    if (corner_pending(side)) {
+        const uint8_t st = c ? psp_read8(PES6_PLAYERS + (uint32_t)(c - pes6_chara_at(0)) * PES6_PLAYER_SIZE + PES6_PLAYER_STATE) : 0;
+        return face && (st == 0x30 || st == 0x2D) ? FLOW_GAUGE : FLOW_CORNER;
     }
     if (pes6_phase(0) != 4) return FLOW_WAIT;
-    pes6_chara *c = controlled();
     if (!c) {                                        /* a stoppage: nobody is his, yet his side is known */
         if (last_team < 0) return FLOW_CONTEXTS;
         const uint8_t mine = psp_read8(PES6_TEAM_DEFENDS + (uint32_t)last_team);
@@ -266,7 +295,9 @@ static pes6_flow_context read_situation(int dashing, int face) {
     last_team = team;
     if (state == 0x2C) return FLOW_THROW;
     if (keeper_holds(state)) return FLOW_KEEPER;
-    if (state == 0x30 || state == 0x2D) {
+    /* The kicker stays in these states for ~10 s after the kick with the restart still a corner:
+     * in play again (sub-phase 1) that is no corner to take. */
+    if ((state == 0x30 || state == 0x2D) && !(pes6_phase(1) == 1 && pes6_restart_type() == 3)) {
         if (face) return FLOW_GAUGE;
         const uint8_t r = pes6_restart_type();
         if (r == 3) return FLOW_CORNER;
@@ -292,6 +323,33 @@ static pes6_flow_context read_situation(int dashing, int face) {
     return FLOW_CONTEXTS;                            /* a loose ball: as it was */
 }
 
+/* PES6_FLOW_LOG=1: each change of what the situation is read from (docs/37 §8). */
+static void flow_log(pes6_flow_context raw, pes6_flow_context shown) {
+    static int on = -1;
+    static uint32_t last = ~0u;
+    if (on < 0) on = getenv("PES6_FLOW_LOG") != NULL;
+    if (!on) return;
+    pes6_chara *c = controlled();
+    const int i = c ? (int)(c - pes6_chara_at(0)) : 0;
+    const uint8_t state = c ? psp_read8(PES6_PLAYERS + (uint32_t)i * PES6_PLAYER_SIZE + PES6_PLAYER_STATE) : 0;
+    const uint32_t key = (uint32_t)pes6_phase(0) | (uint32_t)pes6_phase(1) << 4 | (uint32_t)i << 8 |
+                         (uint32_t)state << 13 | (uint32_t)pes6_restart_type() << 21 | (uint32_t)pes6_stop_cause() << 25 |
+                         (uint32_t)raw << 28 ^ (uint32_t)(corner_pending(0) | corner_pending(1) << 1) << 30;
+    if (key == last) return;
+    last = key;
+    int kicker = 0;
+    for (int k = 1; k < PES6_CHARAS && !kicker; k++) {
+        const uint8_t st = psp_read8(PES6_PLAYERS + (uint32_t)k * PES6_PLAYER_SIZE + PES6_PLAYER_STATE);
+        if (st == 0x30 || st == 0x2D) kicker = k;
+    }
+    fprintf(stderr, "[flow] f%u phase %u/%u chara %d team %d state %02x restart %u cause %u kicker %d team %d corner %d%d -> raw %d shown %d\n",
+            pes6_scene_frame(), pes6_phase(0), pes6_phase(1), i,
+            c ? psp_read8(PES6_PLAYERS + (uint32_t)i * PES6_PLAYER_SIZE + PES6_PLAYER_TEAM) & 1 : -1, state,
+            pes6_restart_type(), pes6_stop_cause(), kicker,
+            kicker ? psp_read8(PES6_PLAYERS + (uint32_t)kicker * PES6_PLAYER_SIZE + PES6_PLAYER_TEAM) & 1 : -1,
+            corner_pending(0), corner_pending(1), raw, shown);
+}
+
 static int attacking(pes6_flow_context c) { return c == FLOW_BALL || c == FLOW_DASH || c == FLOW_RECEIVE; }
 
 /* How many reads a new situation must last before the screen follows it (30 a second): possession
@@ -307,6 +365,7 @@ pes6_flow_context pes6_flow_context_now(int dashing, int select, int face) {
     static pes6_flow_context shown = FLOW_OFF, seen = FLOW_OFF;
     static int steady;
     pes6_flow_context c = read_situation(dashing, face);
+    flow_log(c, shown);
     if (c == FLOW_CONTEXTS) c = shown == FLOW_OFF ? FLOW_WAIT : shown;
     if (c != seen) { seen = c; steady = 0; }
     if (++steady >= settle(shown, c)) shown = c;

@@ -169,3 +169,42 @@ repeticiones, porque sus menús piden esos botones.
 
 **Vibración.** Se pedía bien, pero 18 ms a fuerza normal no se sienten en el Redmi: ahora 40–45 ms a
 fuerza máxima (`Device.vibrate`). Afecta a todos los esquemas Pro.
+
+## 10. Córner: el set durante todo el saque (2026-11-02)
+
+**Informe del usuario:** durante el córner, desde que se concede hasta que se patea, Flow seguía
+mostrando los botones del juego normal. Los del córner aparecían después del tiro, cuando ya no
+servían.
+
+**Medido** con `PES6_FLOW_LOG=1`, que escribe en desktop cada cambio de las señales de la situación
+(`[flow]`). Se midieron córners del guion de referencia y de COM contra COM. Un córner pasa por:
+
+- subfase (`pes6_phase(1)`) **10** al pitido;
+- **12**, el corte del juego (~9 s);
+- **13** y **14**, la espera junto al banderín;
+- **1** en el mismo cuadro del tiro (el comentarista registra el pase en ese cuadro).
+
+`pes6_restart_type()` vale 3 desde el pitido y sigue en 3 después. El lanzador solo entra en
+`0x2D`/`0x30` con el tiro y sigue así unos 300 cuadros. `read_situation` decidía por ese estado:
+- antes del tiro: RECEIVE o DEFEND, o WAIT durante el corte;
+- después del tiro: CORNER, si el jugador controlado era el lanzador.
+
+**Arreglo** (`flow.c`):
+- `corner_pending(team)`: fase 4, subfase distinta de 1, saque 3 y el rival defiende (según
+  `PES6_TEAM_DEFENDS`).
+- Con eso, Flow muestra CORNER desde el pitido hasta el tiro, también durante el corte y sin jugador
+  controlado. Si el lanzador está cargando la potencia, GAUGE.
+- En juego (subfase 1), el estado `0x2D`/`0x30` con el saque aún en 3 ya no da CORNER.
+- El equipo que defiende el córner sigue viendo Defensa.
+
+**Verificado** en COM contra COM: el mando en el centro, con abajo, ×, derecha, ×, arriba en Player
+Settings. `PES6_FLOW_SIDE=1` toma ese equipo como el del jugador mientras nadie está controlado:
+- CORNER desde f2900, un cuadro después del pitido de f2899, hasta el tiro en f3362;
+- fuera del córner en ese mismo cuadro;
+- con `PES6_FLOW_SIDE=0`, Defensa durante todo el córner.
+
+En la build actual, el córner del guion cae en f2899; en 8@8950 hay ahora un tiro libre.
+Regresión PASS.
+
+**Falta:** verlo en el teléfono. Otros balones parados no se tocaron: en el tiro libre a favor el
+lanzador ya está en `0x30` en la subfase 14 y Flow pasa a Falta antes de patear.
