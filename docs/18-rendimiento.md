@@ -55,6 +55,9 @@ botella, debería notarse en la misma proporción. **Falta medirlo en el Redmi.*
 
 ## 5. ¿60 fps estables con las físicas adaptadas? Evaluación (iteración 35)
 
+> **Corregido el 2026-11-01:** la conclusión de esta sección es incorrecta; ver §5b. El paso no es fijo.
+> `PES6_FORCE60` solo quitaba la espera del *flip*, sin cambiar el paso, y por eso iba al doble.
+
 ### Cómo marca el ritmo el juego
 
 - La presentación de cada cuadro es `FUN_08814980` (ELF): espera un vblank, lee
@@ -101,6 +104,28 @@ variable que aprovechar.
    Riesgos: dibujos que no emparejan bien (aparecen o desaparecen en el cuadro), efectos que
    leen el framebuffer y el render a textura. Esfuerzo estimado: un prototipo en pocos días y
    pulirlo en una o dos semanas.
+
+## 5b. 60 Hz nativos: el motor ya lo admite (2026-11-01)
+
+El motor cuenta en unidades de 1/60 s y la PSP lo corre con paso 2. `match_set_frame_rate`
+(`0x088E6CAC`) tiene una rama de 60 fps a la que nadie llega. Escribe `fps` (`0x08A2F5FC`), el paso
+`60/fps` (`*0x089C11AC`) y `speed_divisor` = `fps/60·256` (`0x08A2F3F8`); el reloj usa `clock_unit`
+(`0x08A2F3F0`, de la tabla `0x08999F70`). `PES6_SIM60=1` (`pes6_sim_force_60`, `pes6_game.h`) los fuerza
+y quita la espera del *flip*.
+
+**Comparado con 30 Hz** (`tools/sim60_compare.py`, 4 pasadas por modo, mismas pulsaciones en el mismo
+instante real): reloj 9,0/9,0; velocidad tope de jugadores −0,2 %; balón p95 +0,1 %. La tabla de
+temporizadores `0x08A2FEDE` se escala sola. Sin resolver: el estado `0x18` dura cerca de la mitad, `0xFD`
+parece más corto y `0x07` dura ~40 % más. El usuario jugó partidos enteros sin notar nada raro, y
+los tiros libres en Entrenamiento van bien.
+
+**Redmi Note 13 a ×3** (partido real de ~6 min): mediana 59,5 fps, hilo GE 68 %, sin limitación térmica;
+14 de 75 ventanas de 5 s bajo 58 fps, por picos de 50–120 ms sin causa aún identificada.
+
+**Lo medido por paso** en el host se ajusta con `pes6_step_30()` (umbrales del comentarista). El alejamiento
+de cámara ya no depende del paso: decide la altura del ojo (`docs/25` §2b).
+
+**Falta:** opción en el menú, red con mezcla 30/60, repeticiones y HUD medidos a fondo.
 
 ## 6. Nivel 1: memoria directa y dónde se va la CPU (iteración 42)
 

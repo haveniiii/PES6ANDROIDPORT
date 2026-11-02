@@ -9,6 +9,7 @@
 #include "pes6_game.h"
 
 #include <psprecomp/cpu.h>
+#include <psprecomp/hle.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -54,15 +55,17 @@ static float g_cam_k = 1.0f;
 static float rd_f(uint32_t a) { uint32_t w = psp_read32(a); float f; memcpy(&f, &w, 4); return f; }
 static void wr_f(uint32_t a, float f) { uint32_t w; memcpy(&w, &f, 4); psp_write32(a, w); }
 
-/* Goal kicks and corners (the user's report, 31/10): their camera stands behind the goal line,
- * and pulled back it went under the pitch or behind the stand. While the ball is dead before one
- * the camera eases back to the game's distance, and out again once the ball is in play. */
-#define CAM_EASE 0.08f        /* of the way per view built (about a second at 30 fps) */
-static float g_cam_now = 1.0f;
+/* Goal kicks and corners taken by the player (the user's reports, 31/10 and 1/11): their camera
+ * stands low behind the line, and pulled back it went under the pitch or behind the stand. The
+ * height of the eye tells them from the rest, measured: 5800 in play, for shots and saves too,
+ * 5000 in the cuts of a stoppage, 600 at a corner, about 260 at a goal kick. The game cuts between
+ * them, so the factor follows the height with no easing and the change does not show. */
+#define CAM_LOW  1500.0f      /* an eye this high or lower: the game's own distance */
+#define CAM_HIGH 4000.0f      /* this high or more: the setting's distance */
 
-static int camera_near_restart(void) {
-    const uint8_t r = psp_read8(PES6_RESTART_TYPE);
-    return psp_read8(PES6_MATCH_PHASE) == 4 && psp_read8(PES6_MATCH_PHASE + 1) != 1 && (r == 2 || r == 3);
+static float camera_distance(float eye_y) {
+    const float t = (-eye_y - CAM_LOW) / (CAM_HIGH - CAM_LOW);    /* y is negative upwards */
+    return 1.0f + (g_cam_k - 1.0f) * (t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t);
 }
 
 static void camera_farther(void) {
@@ -71,19 +74,18 @@ static void camera_farther(void) {
         psp_orig_camera_build_view();
         return;
     }
-    const float want = camera_near_restart() ? 1.0f : g_cam_k;
-    g_cam_now += (want - g_cam_now) * CAM_EASE;
+    const float k = camera_distance(rd_f(CAM_EYE + 4u));
     float eye[3];
     for (int i = 0; i < 3; i++) {
         eye[i] = rd_f(CAM_EYE + 4u * i);
-        wr_f(CAM_EYE + 4u * i, rd_f(CAM_TARGET + 4u * i) + (eye[i] - rd_f(CAM_TARGET + 4u * i)) * g_cam_now);
+        wr_f(CAM_EYE + 4u * i, rd_f(CAM_TARGET + 4u * i) + (eye[i] - rd_f(CAM_TARGET + 4u * i)) * k);
     }
     psp_orig_camera_build_view();
     for (int i = 0; i < 3; i++) wr_f(CAM_EYE + 4u * i, eye[i]);
 }
 
 void pes6_camera_set_distance(float k) {
-    g_cam_k = g_cam_now = k;
+    g_cam_k = k;
     psp_hook_camera_build_view = k > 0.99f && k < 1.01f ? NULL : camera_farther;
     if (psp_hook_camera_build_view) fprintf(stderr, "[camera] match camera at %.2f of the game's distance\n", k);
 }
@@ -102,6 +104,7 @@ static void enable(const char *name, const char *from) {
 
 void pes6_rules_init(const char *io_root) {
     psp_hook_of_default_build = keep_mod_data;
+    if (getenv("PES6_SIM60")) psp_add_vblank_task(pes6_sim_force_60);   /* experiment, docs/18 §5 */
     char path[1024], line[128];
     snprintf(path, sizeof path, "%s/rules.txt", io_root ? io_root : ".");
     FILE *f = fopen(path, "r");

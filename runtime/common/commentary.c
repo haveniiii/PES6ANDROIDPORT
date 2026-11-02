@@ -112,14 +112,17 @@ static void bank_close(bank *bk) {
 enum { EV_KICKOFF, EV_GOAL, EV_GOAL_AFTER, EV_OWN_GOAL, EV_EQUALIZER, EV_SHOT, EV_SHOT_MISS,
        EV_WOODWORK, EV_SAVE, EV_HEADER, EV_CROSS, EV_THROUGH, EV_PASS, EV_TACKLE, EV_DRIBBLE,
        EV_FOUL, EV_OFFSIDE, EV_THROW_IN, EV_CORNER, EV_SETPIECE_WAIT, EV_CHATTER, EV_HALF_TIME,
-       EV_FULL_TIME, EV_WELCOME, EV_SECOND_HALF, EV_GOAL_KICK, EV_BACK_PASS, EV_COUNT };
+       EV_FULL_TIME, EV_WELCOME, EV_SECOND_HALF, EV_GOAL_KICK, EV_BACK_PASS, EV_SHOT_NEAR, EV_SHOT_CHANCE,
+       EV_SHOT_WILD, EV_COUNT };
 static const char *const k_event[EV_COUNT] = {
     "kickoff", "goal", "goal_after", "own_goal", "equalizer", "shot", "shot_miss",
     "woodwork", "save", "header", "cross", "through_pass", "pass", "tackle", "dribble",
     "foul", "offside", "throw_in", "corner", "setpiece_wait", "chatter", "half_time",
-    "full_time", "welcome", "second_half", "goal_kick", "back_pass" };
+    "full_time", "welcome", "second_half", "goal_kick", "back_pass", "shot_near", "shot_chance",
+    "shot_wild" };
 /* higher interrupts lower; equal or lower waits its turn (or is dropped) */
-static const int k_prio[EV_COUNT] = { 5, 9, 6, 9, 7, 6, 6, 7, 7, 4, 3, 3, 1, 3, 2, 5, 5, 3, 4, 2, 1, 8, 8, 5, 5, 3, 1 };
+static const int k_prio[EV_COUNT] = { 5, 9, 6, 9, 7, 6, 7, 7, 7, 4, 3, 3, 1, 3, 2, 5, 5, 3, 4, 2, 1, 8, 8, 5, 5, 3, 1,
+                                      7, 7, 7 };
 /* names some catalogues use for the same event */
 static const struct { const char *alias; int ev; } k_alias[] = {
     { "lofted_pass", EV_CROSS }, { "shot_saved", EV_SAVE }, { "out", EV_SHOT_MISS } };
@@ -385,6 +388,8 @@ static struct {
     int dead;                         /* the referee stopped play: the ball in the net is no goal */
     int faded;                        /* the goal shout was cut short when the replay ended */
     int last_shot;                    /* the last touch before the ball went dead was a shot */
+    int wild_shot;                    /* ... or a shot that was never going near the goal */
+    float shot_x, shot_z;             /* where that shot was struck */
     uint32_t kick_at;                 /* vblank of a hard kick (touch 4) or header still to judge */
     uint32_t shot_at;                 /* vblank of the last shot, 0 none: a keeper touching it soon after saved it */
     uint32_t save_at;                 /* vblank the keeper touched that shot: a save once no goal follows */
@@ -398,16 +403,43 @@ static struct {
  * midfield, where "le pegó" is wrong. Judged a few vblanks after the kick, from the ball's
  * last step (pos - prev_pos): moving towards the end it is in, at most ~33 m out, and
  * crossing the goal line not far from the posts. */
-#define GOAL_LINE_X   16500.0f        /* units from the centre spot (the net is at ~16 900) */
-#define SHOT_RANGE_X   6000.0f        /* |x| beyond this: within ~33 m of the goal */
-#define SHOT_WIDE_Z    2600.0f        /* half the goal (~1 200) and a margin for wide shots */
+#define GOAL_LINE_X   13465.0f        /* the goal line, the posts and the bar: docs/21 */
+#define GOAL_POST_Z     939.0f
+#define GOAL_BAR_Y      625.0f
+#define SHOT_RANGE_X   6000.0f        /* |x| beyond this: within ~28 m of the goal */
+#define SHOT_WIDE_Z    2600.0f        /* the posts and a margin for wide shots */
 static int kick_is_shot(const pes6_ball *b) {
     if (!b) return 0;
     const float x = b->pos.x, z = b->pos.z;
     const float vx = b->pos.x - b->prev_pos.x, vz = b->pos.z - b->prev_pos.z;
-    if (fabsf(x) < SHOT_RANGE_X || fabsf(vx) < 20.0f || (x > 0) != (vx > 0)) return 0;
+    if (fabsf(x) < SHOT_RANGE_X || fabsf(vx) < 20.0f * pes6_step_30() || (x > 0) != (vx > 0)) return 0;
     const float steps = (GOAL_LINE_X - fabsf(x)) / fabsf(vx);
     return steps < 0.0f || fabsf(z + vz * steps) < SHOT_WIDE_Z;
+}
+
+/* The shot button from within range, towards the goal the kicker attacks, but nowhere near it:
+ * still a shot to the man in the booth. The caller has checked which way the kicker attacks. */
+static int kick_is_wild(const pes6_ball *b) {
+    if (!b) return 0;
+    const float vx = b->pos.x - b->prev_pos.x;
+    return fabsf(b->pos.x) >= SHOT_RANGE_X && (b->pos.x > 0) == (vx > 0) && fabsf(vx) >= 20.0f * pes6_step_30();
+}
+
+/* What kind of miss a shot was, from where the ball left the pitch and where it was struck. */
+#define MISS_NEAR_Z     500.0f        /* outside the post or over the bar by less than ~2 m, ~1 m */
+#define MISS_NEAR_Y     250.0f
+#define MISS_WILD_Z    2500.0f        /* outside the post by ~10 m, or over the bar by ~6 m */
+#define MISS_WILD_Y    1500.0f
+#define CHANCE_X       3000.0f        /* struck within ~12 m of the line, in front of the goal */
+#define CHANCE_Z       1800.0f
+static int miss_event(const pes6_ball *b, int wild, float kick_x, float kick_z) {
+    if (!b) return EV_SHOT_MISS;
+    const float wide = fabsf(b->pos.z) - GOAL_POST_Z, over = -b->pos.y - GOAL_BAR_Y;
+    int e = EV_SHOT_MISS;
+    if (wild || wide > MISS_WILD_Z || over > MISS_WILD_Y) e = EV_SHOT_WILD;
+    else if (fabsf(kick_x) > GOAL_LINE_X - CHANCE_X && fabsf(kick_z) < CHANCE_Z) e = EV_SHOT_CHANCE;
+    else if (wide < MISS_NEAR_Z && over < MISS_NEAR_Y) e = EV_SHOT_NEAR;
+    return g_nclips[e] ? e : EV_SHOT_MISS;      /* a bank without the finer groups */
 }
 
 /* A lofted pass (touch code 1) is a cross only from out wide near the end it heads for, with the
@@ -420,11 +452,11 @@ static int kick_is_cross(const pes6_ball *b) {
     if (!b) return 0;
     const float x = b->pos.x, z = b->pos.z;
     const float vx = b->pos.x - b->prev_pos.x, vz = b->pos.z - b->prev_pos.z;
-    const float h = -b->pos.y, rise = b->prev_pos.y - b->pos.y;
-    if (h < CROSS_HEIGHT && rise < 4.0f) return 0;      /* a driven pass along the ground: the same code */
+    const float h = -b->pos.y, rise = b->prev_pos.y - b->pos.y, step = pes6_step_30();
+    if (h < CROSS_HEIGHT && rise < 4.0f * step) return 0;      /* a driven pass along the ground: the same code */
     return fabsf(x) > CROSS_RANGE_X && fabsf(z) > CROSS_WIDE_Z &&
-           (z > 0) != (vz > 0) && fabsf(vz) > 20.0f &&          /* in from the wing */
-           x * vx > -20.0f * fabsf(x);                          /* not back towards midfield */
+           (z > 0) != (vz > 0) && fabsf(vz) > 20.0f * step &&   /* in from the wing */
+           x * vx > -20.0f * step * fabsf(x);                   /* not back towards midfield */
 }
 
 /* +1 when team t attacks towards +x: its keeper stands at the other end. The keepers are records 1
@@ -434,6 +466,12 @@ static int attack_dir(int t) {
     const pes6_chara *k = pes6_chara_at(1);
     if (k->team != t) k = pes6_chara_at(12);
     return k->pos.x < 0.0f ? 1 : -1;
+}
+
+/* The game's last touch is already gone with the ball in the air: the kicker is who had it. */
+static int kicker_team(int holder, int last_toucher) {
+    const int k = holder && holder < 23 ? holder : last_toucher;
+    return k && k < 23 ? pes6_chara_at(k)->team : 0;
 }
 
 static int match_running(void) {
@@ -575,12 +613,15 @@ void pes6_commentary_frame(void) {
             const uint8_t cause = pes6_stop_cause(), r = pes6_restart_type();
             if (cause == 4) event(EV_FOUL);
             else if (cause == 5) event(EV_OFFSIDE);
+            else if (cause == 3 && (W.last_shot || W.wild_shot))
+                event(miss_event(ball, W.wild_shot, W.shot_x, W.shot_z));
             else if (cause == 3 && r == 1) event(EV_THROW_IN);
-            else if (cause == 3 && W.last_shot) event(EV_SHOT_MISS);
             else if (cause == 3 && r == 2) event(g_nclips[EV_GOAL_KICK] ? EV_GOAL_KICK : EV_SHOT_MISS);
             else if (cause == 3 && r == 3) event(EV_CORNER);   /* 3 corner: inferred (2 seen after a shot wide) */
+            if (g_log && ball) fprintf(stderr, "[commentary] v%u ball out at %.0f,%.0f height %.0f, last shot %d wild %d from %.0f,%.0f\n",
+                                       g_vblank, ball->pos.x, ball->pos.z, -ball->pos.y, W.last_shot, W.wild_shot, W.shot_x, W.shot_z);
             if (g_log) fprintf(stderr, "[commentary] v%u f%u whistle cause %u restart %u\n", g_vblank, pes6_scene_frame(), cause, r);
-            W.last_shot = 0;                             /* the keeper picking it up for the goal kick is no save */
+            W.last_shot = W.wild_shot = 0;               /* the keeper picking it up for the goal kick is no save */
             if (cause != 0 && cause != 2) W.dead = 1;    /* a goal after this whistle is not given */
         }
         /* touches while the ball is in play */
@@ -588,8 +629,12 @@ void pes6_commentary_frame(void) {
             const int cross = W.kick_touch == 1 && kick_is_cross(ball);
             /* a ground pass played clearly back towards its own goal */
             const int back = W.kick_touch == 5 && ball &&
-                             (ball->pos.x - ball->prev_pos.x) * attack_dir(W.kick_team) < -60.0f;
-            W.last_shot = (W.kick_touch == 4 || W.kick_touch == 8) && kick_is_shot(ball);
+                             (ball->pos.x - ball->prev_pos.x) * attack_dir(W.kick_team) < -60.0f * pes6_step_30();
+            const int hard = W.kick_touch == 4 || W.kick_touch == 8;
+            const int attacking = hard && ball && ball->pos.x * (float)attack_dir(W.kick_team) > 0.0f;
+            W.last_shot = attacking && kick_is_shot(ball);
+            W.wild_shot = attacking && !W.last_shot && W.kick_touch == 4 && kick_is_wild(ball);
+            if (W.last_shot || W.wild_shot) { W.shot_x = ball->pos.x; W.shot_z = ball->pos.z; }
             if (W.last_shot) { event(EV_SHOT); W.shot_at = g_vblank; W.save_at = 0; W.shooter = holder; }
             else if (cross) event(EV_CROSS);
             else if (W.kick_touch == 8) event(EV_HEADER);
@@ -598,17 +643,19 @@ void pes6_commentary_frame(void) {
             if (g_log && ball && W.kick_touch != 5)
                 fprintf(stderr, "[commentary] v%u %s %s: ball %.0f,%.0f height %.0f step %.0f,%.0f\n", g_vblank,
                         W.kick_touch == 1 ? "lofted" : "kick",
-                        W.last_shot ? "at goal" : cross ? "a cross" : "not a shot", ball->pos.x, ball->pos.z,
+                        W.last_shot ? "at goal" : W.wild_shot ? "wild" : cross ? "a cross" : "not a shot", ball->pos.x, ball->pos.z,
                         -ball->pos.y, ball->pos.x - ball->prev_pos.x, ball->pos.z - ball->prev_pos.z);
             W.kick_at = 0;
         }
         if (p1 == 1 && touch != W.touch && touch) {
-            W.last_shot = 0;
+            W.last_shot = W.wild_shot = 0;
             W.kick_at = 0;
             const float bx = ball ? fabsf(ball->pos.x) : 0.0f;
             switch (touch) {
-            case 4:   W.kick_at = g_vblank; W.kick_touch = 4; break;
-            case 8:   if (bx > 9000.0f) { W.kick_at = g_vblank; W.kick_touch = 8; } else event(EV_HEADER); break;
+            case 4:   W.kick_at = g_vblank; W.kick_touch = 4; W.kick_team = kicker_team(holder, W.last_toucher); break;
+            case 8:   if (bx > 9000.0f) { W.kick_at = g_vblank; W.kick_touch = 8; W.kick_team = kicker_team(holder, W.last_toucher); }
+                      else event(EV_HEADER);
+                      break;
             case 1: { /* a lofted ball near the goal the kicker attacks, not out of his own box (31/10); the
                        * game's last touch is already 0 with the ball in the air: the kicker is the last
                        * player seen on it */

@@ -217,6 +217,21 @@ El menú previo tiene pantalla **Controles** con esquema visual, texto deslizabl
 Instalada en el Redmi la 1.2.2 de prueba, sin publicar. Faltan en pantalla: córner, falta, barrera,
 banda, penal y portero.
 
+**60 Hz nativos y catálogo del comentarista (1–2/11, `docs/18` §5b, `docs/24` último apartado, `docs/15` §14) — RETOMAR AQUÍ:**
+- **60 Hz:** el paso no es fijo; `docs/18` §5 estaba equivocado. `PES6_SIM60=1` (`env.txt` en Android) corre
+  el partido a 60 Hz reales. Jugado por el usuario en el Mac y en el Redmi a ×3 (mediana 59,5 fps) sin notar
+  nada raro. Plan: `~/.claude/plans/sleepy-gliding-starfish.md`. Red a 60 Hz en el Mac: partido completo y con
+  WiFi simulado, bien. **Falta:** opción en el menú (T8), mezcla 30/60 en red, dos teléfonos, repeticiones y
+  HUD medidos, estados `0x18`/`0xFD`/`0x07`, picos de 50–120 ms.
+- **Cámara:** el alejamiento depende de la altura del ojo, ya no de fase y saque (`docs/25` §2b).
+- **Catálogo:** solo ~17 % de los clips coincidía con el audio de PECH. Rehecho con `blocks_pech.txt` sobre
+  `build/comm_pech/phrases.tsv`. Nuevos `shot_near`, `shot_chance`, `shot_wild`. El banco completo de PECH ya no
+  está en el Mac. `half_time` y `full_time` siguen sin dispararse. **Falta oírlo el usuario.**
+- **Teléfono:** tiene `PES6_SIM60=1` en `env.txt` y la APK de antes de estos arreglos.
+  `build/android/PES6-1.2.2-sim60.apk` (firma release, no publicar) tiene todo; instalar con `adb install -r`.
+  Una APK con firma debug obligaría a desinstalar y borraría ISO y guardado. `tools/net_pair.sh` borra el perfil
+  `ULES004764001000`: respaldarlo antes.
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.

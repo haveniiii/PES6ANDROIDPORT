@@ -50,6 +50,13 @@ enum {
  * set by 0x08814AE4, is non-zero: the match's 30 fps. */
 #define PES6_FLIP_HOLD     0x089D7798u
 
+/* The simulation's rate, set by match_set_frame_rate (0x088E6CAC). */
+#define PES6_SIM_FPS       0x08A2F5FCu   /* u8 logic steps per second */
+#define PES6_SPEED_DIVISOR 0x08A2F3F8u   /* float fps / 60 * 256 */
+#define PES6_MOTION_TABLE  0x089C11ACu   /* u32 pointer; its first float is the step, 60 / fps */
+#define PES6_CLOCK_UNIT    0x08A2F3F0u   /* u8 ticks per second, from PES6_CLOCK_UNITS */
+#define PES6_CLOCK_UNITS   0x08999F70u   /* u8[2], indexed by sys_param_2 */
+
 /* ---- the movie player (docs/10) -------------------------------------------
  * Its audio and video timestamp rings, read for PES6_MPEG_SYNC diagnosis. */
 #define PES6_MPEG_AUDIO_PTS    0x089B0190u   /* ring of u32, indexed by ... */

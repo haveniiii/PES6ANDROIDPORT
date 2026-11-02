@@ -288,3 +288,50 @@ Motor (`commentary.c`), visto en 12 partidos:
     equipo 1). `attack_dir` suponía que el registro 1 era siempre del equipo 0, así que en el
     segundo tiempo daba el sentido al revés (también para «mira por los retrovisores»). Ahora busca el
     arquero de cada equipo por su campo `team`.
+
+
+## Catálogo de PECH rehecho desde su propio audio (2026-11-02)
+
+Pedido del usuario: no sonaban «muy cerca» ni nada para los tiros errados o los tiros horribles.
+
+**El catálogo estaba armado sobre otro texto.** Las transcripciones (`build/comm/cat/phrases.tsv`) son
+del banco Palma anterior. El de PECH tiene los mismos bloques, pero no el mismo clip en cada sitio: de
+1 669 clips del catálogo solo ~283 (17 %) coincidían con lo que dice el audio (`shot_miss` 9 %, `goal`
+5 %, `woodwork` 6 %). Es una medida aproximada, porque whisper se equivoca bastante con Palma. Esto
+explica buena parte de las frases fuera de lugar que se fueron parchando con `drop`.
+
+- `tools/commentary/transcribe_bank.py` transcribe clip a clip el banco real → `build/comm_pech/phrases.tsv`
+  (2 384 clips bajo el 8000, ~1 h; se puede reanudar; rellena con silencio, si no whisper descarta los cortos).
+- `tools/commentary/blocks_pech.txt` es el catálogo nuevo; `blocks_e_sound_palma.txt` queda solo para el
+  banco antiguo. **No mezclarlos.** `build_catalogue.py` acepta `pick <evento> <clips>`.
+  ```
+  python3 tools/commentary/build_catalogue.py tools/commentary/blocks_pech.txt \
+      build/comm_pech/phrases.tsv mods/pech2026/commentary/s_sound.txt
+  ```
+- **Marcadores:** cada `score_a_b` dice ahora ese marcador.
+- **`full_time`:** de 374 clips a 13 («partido terminado»). Antes había «se coronaron campeones», tercer
+  lugar, tristeza de los hinchas. El código aún no dispara ni `half_time` ni `full_time`.
+
+**Tres fallos de lógica en los tiros errados** (`commentary.c`):
+1. `shot_miss` tenía la misma prioridad que `shot`. Con «¡le pegó!» aún sonando, el balón salía y la
+   frase se descartaba. Ahora vale 7 e interrumpe (probado: `shot` y `shot_miss` a ~0,5 s).
+2. `GOAL_LINE_X` valía 16 500. La línea está en 13 465 (`docs/21`), y postes y travesaño en ±939 y 625.
+   La extrapolación de los tiros cruzados era errónea.
+3. Un tiro que no iba hacia el arco ni se contaba: terminaba en «será saque de arco».
+
+**Cuatro clases**, según dónde salió el balón y desde dónde se pateó (`miss_event`):
+
+| Evento | Cuándo | Ejemplos |
+|---|---|---|
+| `shot_near` | por fuera a menos de ~2 m del poste y ~1 m del travesaño | «¡Qué cerca!», «tuvo cerca pero muy cerca», «ay, mamita querido» |
+| `shot_chance` | pateado a menos de ~12 m, de frente al arco | «se desperdició una muy buena oportunidad» |
+| `shot_miss` | el resto | «le da desviado», «torcido, manchado, desviado» |
+| `shot_wild` | a más de ~10 m del poste o ~6 m sobre el travesaño, o con □ sin ir al arco | «elevadísimo», «le dio horrible» |
+
+Sin esos grupos en el catálogo (banco original), todo vuelve a `shot_miss`. Los umbrales de distancia son
+estimados y no ajustados con partidos; `[commentary] ball out at x,z height h` da los datos para afinarlos.
+
+**Límite: el banco completo ya no está en el Mac.** `s_sound.afs` de PECH se recortó a los clips del
+catálogo de entonces, y `build/commentary/e_sound.afs` es un enlace roto a `~/Downloads`. De las 80
+frases candidatas de tiro errado solo 34 sobreviven. Con el `s_sound.afs` original habría más variedad:
+repetir `transcribe_bank.py` sobre él, ampliar los `pick` y volver a pasar `trim_bank.py`.

@@ -27,6 +27,25 @@
 /* ---- scenes and overlays (docs/03, docs/05) ------------------------------- */
 static inline uint32_t pes6_scene(void) { return psp_read32(PES6_SCENE_STACK); }
 static inline uint32_t pes6_scene_frame(void) { return psp_read32(PES6_SCENE_FRAME); }
+/* The engine counts in 1/60 s and the PSP runs it with a step of 2. match_set_frame_rate
+ * (0x088E6CAC) has a 60 fps branch nothing reaches; this forces what it would write, plus the
+ * clock's ticks per second, and lets every vblank present. */
+static inline void pes6_sim_force_60(void) {
+    const uint32_t motion = psp_read32(PES6_MOTION_TABLE);
+    psp_write32(PES6_FLIP_HOLD, 0);
+    psp_write8(PES6_SIM_FPS, 60);
+    psp_write8(PES6_CLOCK_UNIT, 60);
+    psp_write8(PES6_CLOCK_UNITS, 60);
+    psp_write32(PES6_SPEED_DIVISOR, 0x43800000u);     /* 256.0f = fps / 60 * 256 */
+    if (motion) psp_write32(motion, 0x3F800000u);     /* 1.0f = 60 / fps */
+}
+
+/* One logic step in steps of 30 Hz: 1 as the PSP runs it, 0.5 at 60 Hz. Multiplies anything
+ * measured per step and tuned at 30 Hz. */
+static inline float pes6_step_30(void) {
+    const uint8_t fps = psp_read8(PES6_SIM_FPS);
+    return fps ? 30.0f / (float)fps : 1.0f;
+}
 
 /* game.ovl is resident: a match is being played (scene 8, or 15 in a WIRELESS match). */
 static inline int pes6_game_ovl_loaded(void) {

@@ -368,3 +368,21 @@ de resolución (×3), y el rival no jugó. Falta repetirla con dos personas y la
 Quien elige al otro se une; el que espera y acepta es el anfitrión. Si uno sale de la sala, el otro
 ve `peer lost` a los 5 s y su juego abandona unos 30 s después. Wi-Fi Direct sigue tardando varios
 intentos porque los dos teléfonos crean su grupo.
+
+## 14. Partido en red a 60 Hz (2026-11-02, solo en el Mac)
+
+Con `PES6_SIM60=1` en las dos instancias y el parche (`NET_VERSION=pech2026 tools/net_pair.sh`), × cada 250
+cuadros hasta 15@9000. Sin ningún cambio en `net.c`.
+
+| Prueba | Resultado |
+|---|---|
+| Partido completo, Mac libre | a 15@60000 las dos, ~60 fps en juego, descanso y tiempo añadido, 0-0 en ambas, `GAME075 disconnected` tras >32 000 datagramas enviados, 0 accesos malos |
+| Hasta 15@34000 con `PES6_NET_LAG=15,8,2,60` y `PES6_NET_DROP=3` | 0 paradas ≥ 50 ms, mediana 60 cuadros/s, balón p90 16 %, 0 accesos malos |
+| 30 Hz: `tools/regress.sh --net` | PASS |
+
+Con la CPU ocupada (transcribiendo a la vez) las dos instancias bajaron a ~30 fps, igual sincronizadas y sin
+fallos: el partido va a cámara lenta mientras el Mac no llega.
+
+**Sin probar:** una instancia a 30 Hz contra otra a 60 Hz, y dos teléfonos a 60 Hz. Cuando exista la opción de
+menú, el modo debe negociarse o bloquearse en red: hoy nada impide esa mezcla.
+

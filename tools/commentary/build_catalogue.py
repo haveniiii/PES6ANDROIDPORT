@@ -9,6 +9,7 @@ block line "<event> <a>-<b> [regex]" takes the clips a..b that have speech, last
 and, when given, whose transcription matches the regex. The "score" block is split by the
 score in the text into score_<a>_<b> (larger first); "lo empató" lines become equalizer.
 "max=<s>" before the regex lets in clips up to s seconds (the goal shouts last 10-13 s).
+"pick <event> <clip>..." takes those clips as they are.
 "drop <event> <clip>..." takes those clips out of the event again (lines that a block's regex lets
 in by a wrong transcription). The regex "*" takes every clip of the range that has sound, transcribed or not (a block whose
 lines are all of one kind: whisper leaves some short clips empty). "score_table <first>..." is
@@ -43,6 +44,9 @@ def main():
         parts = line.split(None, 2)
         if parts[0] == 'drop':                           # "drop <event> <clip>...": checked by ear or clip by clip
             drops.setdefault(parts[1], set()).update(int(c) for c in parts[2].split())
+            continue
+        if parts[0] == 'pick':                           # "pick <event> <clip>..."
+            cat.setdefault(parts[1], []).extend(int(c) for c in parts[2].split())
             continue
         if parts[0] == 'score_table':
             verbatim.append(line)
