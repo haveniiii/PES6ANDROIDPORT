@@ -11,7 +11,7 @@ enum { HAND_RIGHT = 0, HAND_LEFT };          /* touch layout */
  * to add L (up) or R (down); PRO_KEYS is PRO with buttons for L+square, R+square, L+triangle,
  * R+triangle instead of the flicks. PRO_DPAD is PRO with a d-pad as well as the stick, on the
  * stick's side. The PRO schemes' controls can be moved and resized (layout.txt, docs/19 §7). */
-enum { CTRL_CLASSIC = 0, CTRL_DPAD, CTRL_PRO, CTRL_PRO_KEYS, CTRL_PRO_DPAD, CTRL_COUNT };
+enum { CTRL_CLASSIC = 0, CTRL_DPAD, CTRL_PRO, CTRL_PRO_KEYS, CTRL_PRO_DPAD, CTRL_FLOW, CTRL_COUNT };
 enum { RES_AUTO = 0, RES_1X, RES_2X, RES_3X, RES_COUNT };          /* internal resolution */
 enum { QUALITY_LOW = 0, QUALITY_NORMAL, QUALITY_HIGH, QUALITY_COUNT };
 enum { SCREEN_FULL = 0, SCREEN_169, SCREEN_COUNT };              /* the match: whole screen or PSP 16:9 */

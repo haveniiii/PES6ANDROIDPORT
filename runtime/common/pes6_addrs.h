@@ -60,6 +60,16 @@ enum {
 #define PES6_MPEG_VIDEO_QUEUED 0x089B013Cu
 #define PES6_MPEG_STEP         0x089EA390u
 
+/* ---- the pad ------------------------------------------------------------------- */
+#define PES6_PAD_TRIGGERS      0x08AA59D8u   /* u32: ctrl_read turns the stick at full left / right into L2 / R2; +4 its hysteresis */
+#define PES6_PAD_L2            0x40000000u   /* host-side buttons, never given to the game as such (input.c) */
+#define PES6_PAD_R2            0x80000000u
+#define PES6_PLAYER_STICK_TYPE 0x08A2F195u   /* u8[0x24 stride] analog stick Type - 1 of each pad (Button Configuration) */
+#define PES6_BALL_OWNER        0x08A2F618u   /* u8 player index of the holder, 0 = loose */
+#define PES6_TEAM_DEFENDS      0x08A2F667u   /* u8[2] 1 if the team defends */
+#define PES6_PAUSED            0x08A2F5C1u   /* u8 1 while the pause menu is open (match_pause_poll; measured) */
+#define PES6_PLAYER_PAD        0x47u         /* record + : u8 pad controlling it, >= 8 none */
+
 /* ---- the match, read by the commentary (docs/21) --------------------------- */
 #define PES6_MATCH_TEAMS       0x08A2F3C8u   /* u16[2] the two teams, index in the table 0x089AA89C (docs/21 §2c) */
 #define PES6_TEAM_COUNT        296u

@@ -55,7 +55,7 @@ float pes6_settings_camera_distance(const pes6_settings *s) {
 int pes6_settings_gpu_cap = 3;
 
 /* The highest internal scale a GPU keeps at 30 fps in the widescreen match (docs/32 §9).
- * Measured: Adreno 610 (Redmi Note 13) drops frames at x2 and x3 and is clean at x1;
+ * Measured: Adreno 610 (Redmi Note 13) has margin at x2 since the fill-rate work (docs/32 §10);
  * Mali-G57 MC4 (moto g35, which reports a bare "Mali-G57") is clean at x3. The rest is graded from those two by class;
  * an unknown GPU gets x2. */
 int pes6_gpu_scale_cap(const char *renderer) {
@@ -65,7 +65,7 @@ int pes6_gpu_scale_cap(const char *renderer) {
         while (*p && (*p < '0' || *p > '9')) p++;
         const int n = atoi(p);
         if (n <= 0) return 2;
-        return n < 620 ? 1 : n < 650 ? 2 : 3;          /* 5xx, 610-619 | 620-649 | 650+, 7xx */
+        return n < 610 ? 1 : n < 650 ? 2 : 3;          /* 5xx | 610-649 | 650+, 7xx (docs/32 §10) */
     }
     if ((p = strstr(renderer, "Mali"))) {
         if (strstr(p, "Mali-T") || strstr(p, "Mali-4")) return 1;

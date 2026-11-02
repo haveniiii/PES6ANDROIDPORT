@@ -58,6 +58,9 @@ public final class Device {
     public static void vibrate(Activity activity, int ms) {
         if (vibrator == null) vibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
         if (vibrator == null || !vibrator.hasVibrator()) return;
-        vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+        /* A weak motor barely starts in 20 ms at the default strength: at full strength where
+         * the phone can set it, which is why the callers' ticks are not shorter than 40 ms. */
+        final int strength = vibrator.hasAmplitudeControl() ? 255 : VibrationEffect.DEFAULT_AMPLITUDE;
+        vibrator.vibrate(VibrationEffect.createOneShot(ms, strength));
     }
 }

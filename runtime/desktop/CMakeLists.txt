@@ -73,6 +73,7 @@ add_executable(pes6
     ../common/widescreen.c
     ../common/tuning.c
     ../common/rules.c
+    ../common/flow.c
     ../common/faces.c
     ../common/net.c
     ../common/osk.c

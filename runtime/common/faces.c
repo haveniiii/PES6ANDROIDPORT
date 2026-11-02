@@ -177,28 +177,36 @@ static void look_dump(uint32_t node) {
     }
 }
 
-/* model_render(model, instance, matrix): which match character owns the matrix's node. */
+static void set_current(uint64_t id, uint64_t texels) {
+    F.current = (int)(int64_t)id;
+    F.texels = (uint32_t)texels;
+}
+
+/* model_render(model, instance, matrix): which match character owns the matrix's node. The answer
+ * goes down the GE's queue: the lists drawn from here on are his, whenever they run. */
 static void faces_model_render(void) {
     if (!F.inited) faces_load();
-    F.current = -1;
+    int current = -1;
+    uint32_t texels = 0;
     if (F.look_dump) look_dump(psp_cpu.r[6] - PES6_NODE_MATRIX);
     if (F.on) {
         const uint32_t node = psp_cpu.r[6] - PES6_NODE_MATRIX;
         for (int i = 1; i < PES6_CHARAS; i++)
             if (pes6_chara_render_node(i) == node) {
                 pes6_sheet *s = pes6_chara_sheet(pes6_chara_at(i));
-                if (s && face_of(s->db_id) && (F.texels = pes6_chara_face_texels(i))) F.current = s->db_id;
+                if (s && face_of(s->db_id) && (texels = pes6_chara_face_texels(i))) current = s->db_id;
                 if (F.log && s) {
                     static uint8_t seen[0x10000 / 8];
                     if (!(seen[s->db_id >> 3] & (1 << (s->db_id & 7)))) {
                         seen[s->db_id >> 3] |= (uint8_t)(1 << (s->db_id & 7));
                         fprintf(stderr, "[faces] chara %d: %u %s%s\n", i, s->db_id, s->name,
-                                F.current >= 0 ? "" : " (no face)");
+                                current >= 0 ? "" : " (no face)");
                     }
                 }
                 break;
             }
     }
+    pes6_ge_post(set_current, (uint64_t)(int64_t)current, texels);
     psp_orig_model_render();           /* F.current stays for the pieces drawn after it */
 }
 

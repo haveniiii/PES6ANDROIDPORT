@@ -188,6 +188,18 @@ GPL-3.0; la APK `iso` firmada con la clave propia (`~/.android/pes6-release.jks`
 sin ella no hay actualizaciones) se publica en GitHub Releases y cada uno pone su ISO. Sigue sin
 publicarse nada del disco (ISO, EBOOT, datos): la `bundle` es solo del usuario.
 
+**GPU a alta resolución (31/10, `docs/32` §10):** en el Redmi a ×3 la GPU pasó de ~29 a ~19 ms por
+cuadro y `gpubusy` de 71 % a 47 %, con imagen idéntica: `glClear` real, dibujos opacos sin blending ni
+`discard` y shader corto (`g_glx` en `ge_gl.c`, `PES6_GLX=0` los apaga). «Auto» en Adreno 610–619 sube
+a ×2. `tools/phone_gpu_run.sh` mide. **Falta:** ×3 jugando de verdad y en red; el guion no perdía
+cuadros ni antes. Resolución dinámica y ×2,5 sin hacer.
+
+**GE en su propio hilo (1/11, `docs/32` §11):** en Android, por defecto, listas, vértices, texturas y
+todo OpenGL salen del hilo del juego (`ge.c` §6b; `PES6_GE_ASYNC=0` lo apaga, en el Mac se enciende con
+`=1`). Una sola cola: mismo cuadro exacto (`10c7cdafb0`). Redmi ×2: hilo del juego ~23,5 → ~11 ms por
+cuadro. Lo que toque GL en el host debe ir por `pes6_ge_post`/`pes6_ge_call`. **Falta:** partido real
+en red y el Redmi 15C.
+
 **Pedidos de los jugadores (31/10, `docs/19` §7, `docs/25` §2b):** editor para mover y
 redimensionar los controles de cualquier esquema (botón Botones; `layout.txt`), esquema Pro + cruceta, Pantalla
 Completa/16:9, Cámara Normal/Lejana/Muy lejana (gancho en `camera_build_view`) y pantalla completa
@@ -196,6 +208,14 @@ sin barras de Android (`Device.immersive`). Regresión PASS; falta probarlo en e
 **Interruptor «Liga chilena» (30/10, `docs/29` §5e):** el menú previo ofrece Sí (el parche) / No (el
 PES6 original, guardado aparte, con su música y su fondo de menú: `mods/music` y `mods/common` solo
 con el parche, y sin comentarista, como la PSP; `PES6_COMMENTARY=` lo fuerza en escritorio). Regresión PASS.
+
+**Flow y pantalla Controles (1/11, `docs/36`, `docs/37`, `docs/19` §9) — RETOMAR AQUÍ:** catálogo de
+89 acciones desde la Command List del juego. Esquema táctil **Flow** (`CTRL_FLOW`, `runtime/common/flow.c`):
+los botones cambian según la jugada, con deslizamientos, toques del pulgar izquierdo y diseño propio.
+Medido: R×2 es R2 para el juego, y Low-speed dribbling es R2 sostenido (`input.c` lo genera; docs/37 §8).
+El menú previo tiene pantalla **Controles** con esquema visual, texto deslizable y **Editar**.
+Instalada en el Redmi la 1.2.2 de prueba, sin publicar. Faltan en pantalla: córner, falta, barrera,
+banda, penal y portero.
 
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
@@ -299,7 +319,7 @@ rendimiento, vídeo de la intro**),
 `jalr` que dejaba viva la pantalla de formación),
 `13-gpu-renderer.md` (iteración 18: rasterizado por GPU),
 `14-android.md` (**iteración 19: APK, primer arranque en un teléfono real**),
-`15-multiplayer-plan.md` (multijugador WiFi), `16-liga-chilena.md` (liga chilena, primer intento: iteraciones 32–33), `17-versiones.md` (menú de versión, mods y guardados por versión), `18-rendimiento.md` (optimización del código generado), `19-menu-ajustes.md` (menú previo, ajustes, mandos), `20-mantenimiento.md` (regresión, direcciones, nombres, toolkit), `21-partido-estructuras.md` (jugadores, tablas y globales del partido, vistos en RAM), `22-arquitectura.md` (**mapa del juego**: arranque, escenas, overlays, partido), `23-liga-datos.md` (bloque de datos de Liga/ML, punto de partida), `24-comentarios.md` (**comentarista**: banco de voz de PS2, motor), `25-manipulacion.md` (**dónde tocar para cambiar el juego**: parámetros, reglas, mapa Y→Z), `26-capas.md` (**las capas del port** y qué se puede tocar), `27-rollback.md` (netcode por entradas: investigación), `28-parches-pech.md` (parches PECH a versiones), `29-pes6chile27.md` (**el producto**: solo el parche, nombre, APK), `30-aspecto-jugadores.md` (pelo, piel y barba de los jugadores), `31-pantalla-ancha.md` (el partido a lo ancho del teléfono), `33-plantillas.md` (plantillas al día desde Wikipedia), `34-progreso-plantillas-28-10.md` (progreso de la sesión del 28/10: Primera B, Argentina y estado de las plantillas), `35-apk-iso.md` (APK que pide la ISO en el menú y descifra el EBOOT).
+`15-multiplayer-plan.md` (multijugador WiFi), `16-liga-chilena.md` (liga chilena, primer intento: iteraciones 32–33), `17-versiones.md` (menú de versión, mods y guardados por versión), `18-rendimiento.md` (optimización del código generado), `19-menu-ajustes.md` (menú previo, ajustes, mandos), `20-mantenimiento.md` (regresión, direcciones, nombres, toolkit), `21-partido-estructuras.md` (jugadores, tablas y globales del partido, vistos en RAM), `22-arquitectura.md` (**mapa del juego**: arranque, escenas, overlays, partido), `23-liga-datos.md` (bloque de datos de Liga/ML, punto de partida), `24-comentarios.md` (**comentarista**: banco de voz de PS2, motor), `25-manipulacion.md` (**dónde tocar para cambiar el juego**: parámetros, reglas, mapa Y→Z), `26-capas.md` (**las capas del port** y qué se puede tocar), `27-rollback.md` (netcode por entradas: investigación), `28-parches-pech.md` (parches PECH a versiones), `29-pes6chile27.md` (**el producto**: solo el parche, nombre, APK), `30-aspecto-jugadores.md` (pelo, piel y barba de los jugadores), `31-pantalla-ancha.md` (el partido a lo ancho del teléfono), `33-plantillas.md` (plantillas al día desde Wikipedia), `34-progreso-plantillas-28-10.md` (progreso de la sesión del 28/10: Primera B, Argentina y estado de las plantillas), `35-apk-iso.md` (APK que pide la ISO en el menú y descifra el EBOOT), `36-controles.md` (**catálogo de controles** desde la Command List del juego: 89 acciones clasificadas y borrador de esquema nuevo), `37-esquema-flow.md` (esquema táctil Flow, implementado; §8: mediciones y pendientes). Pantalla Controles del menú previo: `docs/19` §9.
 
 **Mantenimiento (iteración 38, `docs/20-mantenimiento.md`):** `tools/regress.sh` = batería de
 regresión (capturas deterministas por MD5 contra `tools/regress/expected.txt`; pasarla tras tocar
@@ -478,8 +498,8 @@ PES6PORT/
 └─ keys/       [vacío]        (no se necesitó: pspdecrypt trae claves KIRK embebidas)
 ```
 
-ISO original: `Pro Evolution Soccer 6 (Europe) (En,Fr,De,Es,It).iso` en la **raíz del repo**
-(1.248.329.728 B). Copia de trabajo: `data/pes6.iso`.
+ISO: `data/pes6.iso` (1.248.329.728 B). La copia idéntica de la raíz del repo se borró el 1/11
+para liberar espacio.
 
 ## 5. Estado: Spike 0 COMPLETO (gate superado)
 

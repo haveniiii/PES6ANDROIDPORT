@@ -5,8 +5,9 @@
  * translucent blue bar), a line that explains the focused choice, and JUGAR below -- the only
  * way into the game. Sized for a phone: a tap on a row's left half steps its value back, on the
  * right half forward; a pad or keyboard moves with up/down, changes with left/right and presses
- * with cross. Text comes from a 5x7 bitmap font smoothed when scaled; nothing is taken from the
- * game's data. */
+ * with cross. On Android, CONTROLES opens a second page (docs/19 §9): the schemes, a picture of
+ * the chosen one, its description and EDITAR. Text comes from a 5x7 bitmap font smoothed when
+ * scaled; nothing is taken from the game's data. */
 #include "launcher.h"
 #include "product.h"
 
@@ -29,6 +30,9 @@ static int K = 1;          /* ...drawn K times larger (pes6_launcher_draw), so i
 #define BTN_DOWN   0x0040u
 #define BTN_LEFT   0x0080u
 #define BTN_CROSS  0x4000u
+#define BTN_CIRCLE 0x2000u
+#define BTN_L      0x0100u
+#define BTN_R      0x0200u
 
 /* A 5x7 font of our own, rows top to bottom, bit 4 = leftmost column. */
 static const struct { char c; uint8_t row[7]; } FONT[] = {
@@ -57,9 +61,12 @@ static const struct { char c; uint8_t row[7]; } FONT[] = {
     {'(', {2,4,8,8,8,4,2}},        {')', {8,4,2,2,2,4,8}},        {'-', {0,0,0,31,0,0,0}},
     {'.', {0,0,0,0,0,12,12}},      {':', {0,12,12,0,12,12,0}},    {'/', {1,1,2,4,8,16,16}},
     {'\'', {4,4,8,0,0,0,0}},       {'>', {8,4,2,1,2,4,8}},        {',', {0,0,0,0,12,4,8}},
+    {';', {0,12,12,0,12,4,8}},
     {'<', {2,4,8,16,8,4,2}},       {'+', {0,4,4,31,4,4,0}},       {'=', {0,0,31,0,31,0,0}},
     {'\x01', {31,17,17,17,17,17,31}}, {'\x02', {4,4,10,10,17,17,31}},   /* PSP square, triangle */
     {'\x03', {14,17,17,17,17,17,14}}, {'\x04', {17,17,10,4,10,17,17}},  /* circle, cross */
+    {'\x05', {4,14,21,4,4,4,4}},      {'\x06', {4,4,4,4,21,14,4}},      /* arrows: up, down */
+    {'\x07', {0,4,8,31,8,4,0}},       {'\x08', {0,4,2,31,2,4,0}},       /* left, right */
 };
 
 /* Rows a lower-case glyph sits below the others: g p q y are drawn from their
@@ -170,6 +177,8 @@ static float text_width(const char *s, const font_style *f) {
     return n ? (float)n * (6 + f->spacing) * cell - cell + f->slant * f->cap : 0;
 }
 
+static int g_canvas_h;     /* text_draw's height in pixels when it draws off screen; 0: the screen's */
+
 /* Draw `s` with its capitals' top-left at (x, y); `grow` (in cells) fattens the
  * strokes, for an outline drawn first in another colour. Colour runs from
  * `top` to `bottom` over the capital height. */
@@ -190,7 +199,7 @@ static void text_draw(uint32_t *px, float x, float y, const char *s, const font_
         const int x0 = (int)x - pad, x1 = (int)(x + 5 * cw + f->slant * f->cap) + pad;
         const int y0 = (int)y - pad, y1 = (int)(y + f->cap + descent(*p) * ch) + pad;
         for (int py = y0; py <= y1; py++) {
-            if (py < 0 || py >= BH) continue;
+            if (py < 0 || py >= (g_canvas_h ? g_canvas_h : BH)) continue;
             const uint32_t c = lerp_rgb(top, bottom, clampf(((float)py - y) / f->cap, 0, 1));
             for (int qx = x0; qx <= x1; qx++) {
                 if (qx < 0 || qx >= BW) continue;
@@ -216,6 +225,8 @@ static const font_style LABEL = { 10, 0.84f, 0.0f, 0.42f, 0.2f, 0 };
 static const font_style VALUE = { 10, 0.84f, 0.0f, 0.38f, 0.2f, 0 };
 static const font_style HELP  = { 7, 0.82f, 0.0f, 0.44f, 0.2f, 0 };
 static const font_style PLAY  = { 14, 0.88f, 0.0f, 0.36f, 0.7f, 1 };
+static const font_style BODY  = { 8, 0.80f, 0.0f, 0.42f, 0.2f, 0 };     /* the schemes' descriptions */
+static const font_style TINY  = { 4.5f, 0.84f, 0.0f, 0.36f, 0.2f, 1 };  /* inside the picture's small controls */
 
 /* Layout, in 480x272 units. */
 #define ROW_X     36
@@ -227,10 +238,31 @@ static const font_style PLAY  = { 14, 0.88f, 0.0f, 0.36f, 0.7f, 1 };
 #define PLAY_H    32
 #define PLAY_X    ((W - PLAY_W) / 2)
 #define PLAY_Y    214
-#define EDIT_W    104        /* BOTONES (Android): the touch controls' editor, left of JUGAR */
-#define EDIT_H    26
+#define SIDE_W    104        /* CONTROLES (Android), right of JUGAR, and EDITAR in its page */
+#define SIDE_H    26
+#define OPEN_X    (ROW_X + ROW_W - SIDE_W)
+#define OPEN_Y    (PLAY_Y + (PLAY_H - SIDE_H) / 2)
+
+/* The Controls page: back and the schemes on the left, the picture and its text on the right. */
+#define BACK_X    ROW_X
+#define BACK_Y    10
+#define BACK_W    30
+#define BACK_H    24
+#define LIST_W    136
+#define LIST_Y    44
+#define LIST_DY   30         /* room for a sixth scheme above EDITAR */
+#define LIST_H    27
 #define EDIT_X    ROW_X
-#define EDIT_Y    (PLAY_Y + (PLAY_H - EDIT_H) / 2)
+#define EDIT_Y    232
+#define PV_X      184
+#define PV_Y      10
+#define PV_W      260
+#define PV_H      117        /* about the phones' 20:9 */
+#define TEXT_Y    (PV_Y + PV_H + 6)
+#define TEXT_H    (264 - TEXT_Y)
+#define TEXT_PAD  8
+#define TEXT_LINE 13.0f
+#define BAR_W     3          /* the scroll bar */
 
 /* The backdrop, made once per scale: deep blue fading to black, a cool glow up on the right,
  * a faint horizon line with its bloom and a few slow diagonal light bands -- the PS2's
@@ -282,15 +314,14 @@ static void rrect(uint32_t *px, float x, float y, float w, float h, float r, flo
 
 /* ---- the rows ------------------------------------------------------------ */
 
-enum { ROW_ISO, ROW_VERSION, ROW_RENDER, ROW_CONTROLS, ROW_HAND, ROW_SCREEN, ROW_CAMERA, ROW_RES, ROW_QUALITY,
-       ROW_KINDS };
+enum { ROW_ISO, ROW_VERSION, ROW_RENDER, ROW_HAND, ROW_SCREEN, ROW_CAMERA, ROW_RES, ROW_QUALITY, ROW_KINDS };
 
 /* The rows on this host, top to bottom; JUGAR comes after them. */
 static int rows(const pes6_launcher *l, int *kind) {
     int n = 0;
     if (l->iso) kind[n++] = ROW_ISO;
     if (l->n > 1) kind[n++] = ROW_VERSION;
-    if (l->android) { kind[n++] = ROW_CONTROLS; kind[n++] = ROW_HAND; kind[n++] = ROW_SCREEN; }
+    if (l->android) { kind[n++] = ROW_HAND; kind[n++] = ROW_SCREEN; }
     else kind[n++] = ROW_RENDER;
     kind[n++] = ROW_CAMERA;
     kind[n++] = ROW_RES;
@@ -308,8 +339,8 @@ static int league_switch(const pes6_launcher *l) {
 }
 
 static const char *row_label(const pes6_launcher *l, int kind) {
-    static const char *label[ROW_KINDS] = { "ISO", "Version", "Motor", "Controles", "Mano", "Pantalla", "Camara",
-                                            "Resolucion", "Calidad" };
+    static const char *label[ROW_KINDS] = { "ISO", "Version", "Motor", "Mano", "Pantalla", "Camara", "Resolucion",
+                                            "Calidad" };
     return kind == ROW_VERSION && league_switch(l) ? "Liga chilena" : label[kind];
 }
 
@@ -332,8 +363,6 @@ static int row_choices(const pes6_launcher *l, int kind, const char **out, int *
         *current = l->ver;
         return l->n < 4 ? l->n : 4;
     case ROW_RENDER:   out[0] = "GPU"; out[1] = "Software"; *current = !s->gpu; return 2;
-    case ROW_CONTROLS: out[0] = "Clasico"; out[1] = "Cruceta"; out[2] = "Pro"; out[3] = "Pro atajos";
-                       out[4] = "Pro + cruceta"; *current = s->controls; return CTRL_COUNT;
     case ROW_SCREEN:   out[0] = "Completa"; out[1] = "16:9"; *current = s->screen; return SCREEN_COUNT;
     case ROW_CAMERA:   out[0] = "Normal"; out[1] = "Lejana"; out[2] = "Muy lejana"; *current = s->camera; return CAMERA_COUNT;
     case ROW_HAND:     out[0] = "Derecha"; out[1] = "Izquierda"; *current = s->hand; return 2;
@@ -344,20 +373,9 @@ static int row_choices(const pes6_launcher *l, int kind, const char **out, int *
     }
 }
 
-/* What the focused row says, one line under the rows: the control scheme, and the ISO's state. */
+/* What the focused row says, one line under the rows: the ISO's state. */
 static const char *row_help(const pes6_launcher *l, int kind) {
-    switch (kind) {
-    case ROW_ISO:     return l->iso_help ? l->iso_help : "";
-    case ROW_CONTROLS:
-        switch (l->s->controls) {
-        case CTRL_CLASSIC: return "Stick y cruceta, con los botones de la PSP; el stick corre en el borde.";
-        case CTRL_DPAD:    return "Cruceta fija y los botones de la PSP; R para correr.";
-        case CTRL_PRO:     return "Stick fino, corre en la zona de fuera. Desliza un boton: arriba +L, abajo +R.";
-        case CTRL_PRO_KEYS: return "Como Pro, con botones L+\x01  R+\x01  L+\x02  R+\x02 en vez de deslizar.";
-        default:           return "Como Pro, con una cruceta ademas del stick.";
-        }
-    default: return "";
-    }
+    return kind == ROW_ISO && l->iso_help ? l->iso_help : "";
 }
 
 static void row_set(pes6_launcher *l, int kind, int choice) {
@@ -365,7 +383,6 @@ static void row_set(pes6_launcher *l, int kind, int choice) {
     switch (kind) {
     case ROW_VERSION:  l->ver = choice; break;
     case ROW_RENDER:   s->gpu = choice == 0; break;
-    case ROW_CONTROLS: pes6_settings_set_controls(s, choice); break;
     case ROW_HAND:     s->hand = choice; break;
     case ROW_SCREEN:   s->screen = choice; break;
     case ROW_CAMERA:   s->camera = choice; break;
@@ -420,10 +437,401 @@ static void chevron(uint32_t *px, float cx, float cy, float r, int right, uint32
     }
 }
 
+/* A quiet lozenge with a label: CONTROLES and EDITAR. */
+static void side_button(uint32_t *px, float x, float y, const char *label, int focus) {
+    if (focus) rrect(px, x - 3, y - 3, SIDE_W + 6, SIDE_H + 6, 9, 0, RGB(130, 180, 255), 0.30f);
+    rrect2(px, x, y, SIDE_W, SIDE_H, 6, 0, focus ? RGB(60, 104, 200) : RGB(30, 52, 110),
+           focus ? RGB(24, 50, 130) : RGB(14, 26, 64), 1);
+    rrect(px, x, y, SIDE_W, SIDE_H, 6, 0.75f, RGB(150, 180, 240), focus ? 0.8f : 0.4f);
+    text_draw(px, x + (SIDE_W - text_width(label, &VALUE)) / 2, y + (SIDE_H - VALUE.cap) / 2, label, &VALUE,
+              RGB(230, 238, 255), RGB(190, 210, 245), 0);
+}
+
+/* ---- the Controls page -------------------------------------------------------- */
+
+/* The schemes' names and what they do. Action names are the game's own, from its Command List
+ * (docs/36). "# " starts a heading, "\n" a line; the rest wraps to the box. */
+static const char *const SCHEME_NAME[CTRL_COUNT] = { "Clasico", "Cruceta", "Pro", "Pro atajos", "Pro + cruceta", "Flow" };
+
+#define DESC_BUTTONS \
+    "# Con balon\n" \
+    "\x01 Shoot   \x04 Short Pass\n\x03 Long Pass   \x02 Through Pass\n" \
+    "L + \x01 Chip shot\nL + \x02 Through pass in the air\n" \
+    "# Sin balon\n" \
+    "\x04 Pressure 1   \x01 Pressure 2\n\x03 Sliding tackle   \x02 Rush forward\n" \
+    "L Cursor change\n\x03 + \x02 Super cancel\n"
+#define DESC_ZONE \
+    "# Movimiento\n" \
+    "Stick flotante: Dribbling. Hacia el borde entras en la zona de Dash: el telefono vibra y la " \
+    "perilla se pone naranja. Volviendo hacia el centro dejas de correr.\n"
+#define DESC_SWIPE \
+    "# Deslizar\n" \
+    "Desliza mientras pulsas el boton:\n" \
+    "\x05 sobre \x01 Chip shot\n\x05 sobre \x02 Through pass in the air\n" \
+    "\x06 sobre \x01 o \x02 agrega R\n"
+
+static const char *const SCHEME_TEXT[CTRL_COUNT] = {
+    [CTRL_CLASSIC] = "# Movimiento\n"
+                     "Stick flotante: Dribbling; en el borde, Dash. Tambien hay una cruceta pequena arriba, para "
+                     "quien la prefiera.\n" DESC_BUTTONS,
+    [CTRL_DPAD] = "# Movimiento\n"
+                  "Cruceta fija: Dribbling. Mantén R para Dash.\n" DESC_BUTTONS,
+    [CTRL_PRO] = DESC_ZONE DESC_SWIPE DESC_BUTTONS,
+    [CTRL_PRO_KEYS] = DESC_ZONE
+                      "# Atajos\n"
+                      "Cuatro botones pequenos, sin deslizar:\n"
+                      "L+\x01 Chip shot\nL+\x02 Through pass in the air\nR+\x01 y R+\x02\n" DESC_BUTTONS,
+    [CTRL_PRO_DPAD] = "Igual que Pro, con una cruceta ademas del stick.\n" DESC_ZONE DESC_SWIPE DESC_BUTTONS,
+    [CTRL_FLOW] = "Los botones no se mueven: cambia lo que hacen segun la jugada, y cada uno muestra su nombre. "
+                  "El color indica la jugada: ambar en ataque, coral en defensa.\n"
+                  "# Como leerlos\n"
+                  "Las muescas del borde son los deslizamientos posibles. Un disco vacio no tiene funcion en esa jugada.\n"
+                  "# Pulgar izquierdo\n"
+                  "Centro del stick, con balon: Low-speed dribbling\nZona media: Dribbling\n"
+                  "Borde de color: Dash, con vibracion\n"
+                  "1 toque: Quick stop\n2 toques: Stop ball, Quick stop and turn, Jump\n"
+                  "Toque y arrastrar: Turn around without touching the ball\n"
+                  "# Ataque\n"
+                  "\x01 Shoot\n\x05 Chip shot   \x06 Controlled shot\n\x07 Kick dummy   \x08 Chip shot 2\n"
+                  "\x04 Short Pass\n\x05 1-2 pass   \x06 Pass and follow\n"
+                  "\x03 Long Pass\n\x05 Early cross   \x06 Cross along the ground\n\x07 Cross near side   \x08 Kick dummy\n"
+                  "\x02 Through Pass\n\x05 Through pass in the air\n"
+                  "Skill: Step over\n\x05 Marseille Roulette   \x06 Lift ball\n\x08 Step over 2\n"
+                  "Tap out; en carrera, Kick far\n"
+                  "# Recepcion\n"
+                  "Los mismos cuatro botones, al primer toque y sin espera. Los dos de arriba pasan a Cursor change y "
+                  "Super cancel.\n"
+                  "# Defensa\n"
+                  "\x04 Pressure 1   \x01 Pressure 2\n\x03 Sliding tackle   \x02 Rush forward\n"
+                  "Cursor change y Super cancel\n"
+                  "# Balon parado\n"
+                  "Cada boton muestra su accion. Al ejecutar, los dos de arriba son Adjust left y Adjust right.\n"
+                  "# Tactica\n"
+                  "Mantén Select: el stick elige Strategy, y los dos de arriba son Defence-strong y Attack-strong.\n",
+};
+
+/* The chosen scheme's text, wrapped once to the box. */
+#define DESC_MAX 72
+static struct { char s[64]; int head; } g_desc[DESC_MAX];
+static int g_ndesc, g_desc_for = -1;
+
+static void desc_line(const char *s, size_t n, int head) {
+    if (g_ndesc >= DESC_MAX) return;
+    if (n >= sizeof g_desc[0].s) n = sizeof g_desc[0].s - 1;
+    memcpy(g_desc[g_ndesc].s, s, n);
+    g_desc[g_ndesc].s[n] = 0;
+    g_desc[g_ndesc++].head = head;
+}
+
+static void desc_wrap(int scheme) {
+    if (g_desc_for == scheme) return;
+    g_desc_for = scheme;
+    g_ndesc = 0;
+    const float width = PV_W - 2 * TEXT_PAD - BAR_W - 3;
+    for (const char *p = SCHEME_TEXT[scheme]; *p; ) {
+        const char *end = strchr(p, '\n');
+        if (!end) end = p + strlen(p);
+        const int head = p[0] == '#' && p[1] == ' ';
+        if (head) {
+            if (g_ndesc) desc_line("", 0, 0);        /* a blank line above a heading */
+            p += 2;
+        }
+        while (p < end) {                            /* the longest run of words that fits */
+            const char *cut = end;
+            char t[64];
+            for (;;) {
+                const size_t n = (size_t)(cut - p);
+                if (n < sizeof t) {
+                    memcpy(t, p, n);
+                    t[n] = 0;
+                    if (text_width(t, head ? &SUB : &BODY) <= width) break;
+                }
+                const char *q = cut - 1;
+                while (q > p && *q != ' ') q--;
+                if (q == p) break;                   /* one word wider than the box */
+                cut = q;
+            }
+            desc_line(p, (size_t)(cut - p), head);
+            p = cut;
+            while (p < end && *p == ' ') p++;
+        }
+        p = *end ? end + 1 : end;
+    }
+}
+
+static float scroll_max(const pes6_launcher *l) {
+    desc_wrap(l->s->controls);
+    const float m = (float)g_ndesc * TEXT_LINE + 2 * TEXT_PAD - TEXT_H;
+    return m > 0 ? m : 0;
+}
+
+void pes6_launcher_scroll(pes6_launcher *l, float d) { l->scroll = clampf(l->scroll + d, 0, scroll_max(l)); }
+
+void pes6_launcher_set_preview(pes6_launcher *l, const pes6_preview_control *c, int n) {
+    if (n > PES6_PREVIEW_MAX) n = PES6_PREVIEW_MAX;
+    l->npreview = n;
+    if (n > 0) memcpy(l->preview, c, sizeof *c * (size_t)n);
+}
+
+/* A host that gives no controls (the desktop's tests of this page): the usual places. */
+static int preview_generic(const pes6_launcher *l, pes6_preview_control *p) {
+    static const pes6_preview_control BASE[] = {
+        { 0.77f, 0.61f, 0.075f, PES6_PV_SQUARE },   { 0.84f, 0.78f, 0.075f, PES6_PV_CROSS },
+        { 0.91f, 0.61f, 0.068f, PES6_PV_CIRCLE },   { 0.83f, 0.40f, 0.068f, PES6_PV_TRIANGLE },
+        { 0.73f, 0.29f, 0.055f, PES6_PV_L },        { 0.94f, 0.28f, 0.055f, PES6_PV_R },
+        { 0.485f, 0.93f, 0.03f, PES6_PV_SELECT },   { 0.56f, 0.93f, 0.03f, PES6_PV_START },
+    };
+    int n = (int)(sizeof BASE / sizeof BASE[0]);
+    memcpy(p, BASE, sizeof BASE);
+    const int c = l->s->controls;
+    p[n++] = c == CTRL_DPAD ? (pes6_preview_control){ 0.20f, 0.62f, 0.12f, PES6_PV_DPAD }
+                            : (pes6_preview_control){ 0.20f, 0.62f, 0.20f, PES6_PV_STICK };
+    if (c == CTRL_CLASSIC || c == CTRL_PRO_DPAD) p[n++] = (pes6_preview_control){ 0.11f, 0.30f, 0.07f, PES6_PV_DPAD };
+    return n;
+}
+
+static void centred(uint32_t *px, float x, float y, const char *s, const font_style *f, uint32_t c) {
+    text_draw(px, x - text_width(s, f) / 2, y - f->cap / 2, s, f, c, c, 0);
+}
+
+static void preview_control(uint32_t *px, const pes6_preview_control *c, int rim) {
+    const float x = PV_X + c->x * PV_W, y = PV_Y + c->y * PV_H, r = c->r * PV_H;
+    const uint32_t ink = RGB(236, 242, 255), dark = RGB(8, 22, 26);
+    static const uint32_t FACE[4] = { RGB(242, 143, 219), RGB(122, 168, 255), RGB(250, 102, 102), RGB(77, 219, 168) };
+    switch (c->kind) {
+    case PES6_PV_STICK:
+        disc(px, x, y, r, 0, dark, 0.45f);
+        if (rim) disc(px, x, y, r, r * 0.80f, RGB(255, 157, 82), 0.45f);
+        disc(px, x, y, r, r - 0.8f, ink, 0.8f);
+        disc(px, x, y, r * 0.42f, 0, ink, 0.75f);
+        break;
+    case PES6_PV_DPAD: {
+        const float t = r * 0.78f, a = r * 1.65f;
+        rrect(px, x - a, y - t / 2, a * 2, t, 2, 0, dark, 0.65f);
+        rrect(px, x - t / 2, y - a, t, a * 2, 2, 0, dark, 0.65f);
+        rrect(px, x - a, y - t / 2, a * 2, t, 2, 0.7f, ink, 0.85f);
+        rrect(px, x - t / 2, y - a, t, a * 2, 2, 0.7f, ink, 0.85f);
+        break;
+    }
+    case PES6_PV_SELECT: case PES6_PV_START:
+        rrect(px, x - 9, y - 3.5f, 18, 7, 3, 0, dark, 0.65f);
+        rrect(px, x - 9, y - 3.5f, 18, 7, 3, 0.6f, ink, 0.6f);
+        centred(px, x, y, c->kind == PES6_PV_SELECT ? "Sel" : "Start", &TINY, ink);
+        break;
+    default: {
+        static const char *const NAME[] = { "\x01", "\x04", "\x03", "\x02", "L", "R", "L\x01", "R\x01", "L\x02", "R\x02" };
+        const int face = c->kind <= PES6_PV_TRIANGLE;
+        const uint32_t col = face ? FACE[c->kind] : ink;
+        disc(px, x, y, r, 0, dark, 0.7f);
+        disc(px, x, y, r, r - 0.9f, col, 0.95f);
+        centred(px, x, y, NAME[c->kind], c->kind < PES6_PV_L_SQUARE ? &HELP : &TINY, col);
+    }
+    }
+}
+
+/* FLOW's controls in the picture, drawn as the match draws them (docs/37 §9), in the attack's amber. */
+#define FLOW_AMBER RGB(242, 184, 74)
+
+static void stroke(uint32_t *px, float x0, float y0, float x1, float y1, float w, uint32_t c, float alpha) {
+    const int n = (int)(fmaxf(fabsf(x1 - x0), fabsf(y1 - y0)) * 2) + 1;
+    for (int i = 0; i <= n; i++)
+        disc(px, x0 + (x1 - x0) * (float)i / (float)n, y0 + (y1 - y0) * (float)i / (float)n, w, 0, c, alpha);
+}
+
+static void flow_label(uint32_t *px, float x, float y, float room, const char *a, const char *b) {
+    font_style f = TINY;
+    f.cap = 3.3f;
+    const float wide = fmaxf(text_width(a, &f), b ? text_width(b, &f) : 0);
+    if (wide > room) f.cap *= room / wide;
+    const uint32_t ink = RGB(247, 249, 255);
+    centred(px, x, b ? y - f.cap * 0.68f : y, a, &f, ink);
+    if (b) centred(px, x, y + f.cap * 0.68f, b, &f, ink);
+}
+
+static void flow_control(uint32_t *px, const pes6_preview_control *c) {
+    const float x = PV_X + c->x * PV_W, y = PV_Y + c->y * PV_H, r = c->r * PV_H;
+    const uint32_t glass = RGB(16, 34, 34), ink = RGB(238, 244, 236);
+    if (c->kind == PES6_PV_STICK) {
+        disc(px, x, y, r, 0, glass, 0.40f);
+        disc(px, x, y, r, r * 0.80f, FLOW_AMBER, 0.30f);
+        disc(px, x, y, r, r - 0.6f, FLOW_AMBER, 0.95f);
+        disc(px, x, y, r * 0.80f + 0.25f, r * 0.80f - 0.25f, ink, 0.55f);
+        disc(px, x, y, r * 0.42f + 0.25f, r * 0.42f - 0.25f, ink, 0.40f);
+        for (int i = 0; i < 8; i++) {
+            const float a = (float)i * 0.7853982f, dx = cosf(a), dy = sinf(a);
+            stroke(px, x + dx * r * 0.86f, y + dy * r * 0.86f, x + dx * r * 0.95f, y + dy * r * 0.95f, 0.35f, ink, 0.8f);
+        }
+        const float kx = x + r * 0.55f, ky = y - r * 0.24f, kr = r * 0.40f;   /* the knob, under way */
+        disc(px, kx, ky, kr, 0, glass, 0.85f);
+        disc(px, kx, ky, kr, kr - 0.7f, FLOW_AMBER, 0.95f);
+        return;
+    }
+    if (c->kind > PES6_PV_R) { preview_control(px, c, 0); return; }
+    /* slots: the labels and the notches of the attack: up, down, left, right */
+    static const struct { const char *a, *b; int notch; } SLOT[6] = {
+        { "Shoot", NULL, 15 }, { "Short", "Pass", 3 }, { "Long", "Pass", 15 }, { "Through", "Pass", 1 },
+        { "Skill", NULL, 11 }, { "Tap", "out", 0 },
+    };
+    disc(px, x, y, r, 0, glass, 0.86f);
+    disc(px, x, y, r * 0.925f + 0.5f, r * 0.925f - 0.5f, FLOW_AMBER, 1);
+    static const float DX[4] = { 0, 0, -1, 1 }, DY[4] = { -1, 1, 0, 0 };
+    for (int i = 0; i < 4; i++)
+        if (SLOT[c->kind].notch >> i & 1)
+            stroke(px, x + DX[i] * r * 0.74f, y + DY[i] * r * 0.74f, x + DX[i] * r * 0.88f, y + DY[i] * r * 0.88f, 0.4f, FLOW_AMBER, 1);
+    flow_label(px, x, y, r * 1.36f, SLOT[c->kind].a, SLOT[c->kind].b);
+}
+
+static void preview_draw(const pes6_launcher *l, uint32_t *px) {
+    rrect2(px, PV_X, PV_Y, PV_W, PV_H, 6, 0, RGB(30, 82, 62), RGB(20, 60, 46), 1);
+    fill(px, PV_X + PV_W / 2, PV_Y + 1, 1, PV_H - 2, RGB(62, 118, 96));
+    disc(px, PV_X + PV_W / 2.0f, PV_Y + PV_H / 2.0f, 22, 21.3f, RGB(92, 146, 124), 0.8f);
+    rrect(px, PV_X, PV_Y, PV_W, PV_H, 6, 0.75f, RGB(150, 180, 240), 0.5f);
+    pes6_preview_control generic[PES6_PREVIEW_MAX];
+    const pes6_preview_control *c = l->npreview ? l->preview : generic;
+    const int n = l->npreview ? l->npreview : preview_generic(l, generic);
+    for (int i = 0; i < n; i++) {
+        if (l->s->controls == CTRL_FLOW) flow_control(px, &c[i]);
+        else preview_control(px, &c[i], l->s->rim_run);
+    }
+}
+
+/* The whole description, drawn once off screen on the box's colour, so that scrolling only copies
+ * rows: text is the menu's dearest drawing, and a phone redraws all of this every frame. */
+#define TEXT_BG RGB(10, 19, 48)
+static uint32_t *g_text_px;
+static int g_text_rows, g_text_scheme = -1, g_text_k;
+
+static void description_render(int scheme) {
+    if (g_text_scheme == scheme && g_text_k == K && g_text_px) return;
+    desc_wrap(scheme);
+    const int rows = (int)(((float)g_ndesc * TEXT_LINE + 2 * TEXT_PAD) * (float)K);
+    free(g_text_px);
+    g_text_px = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)BW * (size_t)rows);
+    if (!g_text_px) { g_text_scheme = -1; return; }
+    g_text_scheme = scheme;
+    g_text_k = K;
+    g_text_rows = rows;
+    for (size_t i = 0; i < (size_t)BW * (size_t)rows; i++) g_text_px[i] = TEXT_BG;
+    g_canvas_h = rows;
+    for (int i = 0; i < g_ndesc; i++) {
+        const uint32_t c = g_desc[i].head ? RGB(255, 236, 160) : RGB(216, 224, 242);
+        text_draw(g_text_px, PV_X + TEXT_PAD, TEXT_PAD + (float)i * TEXT_LINE, g_desc[i].s,
+                  g_desc[i].head ? &SUB : &BODY, c, c, 0);
+    }
+    g_canvas_h = 0;
+}
+
+static void description_draw(const pes6_launcher *l, uint32_t *px) {
+    description_render(l->s->controls);
+    if (!g_text_px) return;
+    const float max = scroll_max(l);
+    const int x0 = (PV_X + 2) * K, w = (PV_W - 4) * K, y0 = (TEXT_Y + 2) * K, y1 = (TEXT_Y + TEXT_H - 2) * K;
+    const int offset = 2 * K + (int)(l->scroll * (float)K);
+    for (int y = y0; y < y1; y++) {
+        const int src = y - y0 + offset;
+        if (src < g_text_rows) memcpy(px + (size_t)y * BW + x0, g_text_px + (size_t)src * BW + x0, sizeof(uint32_t) * (size_t)w);
+        else for (int x = 0; x < w; x++) px[(size_t)y * BW + x0 + x] = TEXT_BG;
+    }
+    if (max > 0) {                                /* the bar: the box's share of the whole text */
+        const float track = TEXT_H - 12, knob = track * TEXT_H / (TEXT_H + max);
+        const float kx = PV_X + PV_W - BAR_W - 3, ky = TEXT_Y + 6 + (track - knob) * l->scroll / max;
+        rrect(px, kx, TEXT_Y + 6, BAR_W, track, 1.5f, 0, RGB(50, 66, 112), 0.7f);
+        rrect(px, kx, ky, BAR_W, knob, 1.5f, 0, RGB(170, 195, 245), 0.95f);
+    }
+}
+
+static void controls_static(const pes6_launcher *l, uint32_t *px);
+
+/* Everything but the text changes only with the choice, so it is drawn once per change. */
+typedef struct { int scheme, edit, n; pes6_preview_control c[PES6_PREVIEW_MAX]; } page_key;
+
+static void controls_draw(const pes6_launcher *l, uint32_t *px) {
+    static uint32_t *page;
+    static int page_k;
+    static page_key was;
+    page_key now;
+    memset(&now, 0, sizeof now);
+    now.scheme = l->s->controls + 1;                 /* never 0, what `was` starts as */
+    now.edit = l->ctl_sel == CTRL_COUNT;
+    now.n = l->npreview;
+    memcpy(now.c, l->preview, sizeof now.c);
+    if (page_k != K) {
+        free(page);
+        page = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+        page_k = page ? K : 0;
+        was.scheme = 0;
+    }
+    if (page && !memcmp(&was, &now, sizeof was)) {
+        memcpy(px, page, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+    } else {
+        controls_static(l, px);
+        if (page) memcpy(page, px, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+        was = now;
+    }
+    description_draw(l, px);
+}
+
+static void controls_static(const pes6_launcher *l, uint32_t *px) {
+    const float cy = BACK_Y + BACK_H / 2.0f;
+    rrect2(px, BACK_X, BACK_Y, BACK_W, BACK_H, 6, 0, RGB(30, 52, 110), RGB(14, 26, 64), 1);
+    rrect(px, BACK_X, BACK_Y, BACK_W, BACK_H, 6, 0.75f, RGB(150, 180, 240), 0.5f);
+    chevron(px, BACK_X + 9, cy, 6, 0, RGB(236, 242, 255), 1);
+    rrect(px, BACK_X + 9, cy - 0.9f, 13, 1.8f, 0.9f, 0, RGB(236, 242, 255), 1);
+    text_draw(px, BACK_X + BACK_W + 10, cy - TITLE.cap / 2, "Controles", &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
+
+    for (int i = 0; i < CTRL_COUNT; i++) {
+        const float y = LIST_Y + i * LIST_DY;
+        const int on = i == l->s->controls;
+        if (on) {
+            rrect2(px, ROW_X, y, LIST_W, LIST_H, 4, 0, RGB(52, 104, 230), RGB(24, 56, 150), 0.65f);
+            rrect(px, ROW_X, y, LIST_W, LIST_H, 4, 0.75f, RGB(150, 190, 255), 0.75f);
+        } else {
+            rrect2(px, ROW_X, y, LIST_W, LIST_H, 4, 0, RGB(18, 30, 66), RGB(8, 14, 38), 0.65f);
+            rrect(px, ROW_X, y, LIST_W, LIST_H, 4, 0.75f, RGB(90, 112, 170), 0.35f);
+        }
+        const uint32_t c = on ? RGB(255, 255, 255) : RGB(168, 182, 214);
+        text_draw(px, ROW_X + 12, y + (LIST_H - LABEL.cap) / 2, SCHEME_NAME[i], &LABEL, c, c, 0);
+    }
+    side_button(px, EDIT_X, EDIT_Y, "Editar", l->ctl_sel == CTRL_COUNT);
+    preview_draw(l, px);
+    rrect(px, PV_X, TEXT_Y, PV_W, TEXT_H, 6, 0, TEXT_BG, 1);
+    rrect(px, PV_X, TEXT_Y, PV_W, TEXT_H, 6, 0.75f, RGB(150, 180, 240), 0.4f);
+}
+
+static void controls_pick(pes6_launcher *l, int scheme) {
+    l->ctl_sel = scheme;
+    if (scheme >= CTRL_COUNT || scheme == l->s->controls) return;
+    pes6_settings_set_controls(l->s, scheme);
+    l->scroll = 0;
+}
+
+static int inside(float x, float y, float rx, float ry, float rw, float rh, float slack) {
+    return x >= rx - slack && x < rx + rw + slack && y >= ry - slack && y < ry + rh + slack;
+}
+
+static int controls_update(pes6_launcher *l, uint32_t buttons, uint32_t pressed, int tap, float x, float y) {
+    if (tap) {
+        if (inside(x, y, BACK_X, BACK_Y, BACK_W, BACK_H, 8)) { l->page = 0; return -1; }
+        if (inside(x, y, EDIT_X, EDIT_Y, SIDE_W, SIDE_H, 6)) { l->ctl_sel = CTRL_COUNT; return PES6_LAUNCHER_EDIT_CONTROLS; }
+        for (int i = 0; i < CTRL_COUNT; i++)
+            if (inside(x, y, ROW_X, LIST_Y + i * LIST_DY, LIST_W, LIST_DY, 0)) controls_pick(l, i);
+    }
+    if (pressed & BTN_CIRCLE) { l->page = 0; return -1; }
+    if (pressed & BTN_UP)   controls_pick(l, (l->ctl_sel + CTRL_COUNT) % (CTRL_COUNT + 1));
+    if (pressed & BTN_DOWN) controls_pick(l, (l->ctl_sel + 1) % (CTRL_COUNT + 1));
+    if (l->ctl_sel == CTRL_COUNT && (pressed & BTN_CROSS)) return PES6_LAUNCHER_EDIT_CONTROLS;
+    /* L and R scroll the text: a line per press, then steadily while held. */
+    const float d = ((pressed & BTN_R) ? TEXT_LINE : 0) - ((pressed & BTN_L) ? TEXT_LINE : 0) +
+                    ((buttons & ~pressed & BTN_R) ? 2.5f : 0) - ((buttons & ~pressed & BTN_L) ? 2.5f : 0);
+    if (d != 0) pes6_launcher_scroll(l, d);
+    return -1;
+}
+
 void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     K = scale < 1 ? 1 : scale > PES6_LAUNCHER_MAX_SCALE ? PES6_LAUNCHER_MAX_SCALE : scale;
     const uint32_t *bg = backdrop();
     if (bg) memcpy(px, bg, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+    if (l->page) { controls_draw(l, px); return; }
     int kind[ROW_KINDS];
     const int nrows = rows(l, kind);
     const float dy = row_dy(nrows);
@@ -475,17 +883,8 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     text_draw(px, PLAY_X + (PLAY_W - pw) / 2, PLAY_Y + (PLAY_H - PLAY.cap) / 2, "Jugar", &PLAY,
               RGB(255, 255, 255), RGB(210, 225, 255), 0);
 
-    /* BOTONES: the same lozenge, smaller and quieter; focus is one step left of JUGAR. */
-    if (l->android) {
-        const int ef = l->sel == nrows + 1;
-        if (ef) rrect(px, EDIT_X - 3, EDIT_Y - 3, EDIT_W + 6, EDIT_H + 6, 9, 0, RGB(130, 180, 255), 0.30f);
-        rrect2(px, EDIT_X, EDIT_Y, EDIT_W, EDIT_H, 6, 0, ef ? RGB(60, 104, 200) : RGB(30, 52, 110),
-               ef ? RGB(24, 50, 130) : RGB(14, 26, 64), 1);
-        rrect(px, EDIT_X, EDIT_Y, EDIT_W, EDIT_H, 6, 0.75f, RGB(150, 180, 240), ef ? 0.8f : 0.4f);
-        const float ew = text_width("Botones", &VALUE);
-        text_draw(px, EDIT_X + (EDIT_W - ew) / 2, EDIT_Y + (EDIT_H - VALUE.cap) / 2, "Botones", &VALUE,
-                  RGB(230, 238, 255), RGB(190, 210, 245), 0);
-    }
+    /* CONTROLES: the same lozenge, smaller and quieter; focus is one step right of JUGAR. */
+    if (l->android) side_button(px, OPEN_X, OPEN_Y, "Controles", l->sel == nrows + 1);
 
     /* The gamepad, if there is one, and the keys. */
     char pad[96];
@@ -493,7 +892,7 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
         snprintf(pad, sizeof pad, "Mando conectado: %s", l->pad_name);
         disc(px, ROW_X + 4, 258, 2.5f, 0, RGB(90, 230, 130), 1);
         text_draw(px, ROW_X + 12, 254.5f, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
-    } else if (l->pad_name[0]) {              /* Android: BOTONES sits there; the pad goes top right */
+    } else if (l->pad_name[0]) {              /* Android: the pad goes top right */
         snprintf(pad, sizeof pad, "Mando: %s", l->pad_name);
         const float w = text_width(pad, &HELP);
         disc(px, ROW_X + ROW_W - w - 8, 23.5f, 2.5f, 0, RGB(90, 230, 130), 1);
@@ -515,7 +914,7 @@ void pes6_launcher_draw_editor(uint32_t *px, int scale, const char *help, int fo
     K = scale < 1 ? 1 : scale > PES6_LAUNCHER_MAX_SCALE ? PES6_LAUNCHER_MAX_SCALE : scale;
     const uint32_t *bg = backdrop();
     if (bg) memcpy(px, bg, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
-    text_draw(px, ROW_X, 16, "Botones", &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
+    text_draw(px, ROW_X, 16, "Editar", &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
     for (int i = 0; i < PES6_EDITOR_BUTTONS; i++) {
         const float x = EDITOR_BTN[i].x, w = EDITOR_BTN[i].w;
         const int f = i == focus, done = i == PES6_EDITOR_DONE;
@@ -538,9 +937,16 @@ int pes6_launcher_editor_hit(float tx, float ty) {
     return -1;
 }
 
+static void controls_open(pes6_launcher *l) {
+    l->page = 1;
+    l->ctl_sel = l->s->controls;
+    l->scroll = 0;
+}
+
 int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, float ty) {
     uint32_t pressed = buttons & ~l->held;
     l->held = buttons;
+    if (l->page) return controls_update(l, buttons, pressed, tap, tx * W, ty * H);
     int kind[ROW_KINDS];
     const int nrows = rows(l, kind);
     const float dy = row_dy(nrows);
@@ -550,9 +956,10 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
             l->sel = nrows;
             return l->iso && !l->iso_ready ? PES6_LAUNCHER_PICK_ISO : l->ver;
         }
-        if (l->android && x >= EDIT_X - 8 && x < EDIT_X + EDIT_W + 8 && y >= EDIT_Y - 8 && y < EDIT_Y + EDIT_H + 8) {
+        if (l->android && inside(x, y, OPEN_X, OPEN_Y, SIDE_W, SIDE_H, 8)) {
             l->sel = nrows + 1;
-            return PES6_LAUNCHER_EDIT_CONTROLS;
+            controls_open(l);
+            return -1;
         }
         for (int i = 0; i < nrows; i++) {
             const float y0 = row_y0(nrows) + i * dy;
@@ -563,10 +970,10 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
             return -1;
         }
     }
-    if (l->sel > nrows) {                         /* BOTONES: up and down as JUGAR, right back to it */
-        if (pressed & (BTN_UP | BTN_DOWN | BTN_RIGHT)) { l->sel = nrows; pressed &= ~BTN_RIGHT; }
-        else if (pressed & BTN_CROSS) return PES6_LAUNCHER_EDIT_CONTROLS;
-    } else if (l->sel == nrows && l->android && (pressed & BTN_LEFT)) {
+    if (l->sel > nrows) {                         /* CONTROLES: up and down as JUGAR, left back to it */
+        if (pressed & (BTN_UP | BTN_DOWN | BTN_LEFT)) { l->sel = nrows; pressed &= ~BTN_LEFT; }
+        else if (pressed & BTN_CROSS) { controls_open(l); return -1; }
+    } else if (l->sel == nrows && l->android && (pressed & BTN_RIGHT)) {
         l->sel = nrows + 1;
         return -1;
     }

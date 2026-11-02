@@ -293,9 +293,10 @@ guionizado de 4 partidas con el valor muestreado en cada frame de juego vivo (`P
 | **14** (18, 26) | **×** | pase |
 | **15** (19) | **□** | tiro |
 
-`chara_user_control` comprueba `(+0xB0 & 0x3000) == 0x3000` (△ y ○ a la vez) y `& 0x200` (bit 9,
-*por identificar*). Las copias de los bits 16–27 suben y bajan con las de 4–15 en estas partidas;
-su diferencia (pulsado frente a mantenido, o cola de órdenes) está *por medir*.
+`chara_user_control` comprueba `(+0xB0 & 0x3000) == 0x3000` (△ y ○ a la vez: super cancel) y
+`& 0x200` (bit 9: R2 en el formato de mando de PS2; cómo se activa en PSP sigue sin confirmar).
+Los bits 16–19 no son copias: son la asignación de **defensa** de ×○△□, y 12–15 la de ataque
+(`0x08920AE4`); 20–23 dirección, 24–27 copia de R, L, ×, △, y 8 SELECT (`docs/36` §6).
 
 **La IA usa la misma palabra**: los porteros escriben `0x10000`, la IA de campo `0x800` (R: correr),
 `0x200` y otras, y `+0xB8`/`+0x1EC` guardan órdenes que luego se copian a `+0xB0`. Es decir, la IA

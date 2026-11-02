@@ -39,7 +39,7 @@ add_library(pes6 SHARED
     "${COMMON}/ge.c" "${COMMON}/mpeg.c" "${COMMON}/atrac.c" "${COMMON}/h264.c"
     "${COMMON}/version.c" "${COMMON}/afs_mods.c" "${COMMON}/launcher.c"
     "${COMMON}/at3.c" "${COMMON}/audio.c" "${COMMON}/commentary.c" "${COMMON}/widescreen.c" "${COMMON}/net.c" "${COMMON}/osk.c" "${COMMON}/settings.c"
-    "${COMMON}/tuning.c" "${COMMON}/rules.c" "${COMMON}/faces.c" "${COMMON}/iso_eboot.c"
+    "${COMMON}/tuning.c" "${COMMON}/rules.c" "${COMMON}/flow.c" "${COMMON}/faces.c" "${COMMON}/iso_eboot.c"
     # the EBOOT of the player's ISO decrypted on the phone (docs/35): pspdecrypt, GPL-3
     "${PES6_ROOT}/third_party/pspdecrypt/PrxDecrypter.cpp" "${PES6_ROOT}/third_party/pspdecrypt/pspdecrypt_shim.cpp"
     "${PES6_ROOT}/third_party/pspdecrypt/libkirk/kirk_engine.c" "${PES6_ROOT}/third_party/pspdecrypt/libkirk/AES.c"

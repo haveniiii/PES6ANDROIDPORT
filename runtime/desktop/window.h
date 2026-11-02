@@ -25,6 +25,7 @@ void pes6_window_report(FILE *out);
  * (one every 20 frames) and PES6_LAUNCHER_CAPTURE=prefix writes prefix_<n>.ppm
  * of what is shown before each of them. */
 int pes6_window_launcher(const pes6_version *versions, int n, int sel, pes6_settings *settings);
+void pes6_window_ge_thread(void);
 void pes6_window_apply(const pes6_settings *settings);   /* after the menu */
 
 #ifndef PES6_HAVE_SDL

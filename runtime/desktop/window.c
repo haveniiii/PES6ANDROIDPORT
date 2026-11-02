@@ -88,6 +88,33 @@ static void read_input(void) {
     g_buttons = b;
 }
 
+#ifdef PES6_HAVE_GL
+/* One picture on its way to the window (the GE thread's, when it has one: docs/32 §11). */
+static SDL_atomic_t g_shows;
+
+static void show_job(uint64_t fb_stride, uint64_t fmt_w_h) {
+    const uint32_t fb = (uint32_t)fb_stride, stride = (uint32_t)(fb_stride >> 32);
+    const int fmt = (int)(fmt_w_h & 0xFF), w = (int)((fmt_w_h >> 8) & 0xFFFFFF), h = (int)(fmt_w_h >> 32);
+    if (!pes6_ge_gl_present(fb, w, h) && pes6_ge_read_rgba(g_pixels, fb, stride, fmt) == 0)
+        pes6_ge_gl_present_pixels(g_pixels, w, h);      /* a buffer the game filled itself */
+    SDL_GL_SwapWindow(g_window);
+    SDL_AtomicAdd(&g_shows, -1);
+}
+
+static void take_gl(void) { SDL_GL_MakeCurrent(g_window, g_glctx); }
+#endif
+
+/* PES6_GE_ASYNC=1: the GE on a thread of its own, for testing it here; on the phone it's the default. */
+void pes6_window_ge_thread(void) {
+#ifdef PES6_HAVE_GL
+    const char *a = getenv("PES6_GE_ASYNC");
+    if (!g_gpu || !a || *a != '1') return;
+    SDL_GL_MakeCurrent(g_window, NULL);
+    if (pes6_ge_thread_start(take_gl) != 0) take_gl();
+    fprintf(stderr, "ge: %s\n", pes6_ge_thread_on() ? "on its own thread" : "on the game's thread");
+#endif
+}
+
 static void on_vblank(void) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -111,10 +138,10 @@ static void on_vblank(void) {
         int w, h;
         shown = psp_display_flips();
         SDL_GL_GetDrawableSize(g_window, &w, &h);
-        if (!pes6_ge_gl_present(psp_display_framebuffer(), w, h) &&
-            pes6_ge_read_rgba(g_pixels, psp_display_framebuffer(), psp_display_stride(), psp_display_format()) == 0)
-            pes6_ge_gl_present_pixels(g_pixels, w, h);      /* a buffer the game filled itself */
-        SDL_GL_SwapWindow(g_window);
+        while (SDL_AtomicGet(&g_shows) >= 2) SDL_Delay(1);
+        SDL_AtomicAdd(&g_shows, 1);
+        pes6_ge_post(show_job, (uint64_t)psp_display_framebuffer() | (uint64_t)psp_display_stride() << 32,
+                     (uint64_t)(psp_display_format() & 0xFF) | (uint64_t)(w & 0xFFFFFF) << 8 | (uint64_t)h << 32);
     } else
 #endif
     if (pes6_ge_read_rgba(g_pixels, psp_display_framebuffer(), psp_display_stride(), psp_display_format()) == 0) {
@@ -251,7 +278,7 @@ static void write_ppm(const char *path, const uint32_t *px) {
 int pes6_window_launcher(const pes6_version *versions, int n, int sel, pes6_settings *settings) {
     static const struct { const char *name; uint32_t mask; } KEYS[] = {
         { "up", 0x0010 }, { "down", 0x0040 }, { "left", 0x0080 }, { "right", 0x0020 }, { "cross", 0x4000 },
-        { "circle", 0x2000 }, { "start", 0x0008 },
+        { "circle", 0x2000 }, { "start", 0x0008 }, { "l", 0x0100 }, { "r", 0x0200 },
     };
     pes6_launcher l;
     pes6_launcher_init(&l, versions, n, sel, settings, getenv("PES6_LAUNCHER_TOUCH") != NULL);   /* the phone's rows (tests) */
@@ -279,6 +306,7 @@ int pes6_window_launcher(const pes6_version *versions, int n, int sel, pes6_sett
                 tap = 1;
                 pes6_launcher_window_point((float)e.button.x, (float)e.button.y, w, h, &tx, &ty);
             }
+            if (e.type == SDL_MOUSEWHEEL && l.page) pes6_launcher_scroll(&l, -12.0f * (float)e.wheel.y);
         }
         read_input();
         pes6_launcher_set_pad(&l, g_pad ? SDL_GameControllerName(g_pad) : "");

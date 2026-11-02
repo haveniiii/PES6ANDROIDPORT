@@ -357,3 +357,14 @@ de partido:
   jugó a mano, no con el guion.
 - En esta prueba se vio que **WIRELESS jugaba con los jugadores de fábrica** y no con los del parche.
   Arreglado en `docs/29` §5c.
+
+**Dos teléfonos y teléfono contra Mac, jugado a mano (2026-11-01).** Redmi Note 13 y Redmi 15C
+(Mali-G52 MC2) con la APK 1.2. Por Wi-Fi Direct (Note 13 a ×2, 15C a ×3, ~4 min): 0–2 paradas, 20–30
+huecos de datagramas ≥ 200 ms, balón p90 27 % en los dos, hilo del juego ~58 %. Contra el Mac por
+router (rival quieto): 1 hueco ≥ 200 ms en 8 min en el teléfono, pero balón p90 27 % igual.
+Con `PES6_NET_BUFFER=45`: entrega más pareja (huecos ≥ 100 ms de 586 a 355 en el teléfono), balón p90
+36 % en el teléfono y 15 % en el Mac, **sin concluir**: esa pasada cambió de papel (Mac anfitrión) y
+de resolución (×3), y el rival no jugó. Falta repetirla con dos personas y las mismas condiciones.
+Quien elige al otro se une; el que espera y acepta es el anfitrión. Si uno sale de la sala, el otro
+ve `peer lost` a los 5 s y su juego abandona unos 30 s después. Wi-Fi Direct sigue tardando varios
+intentos porque los dos teléfonos crean su grupo.

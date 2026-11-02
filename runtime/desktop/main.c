@@ -576,6 +576,7 @@ int main(int argc, char **argv) {
     }
     alarm((unsigned)seconds);
 
+    pes6_window_ge_thread();
     psp_dispatch(ENTRY_ADDR);
 
     /* module_start only creates/starts the game's main thread; run the

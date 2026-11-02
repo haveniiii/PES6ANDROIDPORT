@@ -23,6 +23,7 @@
 #include <psprecomp/mem.h>
 #include <psprecomp/cpu.h>
 
+#include "flow.h"
 #include "ge.h"
 #include "pes6_addrs.h"
 #include "window.h"
@@ -91,6 +92,7 @@ static uint32_t button_mask(const char *name, size_t n) {
         { "select", 0x0001 }, { "start", 0x0008 }, { "up", 0x0010 }, { "right", 0x0020 },
         { "down", 0x0040 }, { "left", 0x0080 }, { "l", 0x0100 }, { "r", 0x0200 },
         { "triangle", 0x1000 }, { "circle", 0x2000 }, { "cross", 0x4000 }, { "square", 0x8000 },
+        { "l2", PES6_PAD_L2 }, { "r2", PES6_PAD_R2 },
     };
     for (size_t i = 0; i < sizeof B / sizeof B[0]; i++)
         if (strlen(B[i].name) == n && !strncmp(B[i].name, name, n)) return B[i].mask;
@@ -159,6 +161,11 @@ static uint32_t analog_at(uint64_t vblank, uint32_t otherwise) {
     return g_analog_when.fired && g_reads < g_analog_when.fired_read + g_analog_reads ? g_analog_value : otherwise;
 }
 
+/* PES6_FLOW_TEST=<when>:<action>,... (tests): run Flow's actions (flow.c) from a script. */
+#define MAX_FLOW_TEST 16
+static when_t g_flow_test[MAX_FLOW_TEST];
+static int g_flow_test_act[MAX_FLOW_TEST], g_flow_test_n, g_flow_test_i;
+
 static void hle_CtrlRead(void) {
     const uint32_t pad = psp_cpu.r[PSP_REG_A0];
     const uint64_t vblank = psp_display_vblanks();
@@ -166,11 +173,23 @@ static void hle_CtrlRead(void) {
     maybe_capture(vblank);
     if (g_have_stop && when_fires(&g_stop, vblank)) raise(SIGALRM);   /* the host's watchdog path */
     if (pad) {
+        uint32_t buttons = buttons_at(vblank) | pes6_window_buttons() |
+                           (pes6_input_extra_buttons ? pes6_input_extra_buttons() : 0);
+        uint32_t analog = analog_at(vblank, pes6_input_extra_analog ? pes6_input_extra_analog()
+                                                                    : pes6_window_analog());   /* lx, ly; 0x80 = centred */
+        if (g_flow_test_n > g_flow_test_i && when_fires(&g_flow_test[g_flow_test_i], vblank))
+            pes6_flow_start(g_flow_test_act[g_flow_test_i++]);
+        buttons = pes6_flow_step(buttons, &analog);
+        /* The PSP has no L2 or R2, but the game's ctrl_read makes them from the stick at full
+         * left or right while PES6_PAD_TRIGGERS is set (docs/36 §6): arm it for this read. */
+        if (buttons & (PES6_PAD_L2 | PES6_PAD_R2)) {
+            psp_write32(PES6_PAD_TRIGGERS, 1);
+            psp_write32(PES6_PAD_TRIGGERS + 4, 0);
+            analog = (analog & 0xFF00u) | (buttons & PES6_PAD_R2 ? 0xFFu : 0x00u);
+        }
         psp_write32(pad, (uint32_t)psp_time_usec());
-        psp_write32(pad + 4, buttons_at(vblank) | pes6_window_buttons() |
-                             (pes6_input_extra_buttons ? pes6_input_extra_buttons() : 0));
-        psp_write32(pad + 8, analog_at(vblank, pes6_input_extra_analog ? pes6_input_extra_analog()
-                                                                       : pes6_window_analog()));   /* lx, ly; 0x80 = centred */
+        psp_write32(pad + 4, buttons & ~(PES6_PAD_L2 | PES6_PAD_R2));
+        psp_write32(pad + 8, analog);
         psp_write32(pad + 12, 0);
     }
     psp_cpu.r[PSP_REG_V0] = 1;
@@ -183,6 +202,16 @@ void pes6_input_init(void) {
     const char *rest = an && *an ? parse_when(an, &g_analog_when) : NULL;
     if (rest && sscanf(rest, ",%u,%u,%u", &g_analog_reads, &lx, &ly) == 3) g_analog_value = (lx & 0xFF) | (ly & 0xFF) << 8;
     else g_analog_reads = 0;
+    for (const char *t = getenv("PES6_FLOW_TEST"); t && *t && g_flow_test_n < MAX_FLOW_TEST; ) {
+        const char *end = parse_when(t, &g_flow_test[g_flow_test_n]);
+        if (!end || *end != ':') break;
+        char name[32];
+        size_t n = strcspn(end + 1, ",");
+        snprintf(name, sizeof name, "%.*s", (int)n, end + 1);
+        g_flow_test_act[g_flow_test_n++] = pes6_flow_find(name);
+        t = end + 1 + n;
+        if (*t == ',') t++;
+    }
     const char *at = getenv("PES6_CAPTURE_AT");
     while (at && *at && g_nshots < MAX_EVENTS) {
         const char *end = parse_when(at, &g_shots[g_nshots]);

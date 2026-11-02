@@ -33,6 +33,14 @@
 #define GLSL_HEADER "#version 300 es\nprecision highp float;\nprecision highp int;\n"
 #endif
 
+/* The fill-rate work (docs/32 §10). PES6_GLX=<mask> switches each one, to measure it. */
+enum {
+    GLX_CLEAR    = 1,                /* a frame's full-screen clear is a glClear: a tiler needn't load the last frame */
+    GLX_OPAQUE   = 2,                /* draws that can't show through lose blending and alpha test */
+    GLX_FAST_MOD = 4,                /* a short shader for the commonest draw */
+};
+static int g_glx = GLX_CLEAR | GLX_OPAQUE | GLX_FAST_MOD;
+
 #define GL_MAX_TARGETS  8
 #define GL_TEX_CACHE    1024
 #define GL_MAX_VERTS    (MAX_VERTS * 10)  /* one frame, as triangles (18 MB) */
@@ -47,7 +55,12 @@ typedef struct {
     int w, h, fmt, bufw, swizzled;
     const uint32_t *repl;            /* the texels drawn instead (mods/, a player's face) */
     uint64_t used_at;                /* in presented frames (G.tick) */
+    int opaque;                      /* every texel's alpha is 255 */
 } gl_tex;
+
+typedef struct { GLuint prog; GLint xf, zf, wide, tex_size, tex_mode, env, atest, flat; } gl_prog;
+
+enum { PROG_ATEST = 1, PROG_FAST = 2, PROG_COUNT = 4 };   /* gl_prog variants: bits */
 
 static struct {
     int on, scale;
@@ -55,7 +68,8 @@ static struct {
     GLenum present_filter;           /* scaling the picture to the window (pes6_ge_gl_configure) */
     GLuint prog, vao, vbo, cpu_tex, cpu_fbo;
     GLuint sampler[4];               /* nearest (or linear, configure); bit 0 clamps u, bit 1 clamps v */
-    GLint u_xf, u_zf, u_wide, u_tex_size, u_tex_mode, u_env, u_atest, u_flat;
+    gl_prog pv[PROG_COUNT];
+    int cur_prog;
     gl_target target[GL_MAX_TARGETS];
     gl_tex tex[GL_TEX_CACHE];
     uint64_t tick;                   /* bumped on every present */
@@ -79,8 +93,11 @@ static const char *GL_VS = GLSL_HEADER
     "  v_col = a_col; v_flat = a_col; v_uv = a_uv / u_tex_size;\n"
     "}\n";
 
-static const char *GL_FS = GLSL_HEADER
-    "in vec4 v_col; flat in vec4 v_flat; in vec2 v_uv;\n"
+/* Variants (gl_prog): ATEST carries the alpha test, and with it `discard`, whose mere presence
+ * keeps a GPU from rejecting hidden pixels early; FAST_MOD is the texture modulated by the
+ * interpolated colour, with the texture's alpha, and nothing else. */
+static const char *GL_FS =
+    "in vec4 v_col; flat in vec4 v_flat; in highp vec2 v_uv;\n"
     "uniform sampler2D u_tex;\n"
     "uniform ivec3 u_tex_mode;  /* enabled, function, use texture alpha */\n"
     "uniform vec3 u_env;\n"
@@ -88,6 +105,9 @@ static const char *GL_FS = GLSL_HEADER
     "uniform int u_flat;\n"
     "out vec4 o_col;\n"
     "void main() {\n"
+    "#ifdef FAST_MOD\n"
+    "  vec4 c = v_col * texture(u_tex, v_uv);\n"
+    "#else\n"
     "  vec4 c = u_flat != 0 ? v_flat : v_col;\n"
     "  if (u_tex_mode.x != 0) {\n"
     "    vec4 t = texture(u_tex, v_uv);\n"
@@ -98,18 +118,22 @@ static const char *GL_FS = GLSL_HEADER
     "    else if (u_tex_mode.y == 3) c = vec4(t.rgb, u_tex_mode.z != 0 ? t.a : c.a);\n"
     "    else                        c = vec4(min(c.rgb + t.rgb, vec3(1.0)), a);\n"
     "  }\n"
+    "#endif\n"
+    "#ifdef ATEST\n"
     "  if (u_atest.x != 0) {\n"
     "    int a = int(c.a * 255.0 + 0.5) & u_atest.w, r = u_atest.z & u_atest.w, f = u_atest.y;\n"
     "    bool pass = f == 1 || (f == 2 && a == r) || (f == 3 && a != r) || (f == 4 && a < r) ||\n"
     "                (f == 5 && a <= r) || (f == 6 && a > r) || (f == 7 && a >= r);\n"
     "    if (!pass) discard;\n"
     "  }\n"
+    "#endif\n"
     "  o_col = c;\n"
     "}\n";
 
-static GLuint gl_compile(GLenum type, const char *src) {
+static GLuint gl_compile_parts(GLenum type, const char *head, const char *defs, const char *src) {
+    const char *parts[3] = { head, defs, src };
     GLuint s = glCreateShader(type);
-    glShaderSource(s, 1, &src, NULL);
+    glShaderSource(s, 3, parts, NULL);
     glCompileShader(s);
     GLint ok = 0;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
@@ -119,6 +143,19 @@ static GLuint gl_compile(GLenum type, const char *src) {
         fprintf(stderr, "ge_gl: shader: %s\n", log);
     }
     return s;
+}
+
+static GLuint gl_compile(GLenum type, const char *src) { return gl_compile_parts(type, "", "", src); }
+
+static GLuint gl_link(GLuint vs, GLuint fs) {
+    GLuint p = glCreateProgram();
+    glAttachShader(p, vs);
+    glAttachShader(p, fs);
+    glLinkProgram(p);
+    GLint ok = 0;
+    glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (!ok) { fprintf(stderr, "ge_gl: program failed to link\n"); return 0; }
+    return p;
 }
 
 static void gl_make_target(GLuint *fbo, GLuint *color, GLuint *depth, int w, int h) {
@@ -147,22 +184,27 @@ void pes6_ge_gl_raster(int on) { G.on = on && G.prog; }
 int pes6_ge_gl_enable(int scale) {
     G.scale = scale < 1 ? 1 : scale > 4 ? 4 : scale;
     if (!G.wide_max) G.wide = G.wide_max = 480;
-    GLuint vs = gl_compile(GL_VERTEX_SHADER, GL_VS), fs = gl_compile(GL_FRAGMENT_SHADER, GL_FS);
-    G.prog = glCreateProgram();
-    glAttachShader(G.prog, vs);
-    glAttachShader(G.prog, fs);
-    glLinkProgram(G.prog);
-    GLint ok = 0;
-    glGetProgramiv(G.prog, GL_LINK_STATUS, &ok);
-    if (!ok) { fprintf(stderr, "ge_gl: program failed to link\n"); return -1; }
-    G.u_xf = glGetUniformLocation(G.prog, "u_xf");
-    G.u_zf = glGetUniformLocation(G.prog, "u_zf");
-    G.u_wide = glGetUniformLocation(G.prog, "u_wide");
-    G.u_tex_size = glGetUniformLocation(G.prog, "u_tex_size");
-    G.u_tex_mode = glGetUniformLocation(G.prog, "u_tex_mode");
-    G.u_env = glGetUniformLocation(G.prog, "u_env");
-    G.u_atest = glGetUniformLocation(G.prog, "u_atest");
-    G.u_flat = glGetUniformLocation(G.prog, "u_flat");
+    {
+        const char *mask = getenv("PES6_GLX");
+        if (mask) g_glx = (int)strtol(mask, NULL, 0);
+        fprintf(stderr, "ge_gl: fill-rate options 0x%X\n", g_glx);
+    }
+    GLuint vs = gl_compile(GL_VERTEX_SHADER, GL_VS);
+    for (int i = 0; i < PROG_COUNT; i++) {
+        static const char *const DEFS[PROG_COUNT] = { "", "#define ATEST\n", "#define FAST_MOD\n", "#define ATEST\n#define FAST_MOD\n" };
+        gl_prog *p = &G.pv[i];
+        GLuint fs = gl_compile_parts(GL_FRAGMENT_SHADER, GLSL_HEADER, DEFS[i], GL_FS);
+        if (!(p->prog = gl_link(vs, fs))) return -1;
+        p->xf = glGetUniformLocation(p->prog, "u_xf");
+        p->zf = glGetUniformLocation(p->prog, "u_zf");
+        p->wide = glGetUniformLocation(p->prog, "u_wide");
+        p->tex_size = glGetUniformLocation(p->prog, "u_tex_size");
+        p->tex_mode = glGetUniformLocation(p->prog, "u_tex_mode");
+        p->env = glGetUniformLocation(p->prog, "u_env");
+        p->atest = glGetUniformLocation(p->prog, "u_atest");
+        p->flat = glGetUniformLocation(p->prog, "u_flat");
+    }
+    G.prog = G.pv[PROG_ATEST].prog;
 
     glGenVertexArrays(1, &G.vao);
     glBindVertexArray(G.vao);
@@ -234,9 +276,15 @@ void pes6_ge_gl_set_wide_max(int max) {
     if (G.wide > max) G.wide = max;
 }
 
+static void set_wide_job(uint64_t w, uint64_t unused) {
+    (void)unused;
+    G.wide = (int)w < 480 ? 480 : (int)w > G.wide_max ? G.wide_max : (int)w;
+}
+
 void pes6_ge_gl_set_wide(int w) {
+    static int last = -1;                /* the host asks every vblank */
     w &= ~1;
-    G.wide = w < 480 ? 480 : w > G.wide_max ? G.wide_max : w;
+    if (w != last) { last = w; pes6_ge_post(set_wide_job, (uint64_t)w, 0); }
 }
 
 static uint32_t gl_fb_key(uint32_t addr) { return addr & 0x00FFFFFFu; }
@@ -268,6 +316,7 @@ static gl_target *gl_find_target(uint32_t addr, int create) {
  * free: what identifies the content (tex_hash, ge.c) is worked out once per
  * draw, entries are found through a small hash index (not a scan). */
 static void gl_flush(void);
+static int g_tex_opaque;             /* of the texture gl_texture just returned */
 
 GE_STAGE static GLuint gl_texture(const draw_ctx *c) {
     const texture *t = &c->tex;
@@ -293,7 +342,7 @@ GE_STAGE static GLuint gl_texture(const draw_ctx *c) {
     /* Content check on every use (a game may redraw a texture in place between
      * two primitives): the 48-sample hash of tex_hash (ge.c), once per draw. */
     const uint32_t dh = t->sample;
-    if (e && e->data_hash == dh) { e->used_at = G.tick; return e->id; }
+    if (e && e->data_hash == dh) { e->used_at = G.tick; g_tex_opaque = e->opaque; return e->id; }
     if (!e) e = victim;
 
     static uint32_t pixels[512 * 512];
@@ -314,6 +363,12 @@ GE_STAGE static GLuint gl_texture(const draw_ctx *c) {
     e->addr = addr; e->w = t->w; e->h = t->h; e->fmt = t->fmt; e->bufw = t->bufw;
     e->swizzled = t->swizzled; e->clut_hash = ch; e->data_hash = dh; e->repl = t->repl;
     e->used_at = G.tick;
+    {
+        uint32_t all = 0xFF000000u;
+        const size_t texels = (size_t)uw * (size_t)uh;
+        for (size_t i = 0; i < texels; i++) all &= up[i];
+        e->opaque = g_tex_opaque = (all >> 24) == 0xFF;
+    }
     G.tex_uploads++;
     return e->id;
 }
@@ -350,6 +405,7 @@ typedef struct {
     int ztest, ztest_func, zwrite;
     int blend, blend_a, blend_b, blend_eq;
     int wide;                        /* the frame's width in PSP pixels (480, or more in widescreen) */
+    int keep_alpha;                  /* blending was dropped (gl_settle_opaque): destination alpha stays */
 } gl_state;
 
 /* PES6_GL_TIMING=1: wall time spent in each stage of gl_flush, printed every
@@ -374,12 +430,50 @@ typedef struct { gl_state st; uint32_t first, count; } gl_cmd;
 static gl_cmd *g_cmds;
 static uint32_t g_ncmds, g_nverts;
 
+/* A clear of colour, alpha and depth over the whole frame, in one flat colour: the game's way to
+ * start one (eight 64 wide strips). As a glClear a tile-based GPU needn't load the previous frame
+ * into its tile memory first. Returns 1 if it was that. */
+static int gl_full_clear(const gl_cmd *cmd) {
+    const gl_state *st = &cmd->st;
+    if (!(g_glx & GLX_CLEAR) || !st->clear_color || !st->clear_alpha || !st->clear_depth) return 0;
+    if (st->sx0 > 0 || st->sy0 > 0 || st->sx1 < 479 || st->sy1 < 271 || cmd->count < 3) return 0;
+    const gl_vert *v = &G.verts[cmd->first];
+    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f, area = 0;
+    for (uint32_t i = 0; i < cmd->count; i++) {
+        if (v[i].col != v[0].col || v[i].z != v[0].z || v[i].w != 1.0f) return 0;
+        x0 = fminf(x0, v[i].x); x1 = fmaxf(x1, v[i].x);
+        y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y);
+    }
+    for (uint32_t i = 0; i + 2 < cmd->count; i += 3)
+        area += fabsf((v[i + 1].x - v[i].x) * (v[i + 2].y - v[i].y) - (v[i + 2].x - v[i].x) * (v[i + 1].y - v[i].y)) * 0.5f;
+    const float pad = (float)(st->wide - 480) / 2.0f;
+    if (x0 > -pad || x1 < 480.0f + pad || y0 > 0.0f || y1 < 272.0f) return 0;
+    if (area < (x1 - x0) * (y1 - y0) - 1.0f) return 0;           /* strips with gaps between them */
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glClearColor(CR(v[0].col) / 255.0f, CG(v[0].col) / 255.0f, CB(v[0].col) / 255.0f, (v[0].col >> 24) / 255.0f);
+#ifdef __APPLE__
+    glClearDepth(v[0].z / 65535.0);
+#else
+    glClearDepthf(v[0].z / 65535.0f);
+#endif
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    G.draws++;
+    return 1;
+}
+
 /* Apply one command's state and draw it from the bound vertex buffer. */
 static void gl_run(const gl_cmd *cmd) {
     const gl_state *st = &cmd->st;
     const int s = G.scale;
     if (st->fbo != G.last_fbo) { G.last_fbo = st->fbo; G.target_switches++; }
     glBindFramebuffer(GL_FRAMEBUFFER, st->fbo);
+    if (st->clear && gl_full_clear(cmd)) return;
+    const int fast = (g_glx & GLX_FAST_MOD) && !st->clear && st->tex && st->tex_func == 0 && st->tex_alpha && !st->flat;
+    const int want = (st->atest || !(g_glx & GLX_OPAQUE) ? PROG_ATEST : 0) | (fast ? PROG_FAST : 0);
+    if (want != G.cur_prog) { G.cur_prog = want; glUseProgram(G.pv[want].prog); }
+    const gl_prog *P = &G.pv[want];
     const int pad = (st->wide - 480) / 2;            /* the 480 wide picture sits in the middle */
     glViewport(0, 0, st->wide * s, 272 * s);
     glEnable(GL_SCISSOR_TEST);
@@ -387,21 +481,21 @@ static void gl_run(const gl_cmd *cmd) {
         glScissor(0, (271 - st->sy1) * s, st->wide * s, (st->sy1 - st->sy0 + 1) * s);
     else
         glScissor((st->sx0 + pad) * s, (271 - st->sy1) * s, (st->sx1 - st->sx0 + 1) * s, (st->sy1 - st->sy0 + 1) * s);
-    glUniform2f(G.u_wide, (float)pad, st->wide * 0.5f);
+    glUniform2f(P->wide, (float)pad, st->wide * 0.5f);
 
-    glUniform4f(G.u_xf, st->xf[0], st->xf[1], st->xf[2], st->xf[3]);
-    glUniform2f(G.u_zf, st->zf[0], st->zf[1]);
-    glUniform1i(G.u_flat, st->flat);
+    glUniform4f(P->xf, st->xf[0], st->xf[1], st->xf[2], st->xf[3]);
+    glUniform2f(P->zf, st->zf[0], st->zf[1]);
+    glUniform1i(P->flat, st->flat);
 
     if (st->clear) {
-        glUniform3i(G.u_tex_mode, 0, 0, 0);
-        glUniform4i(G.u_atest, 0, 0, 0, 0);
+        glUniform3i(P->tex_mode, 0, 0, 0);
+        glUniform4i(P->atest, 0, 0, 0, 0);
         glDisable(GL_BLEND);
         glColorMask(st->clear_color, st->clear_color, st->clear_color, st->clear_alpha);
         if (st->clear_depth) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_ALWAYS); glDepthMask(GL_TRUE); }
         else glDisable(GL_DEPTH_TEST);
     } else {
-        glUniform3i(G.u_tex_mode, st->tex != 0, st->tex_func, st->tex_alpha);
+        glUniform3i(P->tex_mode, st->tex != 0, st->tex_func, st->tex_alpha);
         if (st->tex) {
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, st->tex);
@@ -410,9 +504,9 @@ static void gl_run(const gl_cmd *cmd) {
              * and the Adreno driver submits its whole queue each time. */
             glBindSampler(0, G.sampler[(st->clamp_u ? 1 : 0) | (st->clamp_v ? 2 : 0)]);
         }
-        glUniform2f(G.u_tex_size, st->tex_size[0], st->tex_size[1]);
-        glUniform3f(G.u_env, CR(st->env) / 255.0f, CG(st->env) / 255.0f, CB(st->env) / 255.0f);
-        glUniform4i(G.u_atest, st->atest, st->atest_func, st->atest_ref, st->atest_mask);
+        glUniform2f(P->tex_size, st->tex_size[0], st->tex_size[1]);
+        glUniform3f(P->env, CR(st->env) / 255.0f, CG(st->env) / 255.0f, CB(st->env) / 255.0f);
+        glUniform4i(P->atest, st->atest, st->atest_func, st->atest_ref, st->atest_mask);
 
         static const GLenum ZF[8] = { GL_NEVER, GL_ALWAYS, GL_EQUAL, GL_NOTEQUAL,
                                       GL_LESS, GL_LEQUAL, GL_GREATER, GL_GEQUAL };
@@ -425,7 +519,7 @@ static void gl_run(const gl_cmd *cmd) {
         }
 
         const uint32_t m = st->mask;
-        int wa = (m >> 24) != 0xFF;
+        int wa = (m >> 24) != 0xFF && !st->keep_alpha;
         if (st->blend) {
             static const GLenum EQ[6] = { GL_FUNC_ADD, GL_FUNC_SUBTRACT, GL_FUNC_REVERSE_SUBTRACT,
                                           GL_MIN, GL_MAX, GL_FUNC_ADD };
@@ -444,6 +538,50 @@ static void gl_run(const gl_cmd *cmd) {
     G.draws++;
 }
 
+/* A primitive whose every pixel comes out with alpha 255 replaces what's behind it, whatever the
+ * game's state says: an alpha test that 255 passes and "source alpha, one minus source alpha"
+ * blending change nothing, and cost the GPU its early depth rejection and a read of the target.
+ * Nearly all of a match frame is drawn with both on (docs/32 §10). */
+GE_STAGE static void gl_settle_opaque(gl_state *st, const gl_vert *v, uint32_t count) {
+    if (!(g_glx & GLX_OPAQUE) || st->clear || (!st->blend && !st->atest)) return;
+    const int alpha_of_tex = st->tex && st->tex_alpha && st->tex_func != 1;
+    if (alpha_of_tex && !g_tex_opaque) return;
+    if (!(st->tex && st->tex_alpha && st->tex_func == 3))        /* "replace" ignores the vertices' alpha */
+        for (uint32_t i = 0; i < count; i++)
+            if ((v[i].col >> 24) != 0xFF) return;
+    if (st->atest) {
+        const int a = 255 & st->atest_mask, r = st->atest_ref & st->atest_mask, f = st->atest_func;
+        const int pass = f == 1 || (f == 2 && a == r) || (f == 3 && a != r) || (f == 4 && a < r) ||
+                         (f == 5 && a <= r) || (f == 6 && a > r) || (f == 7 && a >= r);
+        if (pass) st->atest = st->atest_func = st->atest_ref = st->atest_mask = 0;
+    }
+    if (st->blend && st->blend_a == 2 && st->blend_b == 3 && st->blend_eq == 0) {
+        st->blend = st->blend_a = st->blend_b = 0;
+        st->fix = 0;
+        st->keep_alpha = 1;
+    }
+}
+
+/* PES6_GL_TIMING: what a frame is made of, for the fill-rate work (docs/32). */
+static uint64_t g_gl_mix[8];         /* triangles: all, alpha tested, blended, no depth test; clears */
+static char g_gl_first[160];
+static void gl_note_frame(void) {
+    for (uint32_t i = 0; i < g_ncmds; i++) {
+        const gl_state *st = &g_cmds[i].st;
+        const uint64_t tris = g_cmds[i].count / 3;
+        if (st->clear) { g_gl_mix[4]++; continue; }
+        g_gl_mix[0] += tris;
+        if (st->atest) g_gl_mix[1] += tris;
+        if (st->blend) g_gl_mix[2] += tris;
+        if (!st->ztest) g_gl_mix[3] += tris;
+    }
+    const gl_cmd *c = &g_cmds[0];
+    const gl_vert *v = &G.verts[c->first];
+    snprintf(g_gl_first, sizeof g_gl_first, "first clear=%d c%d a%d d%d scissor %d,%d-%d,%d verts %u x %.0f..%.0f y %.0f..%.0f z %.0f col %08X",
+             c->st.clear, c->st.clear_color, c->st.clear_alpha, c->st.clear_depth, c->st.sx0, c->st.sy0, c->st.sx1, c->st.sy1,
+             c->count, v[0].x, v[c->count - 2 < c->count ? c->count - 2 : 0].x, v[0].y, v[c->count - 2 < c->count ? c->count - 2 : 0].y, v[0].z, v[0].col);
+}
+
 /* Send the frame: one vertex upload, then every command in order. */
 static void gl_flush(void) {
     if (!g_ncmds) return;
@@ -453,7 +591,9 @@ static void gl_flush(void) {
     glBindBuffer(GL_ARRAY_BUFFER, G.vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(g_nverts * sizeof(gl_vert)), G.verts, GL_STREAM_DRAW);
     GL_T(3);                         /* vertex upload */
-    glUseProgram(G.prog);
+    G.cur_prog = PROG_ATEST;
+    glUseProgram(G.pv[PROG_ATEST].prog);
+    if (g_gl_timing) gl_note_frame();
     for (uint32_t i = 0; i < g_ncmds; i++) gl_run(&g_cmds[i]);
     GL_T(4);                         /* state + draws */
     g_gl_flushes++;
@@ -562,6 +702,7 @@ GE_STAGE static void gl_draw(const draw_ctx *c, uint32_t type, uint32_t n) {
         }
     }
     if (count) {
+        gl_settle_opaque(&st, out, count);
         /* Same state as the previous command: it simply grows. */
         if (g_ncmds && memcmp(&st, &g_cmds[g_ncmds - 1].st, sizeof st) == 0) {
             g_cmds[g_ncmds - 1].count += count;
@@ -591,21 +732,59 @@ static void gl_blit_to_window(GLuint fbo, int sw, int sh, int flip, int win_w, i
                       G.present_filter ? G.present_filter : GL_LINEAR);
 }
 
+/* PES6_GPU_FINISH=1: the GPU's real time per frame, for measuring. It waits for the GPU after the
+ * game's pass and after the picture reaches the window, so it costs frames: not for playing. */
+static void gl_finish_report(double pass_ms, double show_ms) {
+    enum { N = 300 };
+    static float pass[N], show[N];
+    static int n;
+    pass[n] = (float)pass_ms; show[n] = (float)show_ms;
+    if (++n < N) return;
+    n = 0;
+    float s[N], worst = 0, sum = 0, sum_show = 0;
+    for (int i = 0; i < N; i++) {
+        s[i] = pass[i]; sum += pass[i]; sum_show += show[i];
+        if (pass[i] > worst) worst = pass[i];
+    }
+    for (int i = 1; i < N; i++) {                /* insertion sort: 300 floats, once in 10 s */
+        float x = s[i];
+        int j = i;
+        for (; j > 0 && s[j - 1] > x; j--) s[j] = s[j - 1];
+        s[j] = x;
+    }
+    fprintf(stderr, "[gpu] pass ms: mean %.1f median %.1f p95 %.1f max %.1f; picture to window %.1f\n", sum / N, s[N / 2],
+            s[N * 95 / 100], worst, sum_show / N);
+}
+
 /* Show the guest framebuffer at `display_addr` in a win_w x win_h window.
  * Returns 1 if the GPU held it (drawn recently), 0 if the caller must supply
  * the pixels from guest memory with pes6_ge_gl_present_pixels. */
 int pes6_ge_gl_present(uint32_t display_addr, int win_w, int win_h) {
+    static int finish = -1;
+    if (finish < 0) finish = getenv("PES6_GPU_FINISH") != NULL;
+    const int new_frame = g_ncmds != 0;
+    const uint64_t t0 = finish ? gl_now() : 0;
     gl_flush();
+    if (finish) glFinish();
+    const uint64_t t1 = finish ? gl_now() : 0;
     G.tick++;
     if (g_gl_timing > 0 && G.tick % 300 == 0) {
         fprintf(stderr, "[gl] %llu flushes, %llu commands; ms: upload %.0f  state+draw %.0f\n",
                 (unsigned long long)g_gl_flushes, (unsigned long long)g_gl_ns[0], g_gl_ns[3] / 1e6, g_gl_ns[4] / 1e6);
+        fprintf(stderr, "[gl] per frame: %llu tris, %llu alpha tested, %llu blended, %llu no depth, %llu clears; %s\n",
+                (unsigned long long)g_gl_mix[0] / 300, (unsigned long long)g_gl_mix[1] / 300, (unsigned long long)g_gl_mix[2] / 300,
+                (unsigned long long)g_gl_mix[3] / 300, (unsigned long long)g_gl_mix[4] / 300, g_gl_first);
+        memset(g_gl_mix, 0, sizeof g_gl_mix);
         memset(g_gl_ns, 0, sizeof g_gl_ns);
         g_gl_flushes = 0;
     }
     gl_target *t = gl_find_target(display_addr, 0);
     if (!t || t->drawn_at + 30 < G.tick) return 0;
     gl_blit_to_window(t->fbo, G.wide * G.scale, 272 * G.scale, 0, win_w, win_h);
+    if (finish && new_frame) {
+        glFinish();
+        gl_finish_report((t1 - t0) / 1e6, (gl_now() - t1) / 1e6);
+    }
     return 1;
 }
 

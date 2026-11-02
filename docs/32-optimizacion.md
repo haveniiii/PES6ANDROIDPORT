@@ -110,7 +110,7 @@ textura, tamaño, color del material. Con `PSP_MEM_FAST`, cada vértice se lee d
 `PSP_HOST`. Es exacto (regresión PASS), pero no se nota en la medida (11,05 → 11,11 s, dentro del
 ruido): el costo de `vertex_transform` está en las cuentas, tres matrices más el *skinning*.
 
-## 6. Siguiente: el GE en su propio hilo (diseño)
+## 6. El GE en su propio hilo (diseño previo; hecho en §11)
 
 Hoy cada `sceGeListEnQueue`/`UpdateStallAddr` ejecuta la lista entera en el hilo del juego antes
 de volver. En la PSP real el GE trabaja en paralelo a la CPU. Hacerlo así sacaría del camino
@@ -201,3 +201,110 @@ resolución elegida a mano se respeta.
 
 También en esta tanda: la APK pasa a no depurable (`profileable`, §8) y la ventana ocupa la pantalla
 bajo el notch (`docs/31`, último apartado).
+
+## 10. Tiempo de GPU a alta resolución (2026-10-31)
+
+Medido en el Redmi (Adreno 610) con el partido del guion, a ×3 y pantalla ancha.
+`tools/phone_gpu_run.sh <res> <máscara> finish|play` lanza un partido; `PES6_GPU_FINISH=1` espera a la
+GPU con `glFinish` (`[gpu]` en `pes6.log`: tiempo real, sin extensiones, pero cuesta cuadros: solo
+para medir). `PES6_GL_TIMING` dice además de qué está hecho el cuadro: un solo pase, ~215 llamadas, un
+borrado completo al principio (ocho tiras de 64 de ancho), el 100 % de los triángulos con blending y
+el 95 % con alpha test. El límite es por píxel, no por llamadas.
+
+Pase del juego, cuadro ya estable; en la tabla, los números de máscara son los del ensayo, que tenía
+seis interruptores (1 borrado, 2 descartar profundidad, 4 opacos, 8 triángulo, 16 `mediump`, 32
+shader corto):
+
+| Máscara | Cambio | Mediana (ms) |
+|---|---|---|
+| 0 | nada | 25 |
+| 0x1 | `glClear` | 20–21 |
+| 0x3 | + descartar la profundidad al terminar | 20–21 |
+| 0x5 | `glClear` + opacos | 18 |
+| 0x15 | + `mediump` | 19–20 |
+| **0x25** | **`glClear` + opacos + shader corto** | **15–16** |
+| 0x3F | los seis | 15 |
+
+Llevar la imagen a la ventana cuesta 4,2 ms con blit y lo mismo con triángulo. Quedan los tres que
+ganan (`g_glx` en `ge_gl.c`, `PES6_GLX=0` los apaga; hoy los bits son 1, 2 y 4) y se quitó el resto:
+
+- **`glClear`:** sin él, un GPU por bloques carga el cuadro anterior antes de dibujar encima.
+- **Opacos (`gl_settle_opaque`):** si textura y vértices tienen alfa 255, el alpha test que 255 pasa y
+  el blending normal no hacen nada; se quitan, y esas draws usan el programa sin `discard`. Afecta al
+  ~40 % de los triángulos.
+- **Shader corto (`FAST_MOD`):** color × textura, para la combinación más común.
+
+| ×3, 30 fps | antes | ahora |
+|---|---|---|
+| GPU por cuadro (pase + ventana) | ~29 ms | ~19 ms |
+| `gpubusy`, últimos 60 s | 71 % (máx. 80) | 47 % (máx. 58) |
+
+A ×2: ~13,5 ms. Con eso «Auto» sube a ×2 en Adreno 610–619; ×3 sigue a mano hasta medirlo jugando.
+Las capturas en el Mac con todo encendido salen idénticas (0 píxeles distintos en menú y partido).
+
+**Límite de la prueba:** el guion se queda en el saque inicial y ahí ×3 no perdía cuadros ni antes
+(mismos fps y tirones en los dos casos), así que la mejora medida es el margen de GPU, no los fps. Las
+caídas de §9 eran en partidos en red: falta repetirlas con dos teléfonos.
+
+## 11. El GE en su propio hilo (2026-11-01)
+
+Pedido del usuario. Antes de tocar nada se midió, en el Redmi a ×2, la CPU del hilo del juego por
+cuadro de partido:
+
+| | ms por cuadro |
+|---|---|
+| antes de la primera lista | ~1 |
+| juego, entre listas | ~8,5 |
+| **dentro del GE** | **~10** |
+| de la última lista a `sceGeDrawSync` | ~4 |
+
+El juego espera al GE una sola vez por cuadro (`sceGeDrawSync`, modo 0, siempre), luego
+`WaitVblank` y `SetFrameBuf`, y no usa `sceGeListUpdateStallAddr`. Como calcula mientras encola,
+el GE y el juego se solapan.
+
+**Diseño (`ge.c` §6b):**
+- **Una cola, un consumidor.** Listas, presentaciones y marcas de `faces.c` corren en el orden en
+  que el juego las produjo, así que el cuadro es el mismo que con el GE en línea.
+- **El hilo del GE es dueño de OpenGL.** La presentación (`show_job`: GL, controles táctiles y
+  swap) va por la cola. La ventana se destruye y se crea allí con `pes6_ge_call`, que espera.
+- **FINISH y SIGNAL** no pueden correr código del juego en ese hilo: quedan en otra cola y se
+  entregan en la siguiente llamada del juego al GE; como tarde, en `DrawSync`, una vez por cuadro.
+- **`DrawSync`/`ListSync`/`GetCmd`, capturas e informe** esperan a que la cola se vacíe.
+- **`faces.c`:** quién se dibuja viaja por la cola (`set_current`).
+- **Presentaciones pendientes:** máximo 2. Un refresco que solo viene de tocar los controles se
+  salta si hay una en camino.
+- **Interruptor:** `PES6_GE_ASYNC=0` en el teléfono vuelve al GE en línea; en el Mac está apagado
+  salvo con `PES6_GE_ASYNC=1`. Sin GPU no se usa, y las pruebas sin ventana siguen en línea.
+
+**Medido en el Mac** (camino de GPU hasta 8@2500, dos pasadas):
+
+| | CPU del hilo del juego | último cuadro |
+|---|---|---|
+| en línea | 8,60 s | `10c7cdafb0` |
+| hilo propio | **3,81 s** | `10c7cdafb0` |
+
+Regresión PASS 9/9.
+
+**Medido en el Redmi** (×2, misma compilación, partido del guion, 3,5 min, `PES6_SLOW_LOG=1`):
+
+| | en línea | hilo propio |
+|---|---|---|
+| CPU del hilo del juego por cuadro | ~23,5 ms | **~11 ms** |
+| espera al GE por cuadro | 0 | ~7 ms |
+| hilo del GE | | ~46 % de un núcleo |
+| cuadros de más de 40 ms en el partido | 70 | **22** |
+| cuadros de más de 50 ms en el partido | 10 | 10 |
+| peor cuadro | 155 ms | 176 ms |
+
+Lectura: el margen del hilo del juego se duplica y los cuadros algo tardíos bajan a un tercio, pero
+los de más de 50 ms no bajan en esta prueba. El guion no llena el área de jugadores: falta verlo
+jugando de verdad. La espera de 7 ms es el GE, que empieza tarde respecto al juego: es margen que
+aún se podría recortar.
+
+A ×3 (hilo propio, mismo guion): 30 fps en cada tramo salvo uno de 29,8, 25 cuadros de más de 40 ms, 9
+de más de 50, hilo del GE ~46 %.
+
+Salir de la app y volver, dos veces en pleno partido: 30 fps al volver y sin fallos en el registro de
+Android.
+
+`[slow]` separa ahora la espera al GE; `[fps]` añade la carga del hilo del GE y esa espera.

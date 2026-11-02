@@ -1271,6 +1271,141 @@ static void raster_parallel(const draw_ctx *c, uint32_t type, uint32_t n) {
     for (int i = 0; i < W.n; i++) g_stats.pixels += W.pix[i];
 }
 
+/* ---- 6b. the GE on a thread of its own (docs/32 §11) -----------------------
+ *
+ * With pes6_ge_thread_start, display lists, vertices, texture identification and every GL call
+ * leave the game's thread. One queue, one consumer: lists, presents and the marks of faces.c run
+ * in exactly the order the game produced them, so the picture is the one the inline GE draws. */
+#include <sched.h>
+#include <signal.h>
+#include <time.h>
+
+#define GE_RING      4096u           /* a match frame is about 70 lists */
+#define GE_CB_RING   16384u          /* far above what a frame can owe; never waited on */
+#define GE_STACK     (4u << 20)
+
+typedef struct { pes6_ge_job fn; uint64_t a, b; } ge_op;
+typedef struct { uint32_t fn, a0, a1; } ge_cb;
+
+static struct {
+    int on;
+    pthread_t th;
+    void (*start)(void);
+    ge_op ring[GE_RING];
+    _Atomic uint32_t head, tail;     /* the game writes head, the GE thread tail */
+    atomic_int sleeping, waiting;
+    pthread_mutex_t mu;
+    pthread_cond_t wake, idle;
+    ge_cb cb[GE_CB_RING];
+    _Atomic uint32_t cb_head, cb_tail;
+    atomic_uint_fast64_t cpu_ns, wait_ns;
+} T = { .mu = PTHREAD_MUTEX_INITIALIZER, .wake = PTHREAD_COND_INITIALIZER, .idle = PTHREAD_COND_INITIALIZER };
+
+static inline int on_ge_thread(void) { return T.on && pthread_equal(pthread_self(), T.th); }
+static inline int ge_elsewhere(void) { return T.on && !pthread_equal(pthread_self(), T.th); }
+
+static inline void cpu_pause(void) {
+#if defined(__aarch64__)
+    __asm__ volatile("yield");
+#elif defined(__x86_64__)
+    __asm__ volatile("pause");
+#endif
+}
+
+static void *ge_thread(void *arg) {
+    (void)arg;
+    /* Timers and ^C belong to the game's thread (the report reads the guest as it stands). */
+    sigset_t all;
+    sigfillset(&all);
+    sigdelset(&all, SIGSEGV); sigdelset(&all, SIGBUS); sigdelset(&all, SIGILL);
+    sigdelset(&all, SIGFPE); sigdelset(&all, SIGABRT);
+    pthread_sigmask(SIG_BLOCK, &all, NULL);
+    if (T.start) T.start();
+    for (;;) {
+        uint32_t tail = atomic_load_explicit(&T.tail, memory_order_relaxed);
+        int spin = 0;
+        while (atomic_load_explicit(&T.head, memory_order_acquire) == tail) {
+            if (++spin < 2000) { cpu_pause(); continue; }    /* lists come in bursts: no sleep between two */
+            struct timespec c;
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &c);
+            atomic_store_explicit(&T.cpu_ns, (uint64_t)c.tv_sec * 1000000000ull + (uint64_t)c.tv_nsec, memory_order_relaxed);
+            pthread_mutex_lock(&T.mu);
+            atomic_store(&T.sleeping, 1);
+            if (atomic_load(&T.head) == tail) pthread_cond_wait(&T.wake, &T.mu);
+            atomic_store(&T.sleeping, 0);
+            pthread_mutex_unlock(&T.mu);
+            spin = 0;
+        }
+        const ge_op op = T.ring[tail % GE_RING];
+        op.fn(op.a, op.b);
+        atomic_store_explicit(&T.tail, tail + 1, memory_order_release);
+        if (atomic_load(&T.waiting)) {
+            pthread_mutex_lock(&T.mu);
+            pthread_cond_broadcast(&T.idle);
+            pthread_mutex_unlock(&T.mu);
+        }
+    }
+    return NULL;
+}
+
+int pes6_ge_thread_start(void (*on_thread)(void)) {
+    if (T.on) return 0;
+    T.start = on_thread;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, GE_STACK);
+    T.on = 1;
+    const int rc = pthread_create(&T.th, &at, ge_thread, NULL);
+    pthread_attr_destroy(&at);
+    if (rc != 0) { T.on = 0; return -1; }
+    return 0;
+}
+
+int pes6_ge_thread_on(void) { return T.on; }
+
+/* Until everything posted so far has run. */
+static void ge_drain(void) {
+    if (!ge_elsewhere()) return;
+    const uint32_t want = atomic_load_explicit(&T.head, memory_order_relaxed);
+    if (atomic_load_explicit(&T.tail, memory_order_acquire) == want) return;
+    struct timespec a, b;
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    pthread_mutex_lock(&T.mu);
+    atomic_store(&T.waiting, 1);
+    while (atomic_load(&T.tail) != want) pthread_cond_wait(&T.idle, &T.mu);
+    atomic_store(&T.waiting, 0);
+    pthread_mutex_unlock(&T.mu);
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    atomic_fetch_add_explicit(&T.wait_ns, (uint64_t)((b.tv_sec - a.tv_sec) * 1000000000ll + (b.tv_nsec - a.tv_nsec)),
+                              memory_order_relaxed);
+}
+
+void pes6_ge_post(pes6_ge_job fn, uint64_t a, uint64_t b) {
+    if (!ge_elsewhere()) { fn(a, b); return; }
+    const uint32_t head = atomic_load_explicit(&T.head, memory_order_relaxed);
+    while (head - atomic_load_explicit(&T.tail, memory_order_acquire) >= GE_RING) sched_yield();
+    T.ring[head % GE_RING] = (ge_op){ fn, a, b };
+    atomic_store_explicit(&T.head, head + 1, memory_order_release);
+    if (atomic_load(&T.sleeping)) {
+        pthread_mutex_lock(&T.mu);
+        pthread_cond_signal(&T.wake);
+        pthread_mutex_unlock(&T.mu);
+    }
+}
+
+static void call_job(uint64_t a, uint64_t b) { (void)b; ((void (*)(void))(uintptr_t)a)(); }
+
+void pes6_ge_call(void (*fn)(void)) {
+    if (!ge_elsewhere()) { fn(); return; }
+    pes6_ge_post(call_job, (uint64_t)(uintptr_t)fn, 0);
+    ge_drain();
+}
+
+void pes6_ge_thread_stats(uint64_t *cpu_ns, uint64_t *wait_ns) {
+    *cpu_ns = atomic_load_explicit(&T.cpu_ns, memory_order_relaxed);
+    *wait_ns = atomic_load_explicit(&T.wait_ns, memory_order_relaxed);
+}
+
 #ifdef PES6_HAVE_GL
 #include "ge_gl.c"          /* GPU rasterization; shares this file's private types */
 #endif
@@ -1502,11 +1637,13 @@ static void matrix_data(float *m, uint32_t *n, uint32_t count, uint32_t arg) {
 }
 
 /* sceGeSetCallback: PspGeCallbackData = { signal_func, signal_arg,
- * finish_func, finish_arg }. On hardware the GE interrupt calls them; here the
- * list runs inside the enqueue/stall-update call, on the guest thread, so they
- * are called right there. PES6's libgu forwards FINISH to the game, which
- * keeps the id of the last finished frame -- its display-list ring allocator
- * frees memory by it (FUN_08813efc), and without it a penalty never starts. */
+ * finish_func, finish_arg }. On hardware the GE interrupt calls them. The inline
+ * GE runs a list inside the enqueue/stall-update call, on the guest thread, so
+ * they are called right there; the GE thread can't run guest code, so it leaves
+ * them for the game's next call to the GE, DrawSync at the latest -- once a frame.
+ * PES6's libgu forwards FINISH to the game, which keeps the id of the last
+ * finished frame -- its display-list ring allocator frees memory by it
+ * (FUN_08813efc), and without it a penalty never starts. */
 static uint32_t g_cb[4];
 
 static void call_guest_cb(uint32_t fn, uint32_t a0, uint32_t a1) {
@@ -1518,6 +1655,32 @@ static void call_guest_cb(uint32_t fn, uint32_t a0, uint32_t a1) {
     psp_cpu.r[PSP_REG_RA] = 0;
     psp_dispatch(fn);
     psp_cpu = saved;
+}
+
+static void ge_callback(uint32_t fn, uint32_t a0, uint32_t a1) {
+    if (!on_ge_thread()) { call_guest_cb(fn, a0, a1); return; }
+    if (!fn) return;
+    const uint32_t head = atomic_load_explicit(&T.cb_head, memory_order_relaxed);
+    if (head - atomic_load_explicit(&T.cb_tail, memory_order_acquire) >= GE_CB_RING) {
+        fprintf(stderr, "ge: a callback was dropped\n");
+        return;
+    }
+    T.cb[head % GE_CB_RING] = (ge_cb){ fn, a0, a1 };
+    atomic_store_explicit(&T.cb_head, head + 1, memory_order_release);
+}
+
+/* On the guest's thread, inside a firmware call: what the GE thread left. */
+static void ge_deliver(void) {
+    static int busy;
+    if (busy || !T.on) return;           /* a callback that calls the GE itself */
+    busy = 1;
+    uint32_t tail = atomic_load_explicit(&T.cb_tail, memory_order_relaxed);
+    while (tail != atomic_load_explicit(&T.cb_head, memory_order_acquire)) {
+        const ge_cb c = T.cb[tail % GE_CB_RING];
+        atomic_store_explicit(&T.cb_tail, ++tail, memory_order_release);
+        call_guest_cb(c.fn, c.a0, c.a1);
+    }
+    busy = 0;
 }
 
 static void run_list(ge_list *l) {
@@ -1569,7 +1732,7 @@ static void run_list(ge_list *l) {
 
         case C_SIGNAL: l->signal = arg + 1; break;
         case C_FINISH:                       /* the END that follows ends the list */
-            call_guest_cb(g_cb[2], arg & 0xFFFF, g_cb[3]);
+            ge_callback(g_cb[2], arg & 0xFFFF, g_cb[3]);
             break;
         case C_END:
             if (pending_signal) {
@@ -1580,7 +1743,7 @@ static void run_list(ge_list *l) {
                 uint32_t behaviour = (sig >> 16) & 0xFF;
                 uint32_t target = (((sig & 0xFFFF) << 16) | (arg & 0xFFFF)) & 0x0FFFFFFFu;
                 if (behaviour >= 1 && behaviour <= 3)       /* HANDLER_SUSPEND / CONTINUE / PAUSE */
-                    call_guest_cb(g_cb[0], sig & 0xFFFF, g_cb[1]);
+                    ge_callback(g_cb[0], sig & 0xFFFF, g_cb[1]);
                 if (behaviour == 0x10) l->pc = target & ~3u;
                 else if (behaviour == 0x11) {
                     if (l->sp < CALL_DEPTH) {
@@ -1650,35 +1813,64 @@ static ge_list *find_list(uint32_t id) {
 }
 
 /* sceGeListEnQueue(list, stall, cbid, arg). Hardware runs the list in the
- * background; running it to completion (or to its stall address) before
- * returning is indistinguishable to the game, because every way it has of
- * observing progress then reports "done". */
-static void hle_ListEnQueue(void) {
+ * background. So does the GE thread. Without it the list runs to completion (or
+ * to its stall address) before returning, which is indistinguishable to the
+ * game: every way it has of observing progress then reports "done". */
+static int list_run_new(uint32_t pc, uint32_t stall, uint32_t id) {
     ge_list *l = NULL;
     for (int i = 0; i < MAX_LISTS; i++)
         if (!g_list[i].used || g_list[i].done) { l = &g_list[i]; break; }
-    if (!l) { psp_ret(0x80000022u); return; }    /* out of list slots */
-
+    if (!l) return -1;
     memset(l, 0, sizeof *l);
     l->used = 1;
-    l->id = g_next_id++;
-    if (g_next_id >= 0x08000000u) g_next_id = 1;
-    l->pc = psp_arg(0) & 0x0FFFFFFCu;
-    l->stall = psp_arg(1) & 0x0FFFFFFCu;
-    const uint32_t id = l->id;
+    l->id = id;
+    l->pc = pc;
+    l->stall = stall;
     run_list(l);
+    return 0;
+}
+
+static void list_job(uint64_t pc_stall, uint64_t id) {
+    if (list_run_new((uint32_t)pc_stall, (uint32_t)(pc_stall >> 32), (uint32_t)id) != 0)
+        fprintf(stderr, "ge: out of list slots\n");
+}
+
+static void stall_job(uint64_t id, uint64_t stall) {
+    ge_list *l = find_list((uint32_t)id);
+    if (!l) return;
+    l->stall = (uint32_t)stall;
+    if (!l->done) run_list(l);
+}
+
+static void hle_ListEnQueue(void) {
+    ge_deliver();
+    const uint32_t pc = psp_arg(0) & 0x0FFFFFFCu, stall = psp_arg(1) & 0x0FFFFFFCu;
+    const uint32_t id = g_next_id;
+    if (T.on) {
+        pes6_ge_post(list_job, (uint64_t)pc | (uint64_t)stall << 32, id);
+    } else if (list_run_new(pc, stall, id) != 0) {
+        psp_ret(0x80000022u);                    /* out of list slots */
+        return;
+    }
+    if (++g_next_id >= 0x08000000u) g_next_id = 1;
     psp_ret(id);
 }
 
 static void hle_ListUpdateStallAddr(void) {
-    ge_list *l = find_list(psp_arg(0));
+    ge_deliver();
+    const uint32_t id = psp_arg(0), stall = psp_arg(1) & 0x0FFFFFFCu;
+    if (T.on) { pes6_ge_post(stall_job, id, stall); psp_ret(0); return; }
+    ge_list *l = find_list(id);
     if (!l) { psp_ret(0x80000100u); return; }    /* invalid list id */
-    l->stall = psp_arg(1) & 0x0FFFFFFCu;
-    if (!l->done) run_list(l);
+    stall_job(id, stall);
     psp_ret(0);
 }
 
-static void hle_Sync(void) { psp_ret(0); }
+static void hle_Sync(void) {
+    ge_drain();
+    ge_deliver();
+    psp_ret(0);
+}
 
 static void hle_SetCallback(void) {
     const uint32_t d = psp_arg(0);
@@ -1689,6 +1881,7 @@ static void hle_UnsetCallback(void) { memset(g_cb, 0, sizeof g_cb); psp_ret(0); 
 
 /* sceGeGetCmd(cmd): the current value of a command register. */
 static void hle_GetCmd(void) {
+    ge_drain();
     uint32_t c = psp_arg(0) & 0xFF;
     psp_ret((c << 24) | (S.cmd[c] & 0xFFFFFFu));
 }
@@ -1734,10 +1927,11 @@ void pes6_ge_init(void) {
 }
 
 const pes6_ge_stats *pes6_ge_get_stats(void) { return &g_stats; }
-int      pes6_ge_fb_format(void) { return (int)(S.cmd[C_FBFORMAT] & 3); }
-uint32_t pes6_ge_fb_stride(void) { return S.cmd[C_FBW] & 0xFFFF; }
+int      pes6_ge_fb_format(void) { ge_drain(); return (int)(S.cmd[C_FBFORMAT] & 3); }
+uint32_t pes6_ge_fb_stride(void) { ge_drain(); return S.cmd[C_FBW] & 0xFFFF; }
 
 void pes6_ge_report(FILE *out) {
+    ge_drain();
     static const char *PRIM[8] = { "points", "lines", "line-strip", "triangles",
                                    "tri-strip", "tri-fan", "sprites", "?" };
     fprintf(out, "ge: %llu lists, %llu commands, %llu prims (%llu textured), %llu vertices, %llu pixels, %llu transfers\n",
@@ -1772,6 +1966,7 @@ void pes6_ge_report(FILE *out) {
 
 /* Raw little-endian 16-bit depth buffer, 480x272, for offline inspection. */
 int pes6_ge_capture_depth(const char *path) {
+    ge_drain();
     uint32_t stride = S.cmd[C_ZBW] & 0xFFFF;
     const uint8_t *zb = (const uint8_t *)psp_mem_ptr(
         vram_addr(((S.cmd[C_ZBW] & 0xFF0000u) << 8) | S.cmd[C_ZBP]), stride * 272u * 2u);
@@ -1783,7 +1978,7 @@ int pes6_ge_capture_depth(const char *path) {
     return 0;
 }
 
-int pes6_ge_read_rgba(uint32_t *out, uint32_t addr, uint32_t stride, int format) {
+static int read_rgba_here(uint32_t *out, uint32_t addr, uint32_t stride, int format) {
 #ifdef PES6_HAVE_GL
     if (gl_read_rgba(out, addr) == 0) return 0;      /* the GPU holds this buffer */
 #endif
@@ -1806,7 +2001,7 @@ int pes6_ge_read_rgba(uint32_t *out, uint32_t addr, uint32_t stride, int format)
     return 0;
 }
 
-int pes6_ge_capture(const char *path, uint32_t addr, uint32_t stride, int format) {
+static int capture_here(const char *path, uint32_t addr, uint32_t stride, int format) {
 #ifdef PES6_HAVE_GL
     {
         if (getenv("PES6_CAPTURE_FULL") && gl_capture_full(path, addr) == 0) return 0;
@@ -1844,4 +2039,23 @@ int pes6_ge_capture(const char *path, uint32_t addr, uint32_t stride, int format
     }
     fclose(f);
     return 0;
+}
+
+/* The GPU's pictures can only be read from the thread that owns GL, after what's queued. */
+static struct { const char *path; uint32_t *out, addr, stride; int format, rc; } g_read;
+static void read_job(void) { g_read.rc = read_rgba_here(g_read.out, g_read.addr, g_read.stride, g_read.format); }
+static void capture_job(void) { g_read.rc = capture_here(g_read.path, g_read.addr, g_read.stride, g_read.format); }
+
+int pes6_ge_read_rgba(uint32_t *out, uint32_t addr, uint32_t stride, int format) {
+    if (!ge_elsewhere()) return read_rgba_here(out, addr, stride, format);
+    g_read.out = out; g_read.addr = addr; g_read.stride = stride; g_read.format = format;
+    pes6_ge_call(read_job);
+    return g_read.rc;
+}
+
+int pes6_ge_capture(const char *path, uint32_t addr, uint32_t stride, int format) {
+    if (!ge_elsewhere()) return capture_here(path, addr, stride, format);
+    g_read.path = path; g_read.addr = addr; g_read.stride = stride; g_read.format = format;
+    pes6_ge_call(capture_job);
+    return g_read.rc;
 }

@@ -57,6 +57,20 @@ void pes6_ge_gl_present_image(const uint32_t *rgba, int w, int h, int win_w, int
 void pes6_ge_gl_set_wide_max(int max);   /* widescreen (widescreen.h): targets this many PSP pixels across */
 void pes6_ge_gl_set_wide(int w);         /* ... and this frame's width, 480 .. max */
 
+/* The GE on a thread of its own (docs/32 §11). From pes6_ge_thread_start on, that thread owns the
+ * GL context -- the caller must have released it, and on_thread, run there first, takes it -- and
+ * everything the host used to do with GL it asks through these:
+ *   pes6_ge_post   queues fn(a, b) behind what the game has drawn, and returns;
+ *   pes6_ge_call   the same, and waits until it has run.
+ * Both run fn on the spot when there is no thread. They are for one caller: the game's thread. */
+typedef void (*pes6_ge_job)(uint64_t a, uint64_t b);
+int  pes6_ge_thread_start(void (*on_thread)(void));
+int  pes6_ge_thread_on(void);
+void pes6_ge_post(pes6_ge_job fn, uint64_t a, uint64_t b);
+void pes6_ge_call(void (*fn)(void));
+/* The GE thread's CPU so far, and how long the game has waited for it. */
+void pes6_ge_thread_stats(uint64_t *cpu_ns, uint64_t *wait_ns);
+
 /* A texture swap that depends on what the game is drawing at the moment (faces.c: the face of
  * the player being drawn). Asked at every texture bind with the texture's name (its mods/
  * replacement name), size and guest address; returns w x h texels (0xAABBGGRR) to draw instead, or NULL.

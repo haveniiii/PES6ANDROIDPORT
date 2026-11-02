@@ -97,7 +97,7 @@ conectado: <nombre>» (si lo hay) y «✕ Aceptar ‹ › Cambiar».
 |---|---|---|
 | Versión | las de `mods/` | si hay más de una (desarrollo) |
 | Motor | GPU / Software | escritorio |
-| Controles | Clásico / Cruceta / Pro / Pro atajos | Android |
+| Controles | desde el 1/11 en su propia pantalla (§9) | Android |
 | Mano | Derecha / Izquierda | Android |
 | Resolución | Auto / 1× / 2× / 3× (480×272 por k) | los dos |
 | Calidad | Baja (todo sin suavizar) / Normal (como antes) / Alta (texturas suavizadas) | los dos |
@@ -192,3 +192,30 @@ visor abierto, un dedo que cae fuera de los botones no crea el stick sino un ges
 
 El eje de un dedo se fija al pasar el umbral (con un toque de vibración). Los botones dibujados
 siguen funcionando igual. Falta probarlo en el teléfono.
+
+## 9. Pantalla Controles (2026-11-01)
+
+Pedido del usuario, con su dibujo: sacar **Controles** de las filas y darle una pantalla propia.
+
+- **Menú:** botón **Controles** abajo a la derecha, a la altura de Jugar. Con mando, → desde Jugar y
+  ← para volver. Solo en Android (o `PES6_LAUNCHER_TOUCH=1`).
+- **Pantalla:** segunda página del mismo menú (`l->page`, `controls_draw`, `controls_update` en
+  `launcher.c`), así que el mando, el teclado y las capturas del Mac funcionan igual que en la otra.
+  - Volver: la flecha, ○ o Atrás de Android (`g_back`, entra como ○). Atrás también cierra el editor.
+  - Lista de esquemas: tocar selecciona al instante; se guarda al pulsar Jugar, como los demás ajustes.
+  - **Editar** reemplaza al antiguo botón Botones y edita el esquema elegido.
+  - Esquema visual: `menu_preview` (`main.c`) pasa las posiciones reales (`ctl_pos`), así que refleja
+    los controles movidos y la mano. Sin host que las dé, `preview_generic`: la dibuja el Mac.
+  - Texto: `SCHEME_TEXT`, con los nombres de la Command List (`docs/36`); `# ` abre un título. Se
+    desliza con el dedo, L/R en un mando o la rueda del Mac.
+- **Rendimiento:** el texto es lo más caro del menú y este se redibuja en cada cuadro, así que la
+  página se dibuja una vez por cambio y el texto una vez por esquema (`description_render`, a un búfer
+  aparte): deslizar solo copia filas.
+- **Táctil:** un dedo que recorre más de 0,05 del alto no cuenta como toque (`g_drag_sum`).
+- **Fuente:** nuevas flechas `\x05`–`\x08` y `;`.
+
+**Verificado:** en el Mac y en el Redmi (1080×2400): abrir, elegir esquema, deslizar, Editar ida y
+vuelta, Atrás y Pro atajos. Regresión PASS.
+
+Flow (`docs/37`) es el sexto esquema, con su propio dibujo (`flow_control`), y la lista ya no tiene
+sitio para más.
