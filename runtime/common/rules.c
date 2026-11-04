@@ -102,9 +102,46 @@ static void enable(const char *name, const char *from) {
     fprintf(stderr, "[rules] unknown rule '%s' (%s); see runtime/common/rules.c\n", name, from);
 }
 
+int pes6_match_at_60;
+
+/* WIRELESS: how many frames after a state message the players still ease towards it
+ * (PES6_NET_EASE_FRAMES). The game sets it during the match (1-4); its 4 is 133 ms at 30 Hz but 67 ms at 60, shorter than the
+ * WiFi's late messages (p90 84 ms between two phones, 3/11): past it the players run free and
+ * step when the next message lands. At 60 Hz the default doubles it, the same 133 ms.
+ *   PES6_NET_EASE=frames   any rate (4 = the game's own, at 60 Hz too) */
+static int g_ease_env = -1;
+static void net_ease_task(void) {
+    /* The EBOOT holds 3 and the game changes it during the match (1-4 seen on the Mac, 3/11): a value
+     * that is not the one written here last is the game's own, and the base to scale. */
+    static int game, written;
+    const int was = pes6_net_ease_frames();
+    if (was < 1 || was > 64) return;                     /* the EBOOT not loaded yet */
+    if (was != written) game = was;
+    const int want = g_ease_env > 0 ? g_ease_env : pes6_match_at_60 ? 2 * game : game;
+    if (was == want) return;
+    pes6_net_set_ease_frames(want);
+    written = want;
+    static int said_game;
+    if (game != said_game) {
+        said_game = game;
+        fprintf(stderr, "[rules] WIRELESS: players ease towards each state message for %d frames (game: %d)\n", want, game);
+    }
+}
+
+void pes6_match_rate_60(int on) {
+    if (!on || pes6_match_at_60) return;
+    pes6_match_at_60 = 1;
+    psp_add_vblank_task(pes6_sim_force_60);
+    fprintf(stderr, "[rules] match at 60 Hz\n");
+}
+
 void pes6_rules_init(const char *io_root) {
     psp_hook_of_default_build = keep_mod_data;
-    if (getenv("PES6_SIM60")) psp_add_vblank_task(pes6_sim_force_60);   /* experiment, docs/18 §5 */
+    const char *ease = getenv("PES6_NET_EASE");
+    if (ease && *ease) g_ease_env = atoi(ease);
+    psp_add_vblank_task(net_ease_task);
+    const char *sim60 = getenv("PES6_SIM60");
+    pes6_match_rate_60(sim60 && *sim60 && *sim60 != '0');      /* docs/18 §5b */
     char path[1024], line[128];
     snprintf(path, sizeof path, "%s/rules.txt", io_root ? io_root : ".");
     FILE *f = fopen(path, "r");

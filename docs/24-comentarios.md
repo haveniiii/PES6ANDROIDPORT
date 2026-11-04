@@ -335,3 +335,15 @@ estimados y no ajustados con partidos; `[commentary] ball out at x,z height h` d
 catálogo de entonces, y `build/commentary/e_sound.afs` es un enlace roto a `~/Downloads`. De las 80
 frases candidatas de tiro errado solo 34 sobreviven. Con el `s_sound.afs` original habría más variedad:
 repetir `transcribe_bank.py` sobre él, ampliar los `pick` y volver a pasar `trim_bank.py`.
+
+### Arreglos del 2/11 (informes del usuario jugando)
+
+- **Pausa y fin del partido:** con el menú de pausa abierto (`PES6_PAUSED`, accesor `pes6_paused()`) o fuera
+  del partido, lo que suena se desvanece, lo que esperaba se descarta (`g_drop`) y no empieza nada. El reloj del
+  director (`g_vblank`) no avanza en la pausa, así que al reanudar no toca un «hace rato que no hablo». Medido con
+  un partido guionizado: pausa de 8@3000 a 8@4300, ningún evento en medio.
+- **Prórroga:** los saques de centro 3 y 4 no dicen nada; el banco no tiene frases de prórroga y se oía
+  «arranca el segundo tiempo».
+- **«¡Uy, qué buen pase!»:** salía en `pass` y en `through_pass`, cada 12 s. Ahora solo en `pass` y, como
+  `through_pass`, a lo sumo una vez por minuto (`PASS_GAP`).
+- `header` no tiene clips en el catálogo de PECH: los cabezazos no se comentan.

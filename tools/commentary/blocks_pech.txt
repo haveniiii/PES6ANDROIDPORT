@@ -31,7 +31,7 @@ drop save     3461 3479 3978 3979 3983 3984 4052 3961 3965 3969
 
 cross         780-805    centro|cintro|área|aire|ojo|cuidado
 cross         5164-5176  centro|aire
-through_pass  6222-6232  líneas|lineas|filtrado|profund|entrelin|bueno el pase|bonito pase
+through_pass  6222-6232  líneas|lineas|filtrado|profund|entrelin
 through_pass  7369-7377  filtrado|profund
 through_pass  7679-7689  profund
 pick pass     6228 6231 6232 7224 7225 7227 7228 7229

@@ -176,6 +176,9 @@ void psp_threadman_run(void);
  * the latter so threads are paced relative to each other. */
 uint64_t psp_time_usec(void);
 void psp_threadman_set_realtime(int on);      /* guest time follows the host clock */
+/* Real time only: wait for the next deadline busy instead of asleep. A phone whose governor lowers
+ * its clocks when the cores sleep keeps them up this way, at the cost of power. */
+void psp_threadman_set_idle_spin(int on);
 void psp_set_vblank_hook(void (*fn)(void));
 void psp_add_vblank_task(void (*fn)(void));   /* firmware housekeeping, once per vblank */   /* once per virtual vblank, host stack */
 void psp_threadman_dump(FILE *out);

@@ -339,3 +339,40 @@ corre en `show_job`.
 
 `psp_add_vblank_task` admitía 4 tareas y descartaba la quinta sin avisar. Android ya registra 4
 (60 Hz, red, comentarista y pantalla ancha). Ahora admite 16 y avisa si se desborda.
+
+## 12. Avisos de rendimiento al sistema (ADPF, 2026-11-02)
+
+Informe del usuario, dos teléfonos en red a 60 Hz: si el jugador del otro teléfono no se movía, el partido
+iba muy lento; si se movían los dos, se aceleraba. Lo que lo explica, *inferido y sin medir en el otro
+teléfono* (no tiene depuración): Android sube las frecuencias de la CPU al tocar la pantalla y las baja
+cuando nadie toca. A 60 Hz el teléfono más débil no llega sin ese empujón, manda menos datagramas y el
+juego, que sincroniza por tiempo, corrige. En el Redmi se recibieron 22 datagramas/s, la mitad de lo
+esperado (`docs/15` §14b).
+
+Arreglo: `hint_open` / `hint_frame` en `runtime/android/main.c` crean una sesión `APerformanceHint`
+(Android 13+, buscada con `dlsym` porque la APK es para Android 8) con el hilo del juego y el del GE. En
+cada cuadro del juego informan el tiempo de CPU del hilo del juego contra el presupuesto: 1/60 s con
+«Partido 60 fps», 1/30 s si no. El sistema ajusta las frecuencias según eso, se toque o no la pantalla.
+`PES6_HINT=0` en `env.txt` lo apaga. El registro dice `[hint] performance hint session on` o por qué no hay
+sesión. **Falta probarlo:** dos teléfonos a 60 Hz, con uno sin tocar.
+
+### 12b. Segundo intento (2/11, noche)
+
+Con la primera versión, en el segundo teléfono todo siguió igual. Su registro no se puede leer (no tiene
+depuración), pero el del Redmi demostró que **la red no pierde nada**: `lost 0 of 2072`, ninguno salvado
+por las repeticiones, y aun así llegaban 24 datagramas/s. El usuario lo confirmó jugando solo contra la
+CPU en ese teléfono: el juego solo va a velocidad completa mientras algo toca la pantalla.
+
+Tres cambios:
+- **El aviso informa el tiempo de reloj de cada cuadro** (de un `flip` al siguiente) y no la CPU del hilo
+  del juego. Ese cuadro espera también al hilo del GE y a la GPU, y con la CPU sola el sistema creía que
+  sobraba tiempo.
+- **Respaldo: CPU ocupada entre cuadros** (`psp_threadman_set_idle_spin`). El planificador espera el
+  siguiente plazo en un bucle activo en vez de con `nanosleep`, y el gobernador de frecuencias ve el núcleo
+  ocupado. Se enciende en el partido si no hay sesión de avisos y el partido va a 60, o si un periodo de 5 s
+  baja de 57 fps (28,5 a 30), y dura hasta que se acaba el partido. `PES6_SPIN=0` lo prohíbe y `=1` lo fuerza.
+  Gasta más batería.
+- **Estado por la red** (`pes6_net_set_status`): cada HELLO lleva una línea como
+  `2312DRA50G sdk33 hint+ spin- 60Hz 45fps`, con modelo, Android, si hay avisos, si hay CPU ocupada, el ritmo
+  y los fps. El otro teléfono la anota cuando cambia: `[net] peer xx:xx:xx says: ...`. Así se sabe del
+  teléfono sin adb. Va después del grupo y los builds anteriores la ignoran.

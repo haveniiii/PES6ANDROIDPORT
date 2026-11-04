@@ -17,4 +17,16 @@ extern void (*pes6_net_on_link)(int connected);
  * owner of a Wi-Fi Direct group the host joined (Android). */
 void pes6_net_hint_peer(const char *ip);
 
+/* One line about this device the host keeps up to date ("sdk 33 hint on fps 59.7"): sent in every
+ * HELLO, and the other side logs it when it changes ([net] peer ... says: ...). For a phone without adb. */
+void pes6_net_set_status(const char *line);
+
+/* From any thread: how the other side is reached now -- 0 nobody heard in the last 2 s,
+ * 1 an ordinary network (the router), 2 Wi-Fi Direct (192.168.49.x). */
+int pes6_net_route(void);
+
+/* The game's pad number of this console in the last WIRELESS match set up (0 or 1), -1 none yet:
+ * both consoles' players carry a pad, and only this one's is the person holding this device. */
+int pes6_net_local_pad(void);
+
 #endif

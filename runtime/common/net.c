@@ -9,10 +9,11 @@
  *
  * One UDP socket per instance carries everything:
  *
- *   "P6N3" type(1) src-mac(6) ...
+ *   "P6N3" type(1) src-mac(6) ...    ("P6N6" with the match at 60 Hz)
  *     type 1 HELLO   group[8]                      "I exist, in this group"
  *     type 2 PDP     dst-mac(6) stream(4) count(1)
  *                    count x { seq(4) sport(2) dport(2) len(2) sent-ms(4) payload }
+ *     type 3 TIMING  count(1) count x trow     the sender's PES6_NET_TIMING rows (see timing_task)
  *
  * A PDP datagram carries the newest message to that peer and, while it stays
  * small, the previous ones too (oldest first). The receiver drops the sequence
@@ -49,7 +50,9 @@
  *                                with wall ms, scene frame, ports and length
  */
 #include "net.h"
+#include "rules.h"
 #include "pes6_addrs.h"
+#include "pes6_game.h"
 
 #include <psprecomp/hle.h>
 #include <psprecomp/dispatch.h>
@@ -64,6 +67,8 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <math.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -89,6 +94,7 @@ typedef struct { uint32_t seq, sent_ms; uint16_t sport, dport, len; uint8_t data
 #define REC_HDR 14                    /* seq sport dport len sent-ms, before each payload */
 typedef struct {
     uint8_t mac[6]; struct sockaddr_in addr; uint64_t seen; char group[9];
+    char status[48];                  /* its last HELLO status line (pes6_net_set_status) */
     uint64_t direct_seen;             /* last datagram over Wi-Fi Direct (192.168.49.x) */
     uint64_t addr_seen;               /* last datagram from the address in addr */
     uint32_t tx_stream, tx_seq;       /* random per peer entry; the next message to this peer */
@@ -127,6 +133,7 @@ static struct {
     int redundancy, drop_pct;
     uint32_t drop_rng;
     uint64_t recovered, duplicates, test_lost;
+    uint64_t seq_span, seq_fresh;     /* sequence numbers covered / received: their difference was lost */
     /* PES6_NET_LAG: datagrams held until their time, in a ring (FIFO). */
     int lag_base, lag_jitter, lag_spike_pct, lag_spike;
     uint64_t lag_last;
@@ -275,19 +282,37 @@ static int net_open(void) {
     return 0;
 }
 
+/* "P6N3" at the PSP's 30 Hz, "P6N6" with the match at 60 (docs/18 §5b): a console at the other
+ * rate is not seen at all, rather than a match whose two halves run at different speeds. */
+static const char *net_magic(void) { return pes6_match_at_60 ? "P6N6" : "P6N3"; }
+
 static size_t header(uint8_t *b, int type) {
-    memcpy(b, "P6N3", 4);
+    memcpy(b, net_magic(), 4);
     b[4] = (uint8_t)type;
     memcpy(b + 5, N.mac, 6);
     return 11;
 }
 
+#define STATUS_LEN 48
+static char g_status[STATUS_LEN];
+static pthread_mutex_t g_status_mu = PTHREAD_MUTEX_INITIALIZER;
+void pes6_net_set_status(const char *line) {
+    pthread_mutex_lock(&g_status_mu);
+    snprintf(g_status, sizeof g_status, "%s", line ? line : "");
+    pthread_mutex_unlock(&g_status_mu);
+}
+
 static void send_hello(void) {
-    uint8_t b[32];
+    uint8_t b[32 + STATUS_LEN];
     size_t n = header(b, 1);
     memset(b + n, 0, 8);
     memcpy(b + n, N.group, strlen(N.group));
     n += 8;
+    pthread_mutex_lock(&g_status_mu);           /* after the group: older builds read only up to it */
+    const size_t sl = strlen(g_status);
+    memcpy(b + n, g_status, sl);
+    pthread_mutex_unlock(&g_status_mu);
+    n += sl;
     struct sockaddr_in bc = { .sin_family = AF_INET, .sin_port = htons(27600),
                               .sin_addr.s_addr = htonl(INADDR_BROADCAST) };
     sendto(N.sock, b, n, 0, (struct sockaddr *)&bc, sizeof bc);
@@ -393,18 +418,21 @@ static void pdp_out(const uint8_t *dmac, uint16_t sport, uint16_t dport, const u
 static int rx_fresh(peer *p, uint32_t stream, uint32_t seq) {
     if (!p->rx_any || p->rx_stream != stream) {
         p->rx_any = 1; p->rx_stream = stream; p->rx_top = seq; p->rx_mask = 1;
+        N.seq_span++; N.seq_fresh++;
         return 1;
     }
     const int32_t d = (int32_t)(seq - p->rx_top);
     if (d > 0) {
         p->rx_mask = d >= 64 ? 1 : (p->rx_mask << d) | 1;
         p->rx_top = seq;
+        N.seq_span += (uint64_t)d; N.seq_fresh++;
         return 1;
     }
     if (d <= -64) return 0;                      /* too old to tell: treat as a copy */
     const uint64_t bit = 1ull << -d;
     if (p->rx_mask & bit) return 0;
     p->rx_mask |= bit;
+    N.seq_fresh++;                               /* late, filling a hole */
     return 1;
 }
 
@@ -491,6 +519,15 @@ static void take_hint(void) {
     fprintf(stderr, "[net] HELLO also to %s (from the host)\n", ip);
 }
 
+/* pes6_net_route: the address the last datagram's peer is answered on, and when. */
+static _Atomic int g_route;
+static _Atomic uint64_t g_route_at;
+static int addr_is_direct(struct sockaddr_in a) { return (ntohl(a.sin_addr.s_addr) & 0xFFFFFF00u) == 0xC0A83100u; }
+int pes6_net_route(void) {
+    return wall_usec() - atomic_load(&g_route_at) < 2000000u ? atomic_load(&g_route) : 0;
+}
+
+static void recv_timing(const uint8_t *b, size_t n);
 static void net_pump(void) {
     if (N.sock < 0) return;
     if (hint_ip[0]) take_hint();
@@ -509,7 +546,7 @@ static void net_pump(void) {
         socklen_t fl = sizeof from;
         const ssize_t n = recvfrom(N.sock, b, sizeof b, 0, (struct sockaddr *)&from, &fl);
         if (n < 11) break;
-        if (memcmp(b, "P6N3", 4) || !memcmp(b + 5, N.mac, 6)) continue;      /* not ours / our own echo */
+        if (memcmp(b, net_magic(), 4) || !memcmp(b + 5, N.mac, 6)) continue;      /* not ours / our own echo */
         N.received++;
         peer *p = find_peer(b + 5);
         if (!p) {
@@ -541,9 +578,21 @@ static void net_pump(void) {
             p->addr = from;
         }
         p->seen = now;
+        atomic_store(&g_route, addr_is_direct(p->addr) ? 2 : 1);
+        atomic_store(&g_route_at, now);
         if (b[4] == 1 && n >= 19) {
             memcpy(p->group, b + 11, 8);
             p->group[8] = 0;
+            char st[STATUS_LEN];
+            const size_t sl = (size_t)n - 19 < sizeof st - 1 ? (size_t)n - 19 : sizeof st - 1;
+            memcpy(st, b + 19, sl);
+            st[sl] = 0;
+            if (sl && strcmp(st, p->status)) {
+                nlog("peer %02X:%02X:%02X says: %s", p->mac[3], p->mac[4], p->mac[5], st);
+                memcpy(p->status, st, sizeof st);
+            }
+        } else if (b[4] == 3 && n >= 12) {
+            recv_timing(b, (size_t)n);
         } else if (b[4] == 2 && n >= 22) {
             if (memcmp(b + 11, N.mac, 6)) continue;
             const uint32_t stream = (uint32_t)b[17] | (uint32_t)b[18] << 8 | (uint32_t)b[19] << 16 | (uint32_t)b[20] << 24;
@@ -763,6 +812,7 @@ static struct {
     m_event ev[M_EVENTS];
     int ev_head, ev_count;
 } M;
+static int g_local_pad = -1;                     /* pes6_net_local_pad */
 
 static void m_queue(int event, const uint8_t *mac, const uint8_t *opt, size_t optlen) {
     if (M.ev_count == M_EVENTS) return;
@@ -920,13 +970,19 @@ static void hle_MatchingSelectTarget(void) {
         nlog("sceNetAdhocMatchingSelectTarget: accepting");
         m_send(mac, M_ACCEPT, opt, optlen);
         M.peer[i].state = P_JOINED;              /* COMPLETE follows when they confirm */
+        g_local_pad = 1;
     } else {
         nlog("sceNetAdhocMatchingSelectTarget: asking to join");
         m_send(mac, M_JOIN, opt, optlen);
         M.peer[i].state = P_WE_ASKED;
+        g_local_pad = 0;
     }
     psp_ret(0);
 }
+
+/* In the WIRELESS match the two consoles are pads 0 and 1 of the game (docs/27 §1): measured on
+ * the Mac (3/11), the one that accepted the challenge is pad 1, the one that asked pad 0. */
+int pes6_net_local_pad(void) { return g_local_pad; }
 
 static void hle_MatchingCancelTarget(void) {
     uint8_t mac[6];
@@ -951,21 +1007,100 @@ static void hle_MatchingSetHelloOpt(void) {
 
 /* PES6_NET_TIMING: one line per vblank while a WIRELESS match runs (game.ovl
  * loaded in scene 15), to see how the match advances against the clock and
- * the arrival of the other side's datagrams. */
+ * the arrival of the other side's datagrams.
+ *
+ * The same rows also go to the other side (type 3 TIMING, TROWS rows a datagram), always:
+ * a phone without adb shows up in the log of the one with it, as <io root>/peer_timing.txt
+ * (written only where PES6_NET_TIMING or PES6_NET_LOG is set). Older builds ignore type 3. */
+#define TIMING_COLUMNS "wall_ms virt_ms scene_frame rx ball_x ball_z lost recovered p1_x p1_z p2_x p2_z " \
+                       "follows err_n err_rms"
+#define TRACK_A 6                     /* two outfield players, one per side: their jumps are the other side's corrections */
+#define TRACK_B 17
+typedef struct {
+    uint32_t wall_dms, virt_dms, frame, rx;     /* wall ms since the app started and virtual ms, x10 */
+    float bx, bz, ax, az, cx, cz;
+    uint16_t lost, recovered;
+    /* The game's own view of its corrections (pes6_game.h): this side follows the other (1) or
+     * not, and after the last state message how many of the 23 jumped more than 25.6 units
+     * and the root mean square of the jumps. 255/65535: no WIRELESS match (a match against the
+     * CPU, logged for comparison). */
+    uint8_t follows, err_n;
+    uint16_t err_rms;
+} trow;
+#define TROWS 25                      /* 25 x 48 bytes: one datagram well below the MTU */
+static trow trows[TROWS];
+static int ntrows;
+static FILE *peer_timing;
+static uint64_t t_start;
+
+static void trow_print(FILE *f, const trow *r) {
+    fprintf(f, "%.1f %.1f %u %u %.2f %.2f %u %u %.2f %.2f %.2f %.2f %u %u %u\n", r->wall_dms / 10.0, r->virt_dms / 10.0,
+            r->frame, r->rx, (double)r->bx, (double)r->bz, r->lost, r->recovered, (double)r->ax, (double)r->az,
+            (double)r->cx, (double)r->cz, r->follows, r->err_n, r->err_rms);
+}
+
+static void send_timing(void) {
+    uint8_t b[16 + sizeof trows];
+    size_t n = header(b, 3);
+    b[n++] = (uint8_t)ntrows;
+    memcpy(b + n, trows, (size_t)ntrows * sizeof *trows);
+    n += (size_t)ntrows * sizeof *trows;
+    for (int i = 0; i < MAX_PEERS; i++)
+        if (N.peers[i].seen) sendto(N.sock, b, n, 0, (struct sockaddr *)&N.peers[i].addr, sizeof N.peers[i].addr);
+}
+
+static void recv_timing(const uint8_t *b, size_t n) {
+    if (!N.timing && !N.log) return;
+    const int count = b[11];
+    if (count > TROWS || 12 + (size_t)count * sizeof(trow) != n) return;    /* another build's rows */
+    if (!peer_timing) {
+        char path[1024];
+        snprintf(path, sizeof path, "%s/peer_timing.txt", psp_io_root() ? psp_io_root() : ".");
+        if (!(peer_timing = fopen(path, "w"))) return;
+        setvbuf(peer_timing, NULL, _IOLBF, 0);
+        fprintf(peer_timing, TIMING_COLUMNS "\n");
+        fprintf(stderr, "[net] the other side's timing goes to %s\n", path);
+    }
+    for (int i = 0; i < count; i++) {
+        trow r;
+        memcpy(&r, b + 12 + (size_t)i * sizeof r, sizeof r);
+        trow_print(peer_timing, &r);
+    }
+}
+
 static int slow_ms, slow_every = 1;
 static void timing_task(void) {
-    if (psp_read32(PES6_SCENE_STACK) != PES6_SCENE_WIRELESS || psp_read32(PES6_OVL_GAME_AT) != PES6_MWO3_MAGIC ||
-        psp_read32(PES6_OVL_GAME_AT + 4) != PES6_OVL_GAME_ID)
-        return;
+    const uint32_t scene = psp_read32(PES6_SCENE_STACK);
+    if (!pes6_game_ovl_loaded()) return;
+    const int wireless = scene == PES6_SCENE_WIRELESS;
+    /* A match against the CPU too, into the file only: how much the players jump with no
+     * network at all, the floor for the WIRELESS numbers. */
+    if (!wireless && !(scene == PES6_SCENE_MATCH && N.timing)) return;
     static unsigned tick;
-    if (slow_ms && ++tick % (unsigned)slow_every == 0) usleep((useconds_t)slow_ms * 1000u);
-    if (!N.timing) return;
+    if (wireless && slow_ms && ++tick % (unsigned)slow_every == 0) usleep((useconds_t)slow_ms * 1000u);
+    /* Not a fixed role: it changes with the phase of play (Mac, 3/11), so it goes in each row. */
+    const int follows = wireless ? pes6_net_follows() : 255;
     float pos[3] = { 0, 0, 0 };
     const uint32_t ball = psp_read32(PES6_BALL_PTR);
     const float *bp = ball ? psp_mem_ptr(ball + PES6_BALL_POS, 12) : NULL;
     if (bp) memcpy(pos, bp, sizeof pos);
-    fprintf(N.timing, "%.1f %.1f %u %llu %.2f %.2f\n", (double)wall_usec() / 1000.0, (double)psp_time_usec() / 1000.0,
-            psp_read32(PES6_SCENE_FRAME), (unsigned long long)N.game_rx, (double)pos[0], (double)pos[2]);
+    const pes6_chara *a = pes6_chara_at(TRACK_A), *c = pes6_chara_at(TRACK_B);
+    const uint64_t lost = N.seq_span - N.seq_fresh;
+    trow r = { (uint32_t)((wall_usec() - t_start) / 100u), (uint32_t)(psp_time_usec() / 100u),
+                     psp_read32(PES6_SCENE_FRAME), (uint32_t)N.game_rx, pos[0], pos[2],
+                     a ? a->pos.x : 0, a ? a->pos.z : 0, c ? c->pos.x : 0, c ? c->pos.z : 0,
+                     (uint16_t)(lost > 0xFFFF ? 0xFFFF : lost), (uint16_t)(N.recovered > 0xFFFF ? 0xFFFF : N.recovered),
+                     (uint8_t)follows, 255, 65535 };
+    if (wireless) {
+        const int32_t en = pes6_net_err_count(), ms = pes6_net_err_mean_sq();
+        r.err_n = (uint8_t)(en < 0 ? 0 : en > 254 ? 254 : en);
+        const double rms = ms > 0 ? sqrt((double)ms) : 0.0;
+        r.err_rms = (uint16_t)(rms > 65534 ? 65534 : rms);
+    }
+    if (N.timing) trow_print(N.timing, &r);
+    if (!wireless || N.sock < 0 || !N.connected) return;
+    trows[ntrows++] = r;
+    if (ntrows == TROWS) { send_timing(); ntrows = 0; }
 }
 
 void pes6_net_init(void) {
@@ -976,7 +1111,13 @@ void pes6_net_init(void) {
     const char *d = getenv("PES6_NET_DROP");
     if (d && *d) { N.drop_pct = atoi(d); N.drop_rng = arc4random() | 1; }
     const char *buf = getenv("PES6_NET_BUFFER");
+#ifdef __ANDROID__
+    /* Phones: on unless env.txt says PES6_NET_BUFFER=0. Over real WiFi the arrivals come every
+     * 33 ms but 10 % after 84 ms or more, and each late one is a correction on screen (3/11). */
+    if (!buf || !*buf) buf = "45";
+#endif
     if (buf && *buf && atoi(buf) > 0) { N.buffer_ms = atoi(buf); hold_q = calloc(HOLD_QUEUE, sizeof *hold_q); }
+    if (N.buffer_ms) fprintf(stderr, "[net] arrivals evened out: %d ms buffer (PES6_NET_BUFFER)\n", N.buffer_ms);
     const char *lag = getenv("PES6_NET_LAG");
     if (lag && *lag) {
         sscanf(lag, "%d,%d,%d,%d", &N.lag_base, &N.lag_jitter, &N.lag_spike_pct, &N.lag_spike);
@@ -989,12 +1130,13 @@ void pes6_net_init(void) {
     const char *timing = getenv("PES6_NET_TIMING");
     if (timing && *timing && (N.timing = fopen(timing, "w"))) {
         setvbuf(N.timing, NULL, _IOLBF, 0);    /* complete lines even if the run is killed */
-        fprintf(N.timing, "wall_ms virt_ms scene_frame rx ball_x ball_z\n");
+        fprintf(N.timing, TIMING_COLUMNS "\n");
     }
     const char *slow = getenv("PES6_NET_SLOW");
     if (slow && *slow) sscanf(slow, "%d,%d", &slow_ms, &slow_every);
     if (slow_every < 1) slow_every = 1;
-    if (N.timing || slow_ms) psp_add_vblank_task(timing_task);
+    t_start = wall_usec();
+    psp_add_vblank_task(timing_task);    /* always: its rows also go to the other side */
     /* The player-file name the on-screen keyboard "types" (it has no UI yet):
      * different per device, so two players can tell each other apart. */
     const char *osk = getenv("PES6_OSK_TEXT");

@@ -17,7 +17,7 @@
  * height. The kinds up to DPAD, SELECT and START are the host's control numbers. */
 enum { PES6_PV_SQUARE, PES6_PV_CROSS, PES6_PV_CIRCLE, PES6_PV_TRIANGLE, PES6_PV_L, PES6_PV_R, PES6_PV_L_SQUARE,
        PES6_PV_R_SQUARE, PES6_PV_L_TRIANGLE, PES6_PV_R_TRIANGLE, PES6_PV_DPAD, PES6_PV_SELECT, PES6_PV_START,
-       PES6_PV_STICK, PES6_PREVIEW_MAX };
+       PES6_PV_DASH, PES6_PV_STICK, PES6_PREVIEW_MAX };
 typedef struct { float x, y, r; int kind; } pes6_preview_control;
 
 typedef struct {

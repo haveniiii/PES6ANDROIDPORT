@@ -180,6 +180,9 @@ static void rt_sync(void) {
     if (t > g_now) g_now = t;
 }
 
+static int g_idle_spin;             /* real time: wait busy (psp_threadman_set_idle_spin) */
+void psp_threadman_set_idle_spin(int on) { g_idle_spin = on != 0; }
+
 void psp_threadman_set_realtime(int on) {
     if (on && !g_rt) { g_rt_guest0 = g_now; g_rt_host0 = host_usec(); }
     g_rt = on != 0;
@@ -443,6 +446,11 @@ void psp_threadman_run(void) {
                  * vblank hook (window, input) keeps its cadence. */
                 uint64_t nap = when - g_now;
                 if (nap > 4000) nap = 4000;
+                if (g_idle_spin) {
+                    const uint64_t until = host_usec() + nap;
+                    while (host_usec() < until) { }
+                    continue;
+                }
                 struct timespec ts = { 0, (long)nap * 1000L };
                 nanosleep(&ts, NULL);
                 continue;

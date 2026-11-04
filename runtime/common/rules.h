@@ -13,4 +13,9 @@ void pes6_rules_report(FILE *out);
  * game has it; 1.3 sits it farther back, as the PS2 camera mods do). Only in a match. */
 void pes6_camera_set_distance(float k);
 
+/* The match at 60 Hz (the launcher's Partido setting, or PES6_SIM60): the game's own 60 fps
+ * values every vblank (docs/18 §5b). Turning it on is for the whole run; 0 does nothing. */
+void pes6_match_rate_60(int on);
+extern int pes6_match_at_60;          /* 1 once it is on (net.c tells consoles at 60 apart) */
+
 #endif

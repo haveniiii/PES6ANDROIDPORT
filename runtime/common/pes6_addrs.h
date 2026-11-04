@@ -57,6 +57,23 @@ enum {
 #define PES6_CLOCK_UNIT    0x08A2F3F0u   /* u8 ticks per second, from PES6_CLOCK_UNITS */
 #define PES6_CLOCK_UNITS   0x08999F70u   /* u8[2], indexed by sys_param_2 */
 
+/* ---- the WIRELESS match's state replication (docs/15 §15, docs/27 §1) ------
+ * Each received state message sets every player's start (where it is) and target (the sent
+ * position plus its velocity times a lead of (clock_unit / 10) >> 1 frames: 1 at 30 Hz, 3 at 60).
+ * Per frame, wireless_only_08919064 eases each player from start to target -- while no more
+ * than 3 x lead and no more than PES6_NET_EASE_FRAMES frames have passed since the message;
+ * after that the players run free until the next one. */
+#define PES6_NET_EASE_FRAMES  0x089C4BC8u  /* s32 in 30 Hz frames; 3 in the EBOOT, the game changes it in the match (1-4) */
+#define PES6_NET_SINCE_MSG    0x08A7FEC4u  /* s32 frames since the last state message */
+/* After each message wireless_only_0891D13C measures the jump between where each of the 23
+ * was and where the message puts it (x and z): */
+#define PES6_NET_ERR_MEAN_SQ  0x08A7FFA4u  /* s32 mean of the squared jumps */
+#define PES6_NET_ERR_COUNT    0x08A7FFA8u  /* s32 how many jumped more than 25.6 units */
+/* FUN_088206b8: 0 makes state messages overwrite the 23 positions outright; otherwise only the
+ * first one does. It changes during a match (the phase of play). From these two: */
+#define PES6_NET_ROLE_A       0x089EA360u  /* u32 */
+#define PES6_NET_ROLE_B       0x089EA364u  /* u32 */
+
 /* ---- the movie player (docs/10) -------------------------------------------
  * Its audio and video timestamp rings, read for PES6_MPEG_SYNC diagnosis. */
 #define PES6_MPEG_AUDIO_PTS    0x089B0190u   /* ring of u32, indexed by ... */

@@ -16,10 +16,12 @@ enum { RES_AUTO = 0, RES_1X, RES_2X, RES_3X, RES_COUNT };          /* internal r
 enum { QUALITY_LOW = 0, QUALITY_NORMAL, QUALITY_HIGH, QUALITY_COUNT };
 enum { SCREEN_FULL = 0, SCREEN_169, SCREEN_COUNT };              /* the match: whole screen or PSP 16:9 */
 enum { CAMERA_NORMAL = 0, CAMERA_FAR, CAMERA_FARTHEST, CAMERA_COUNT };   /* match camera distance */
+enum { MATCH_30 = 0, MATCH_60, MATCH_RATE_COUNT };              /* the match's logic rate (docs/18 §5b) */
 
 typedef struct {
     int move;           /* touch movement: analog stick or d-pad, MOVE_* (Android) */
-    int rim_run;        /* 1: pushing the touch stick to its rim also presses R (sprint) */
+    int rim_run;        /* 1: pushing the touch stick to its rim also presses R (sprint); the Controls page's switch
+                         * (kept as edge_run). 0: R does, and FLOW gets a Dash button */
     int hand;           /* touch layout, HAND_* (Android) */
     int gpu;            /* desktop window: 1 = GPU renderer, 0 = software */
     int commentary;     /* 1: match commentary when a voice bank is installed (docs/24); always on */
@@ -28,6 +30,7 @@ typedef struct {
     int quality;        /* QUALITY_*: low = unfiltered everywhere, high = smoothed textures */
     int screen;         /* SCREEN_*: the match fills a wide phone (docs/31) or keeps the PSP's 16:9 */
     int camera;         /* CAMERA_*: the match camera as the game has it, or farther back */
+    int rate;           /* MATCH_*: the match at the PSP's 30 Hz or at 60 (both sides of a WIRELESS match alike) */
     char version[64];   /* game version id (docs/17), "" = the last one */
 } pes6_settings;
 

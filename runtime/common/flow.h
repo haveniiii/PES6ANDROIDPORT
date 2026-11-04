@@ -15,6 +15,7 @@ typedef enum {
     FLOW_DASH,          /* ...and is dashing */
     FLOW_RECEIVE,       /* his team has it, or it is coming */
     FLOW_DEFEND,
+    FLOW_AERIAL,        /* defending a ball in the air: the rival's corner, a cross, a long ball */
     FLOW_KEEPER,        /* the keeper holds it */
     FLOW_CORNER,
     FLOW_FREE_KICK,
@@ -49,6 +50,10 @@ void pes6_flow_colour(pes6_flow_context c, float rgb[3]);
 
 /* The controlled player has the ball at his feet. If not, a first touch must not wait for a gesture. */
 int pes6_flow_at_feet(void);
+
+/* The player's keeper holds the ball in his hands. R then puts it down at his feet (docs/36 PT-05),
+ * so the stick's sprint must not press it (the user's report, 2/11), whatever the scheme. */
+int pes6_keeper_has_ball(void);
 
 /* The left thumb: one tap is R, and two make the game's R x 2. */
 void pes6_flow_tap(void);

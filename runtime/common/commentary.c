@@ -236,7 +236,14 @@ static uint64_t g_said, g_events;
 
 void pes6_commentary_set_enabled(int on) { atomic_store(&g_enabled, on); }
 
+static atomic_int g_drop;             /* 1: the match is paused or over: drop what is waiting too */
+
 int pes6_commentary_mix(int *mix, int frames) {
+    if (atomic_load(&g_next_ready) && atomic_load(&g_drop)) {
+        free(g_next.pcm);
+        g_next.pcm = NULL;
+        atomic_store(&g_next_ready, 0);
+    }
     if (atomic_load(&g_next_ready)) {
         free(g_cur.pcm);
         g_cur = g_next;
@@ -282,6 +289,7 @@ static uint32_t g_quiet_until;        /* vblank before which no new line starts 
 static uint32_t g_vblank;
 
 #define EVENT_GAP (60u * 12)            /* small lines (dribble, pass...): one of a kind per 12 s */
+#define PASS_GAP  (60u * 60)            /* a pass praised: once a minute at most */
 static uint32_t g_event_at[EV_COUNT];
 
 /* The last lines said, so that the same one is not heard twice in a row of a few. */
@@ -294,6 +302,7 @@ static int said_lately(int clip) {
 
 static int queue_from(const bank *bk, int clip, int prio) {
     if (!pes6_audio_sink_active()) return 0;           /* no audio device (headless runs): events only */
+    if (atomic_load(&g_drop)) return 0;
     if (atomic_load(&g_next_ready)) return 0;          /* the audio thread has not taken the last one */
     uint32_t frames, rate;
     int16_t *pcm = decode(bk, clip, &frames, &rate);
@@ -336,7 +345,10 @@ static void event(int e) {
         if (g_log) fprintf(stderr, "[commentary] %s skipped\n", k_event[e]);
         return;
     }
-    if (k_prio[e] <= 3 && g_vblank - g_event_at[e] < EVENT_GAP) {   /* the same small line again so soon */
+    /* the same small line again so soon; praise of a pass, the commonest touch, much less often
+     * ("¡uy, qué buen pase!" all match long, 2/11) */
+    const uint32_t gap = e == EV_PASS || e == EV_THROUGH ? PASS_GAP : EVENT_GAP;
+    if (k_prio[e] <= 3 && g_event_at[e] && g_vblank - g_event_at[e] < gap) {
         if (g_log) fprintf(stderr, "[commentary] %s too soon\n", k_event[e]);
         return;
     }
@@ -527,9 +539,23 @@ static void say_goal_score(void) {
 }
 
 void pes6_commentary_frame(void) {
+    if (!g_afs || !atomic_load(&g_enabled)) { g_vblank++; return; }
+    /* The pause menu, and the match over (the user's reports, 2/11: lines in the pause menu, and
+     * one over the black screen and the save after the match): what is playing fades out, nothing
+     * new starts, and the clock stops, so no "nothing said for a while" is due on resuming. */
+    const int running = match_running();
+    if (!running || pes6_paused()) {
+        if (W.in_match && !atomic_load(&g_drop)) {
+            g_nseq = 0;
+            atomic_store(&g_fade, 1);
+            if (g_log) fprintf(stderr, "[commentary] v%u %s: quiet\n", g_vblank, running ? "paused" : "match over");
+        }
+        atomic_store(&g_drop, 1);
+        if (!running) W.in_match = 0;
+        return;
+    }
+    atomic_store(&g_drop, 0);
     g_vblank++;
-    if (!g_afs || !atomic_load(&g_enabled)) return;
-    if (!match_running()) { W.in_match = 0; return; }
     const uint8_t p0 = pes6_phase(0), p1 = pes6_phase(1);
     const pes6_ball *ball = pes6_ball_obj();
     const int16_t touch = ball ? ball->touch_code : 0;
@@ -601,8 +627,10 @@ void pes6_commentary_frame(void) {
         if (p1 == 1 && W.phase1 == 14) {
             if (pes6_restart_type() == 0 && !W.after_goal) {
                 W.kickoffs++;                            /* not after a goal: the start of a half */
-                const int e = W.kickoffs == 1 ? EV_KICKOFF : EV_SECOND_HALF;   /* the match's opening line once */
-                if (!g_nseq && g_nclips[e]) event(e);
+                /* the match's opening line once; extra time (3, 4) has no lines of its own in the
+                 * bank, and "arranca el segundo tiempo" was said of it (2/11) */
+                const int e = W.kickoffs == 1 ? EV_KICKOFF : EV_SECOND_HALF;
+                if (W.kickoffs <= 2 && !g_nseq && g_nclips[e]) event(e);
             }
             W.after_goal = 0; W.dead = 0;
             W.live_since = g_vblank;

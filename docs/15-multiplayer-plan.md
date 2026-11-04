@@ -386,3 +386,92 @@ fallos: el partido va a cámara lenta mientras el Mac no llega.
 **Sin probar:** una instancia a 30 Hz contra otra a 60 Hz, y dos teléfonos a 60 Hz. Cuando exista la opción de
 menú, el modo debe negociarse o bloquearse en red: hoy nada impide esa mezcla.
 
+
+### 14b. Dos teléfonos a 60 Hz (2/11) y pérdidas en el registro
+
+Partido real: el Redmi del usuario (con adb) contra un teléfono sin depuración (control parental), los dos
+a 60 Hz. El Redmi, a 59,5–60 fps, sin cuadros de más de 50 ms. El usuario notó «cortes de net constantes».
+`net_timing.txt` del Redmi (171 s): llegaron **22 datagramas/s**, con huecos de mediana 66 ms, p90 134 ms,
+16 de ≥ 250 ms y dos cortes de 1,2 y 1,5 s. Como referencia, dos instancias del Mac a 60 Hz: 29/s, mediana
+35 ms, p90 68 ms. Al principio la conexión iba por el router y en el minuto 1 pasó a Wi-Fi Direct
+(`peer now at 192.168.49.x`); por el router fue peor (15–18/s y muchos huecos de 200 ms), por Wi-Fi Direct
+21–30/s. La mediana de 66 ms es justo el doble del ritmo a 60 Hz: falta uno de cada dos datagramas.
+Esto cuadra con un otro teléfono que no sostiene 60 fps, porque el juego envía por cuadro. No se pudo
+comprobar: sin adb no hay registro del otro lado.
+
+Para separar «manda poco» de «se pierde por el aire», `PES6_NET_TIMING` escribe ahora dos columnas más:
+`lost` (números de secuencia que nunca llegaron) y `recovered` (llegaron solo como repetición).
+`tools/net_timing.py` las resume. En el Mac a 30 Hz con `PES6_NET_DROP=5`: 0–1 perdidos de ~6 000, y
+255–333 salvados por las repeticiones.
+
+**A 60 Hz el protocolo es `P6N6`** (`net_magic`, `pes6_match_at_60`): con los teléfonos a 60 en la misma red,
+un par del Mac a 30 no los vio.
+**Ojo con `net_pair.sh`:** si hay teléfonos en la red con el juego abierto y el mismo protocolo, entran en el
+lobby de la prueba. Además, el partido necesita las pulsaciones del guion de `regress.sh --net`.
+
+## 15. Por qué se ven saltos cortos a 60 Hz (3/11)
+
+**Mediciones.** fix6 manda las filas de `PES6_NET_TIMING` al otro teléfono (tipo 3 TIMING), y el que tiene
+adb las guarda en `peer_timing.txt`. Partido de 8,5 min, el usuario jugando en el teléfono sin adb:
+
+- Saltos de jugador de 40 unidades o más (segunda diferencia de la posición, `tools/net_timing.py`):
+  ~10–15 por minuto en cada teléfono con los dos a ≥ 58 fps.
+- Con un teléfono por debajo de 55 fps, esos saltos se multiplican por 2,5–10 en los dos.
+- Casi todos son escalones (el jugador queda en el sitio nuevo), no parpadeos de ida y vuelta.
+
+**El modelo del juego, leído en el decompilado** (completa `docs/27` §1):
+
+- **El mensaje de estado** lo recibe `wireless_only_0891A154`.
+  - Cada mensaje fija, por jugador, un inicio (dónde está) y un objetivo: la posición enviada más
+    su velocidad por un adelanto de `(clock_unit / 10) >> 1` cuadros. Eso da 1 cuadro a 30 Hz y
+    3 a 60 Hz. El adelanto no depende del retraso real del mensaje.
+  - El adelanto sale de una tabla `{clock_unit/20, 2, 4}`, indexada por el modo de netlib `0x08C61AD8`
+    (que además cambia el camino de los paquetes: no tocarlo).
+- **El suavizado** lo hace `wireless_only_08919064`, en cada cuadro.
+  - Lleva a cada jugador del inicio al objetivo con una curva (`0891CBD8`).
+  - Solo lo hace mientras no hayan pasado más de 3 × adelanto ni más de `0x089C4BC8` cuadros desde el
+    mensaje. Después los jugadores corren libres hasta el siguiente.
+  - `0x089C4BC8` vale 3 en el EBOOT y **el juego lo cambia durante el partido** (visto 1, 2, 3 y 4 en el
+    banco; quién lo escribe no está localizado, no es una referencia directa). Pensado en cuadros de 30 Hz:
+    4 son 133 ms a 30 Hz, pero **67 ms a 60 Hz**. Entre teléfonos el 10 % de los mensajes llega tras más de 84 ms.
+- **El ritmo del otro lado.** El receptor estima la diferencia de ritmo entre las dos consolas
+  (`FUN_08c3e5c8`/`08c3e768` de netlib, media de 16 y 12 muestras). Solo la usa si está entre 1 y 3
+  cuadros; si no, la pone a 0.
+- **Pisar posiciones.** Cuando `FUN_088206b8` (de `0x089EA360/364`) devuelve 0, el mensaje además pisa las 23
+  posiciones. No es un papel fijo de la consola: cambia con la fase del juego (~4 % del tiempo en el banco).
+- **El propio juego mide sus correcciones.** `0891D13C` deja en `0x08A7FFA8` cuántos de los 23 saltaron
+  más de 25,6 unidades y en `0x08A7FFA4` la media de los cuadrados.
+
+**Banco en el Mac** (dos instancias, `--gpu`, 60 Hz a 59,9 fps, `PES6_NET_LAG=5,50,5,80`; guion con
+movimiento aleatorio de 15@9100 a 15@20000, ~4 min de partido). Lado que recibe las correcciones (el otro
+queda en ~1–3 por minuto en todas):
+
+| Suavizado (cuadros, fijo) | Colchón | Saltos 15–40/min | 40–100/min | Error del juego por mensaje (rms p90) |
+|---|---|---|---|---|
+| 3 | — | ~163 | ~18 | 36 |
+| **4 (el máximo del juego)** | — | **~106** | **~9,5** | 34 |
+| 6 | — | ~45 | ~3,6 | 31 |
+| 8 | — | ~64 | ~4,3 | 33 |
+| 4 | 45 ms | ~32 | ~2,0 | 14 |
+| 6 | 45 ms | ~8–20 | ~2 | 15 |
+| **8** | **45 ms** | **~8** | **~1,8** | **14** |
+
+Partido contra la CPU a 60 Hz con el mismo tipo de movimiento: ~1 salto por minuto. Así que los saltos en
+red son correcciones casi en su totalidad. Lo que más ayuda es el colchón (divide por dos el error del
+juego). Alargar el suavizado ayuda sobre todo sin colchón. Los dos juntos dejan los saltos chicos en ~8 por
+minuto. **Falta confirmarlo entre teléfonos.**
+
+**Cambios** (`pes6_addrs.h` § WIRELESS, `pes6_game.h`):
+
+- A 60 Hz, el límite es el doble del valor que pone el juego en cada momento: el mismo tiempo que a 30 Hz
+  (`rules.c`, `net_ease_task`). `PES6_NET_EASE=cuadros` lo fija. A 30 Hz no cambia. Con los valores por
+  defecto y el colchón (`tools/net_bench.sh … default::45`): ~18 saltos chicos y ~1,3 de 40+ por minuto, error
+  del juego p90 13.
+- `PES6_NET_BUFFER=45` por defecto en Android (`=0` lo apaga).
+- `PES6_NET_TIMING` tiene 15 columnas, con las nuevas `follows` (este mensaje pisa posiciones),
+  `err_n` y `err_rms` (el error que mide el juego). También se escribe en un partido contra la CPU
+  (`follows` 255), como referencia sin red.
+- **Wi-Fi Direct.** Si el partido empieza por el router, Wi-Fi Direct no se toca hasta que acaba
+  (`pes6_net_route`, `WifiDirect.hold`). Si empieza por Wi-Fi Direct, conserva su grupo.
+- **El respaldo de CPU (`spin`)** solo se activa si Android rechazó los avisos de rendimiento.
+- Banco reproducible: `tools/net_bench.sh OUTDIR game:4:0 both:8:45` (~6 min por configuración).

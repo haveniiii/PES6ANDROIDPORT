@@ -64,6 +64,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <sys/system_properties.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/system_properties.h>
@@ -199,7 +201,7 @@ enum { OV_COMBO = 12 };       /* a button for L or R with a face button (PRO_KEY
 typedef struct { float a, b, r; uint32_t mask; int shape, flick; } pro_button;
 /* the user's layout (2026-10-21): triangle, square, circle and cross in a diamond, L above on
  * the left, R above on the right */
-static const pro_button PRO_BTN[] = {
+static const pro_button PRO_BTN[] = {   /* indexed by C_* (below): 0..9, then C_DASH */
     { 0.51f, 0.61f, 0.075f, 0x8000, 4, 1 },      /* square: shoot */
     { 0.36f, 0.78f, 0.075f, 0x4000, 3, 0 },      /* cross: pass, press */
     { 0.20f, 0.61f, 0.068f, 0x2000, 2, 0 },      /* circle: cross, clear */
@@ -210,13 +212,17 @@ static const pro_button PRO_BTN[] = {
     { 0.52f, 0.84f, 0.045f, 0x8200, OV_COMBO, 0 },   /*           R+square */
     { 0.50f, 0.33f, 0.045f, 0x1100, OV_COMBO, 0 },   /*           L+triangle (lofted through ball) */
     { 0.25f, 0.26f, 0.045f, 0x1200, OV_COMBO, 0 },   /*           R+triangle */
+    [13] = { 0.14f, 0.85f, 0.062f, 0x0200, 6, 0 },   /* C_DASH: FLOW's Dash when the stick's edge does not sprint */
 };
 static int pro_mode(void) {
     const int c = pes6_settings_current.controls;
     return c == CTRL_PRO || c == CTRL_PRO_KEYS || c == CTRL_PRO_DPAD || c == CTRL_FLOW;
 }
 static int flow_mode(void) { return pes6_settings_current.controls == CTRL_FLOW; }
-static int pro_count(void) { return pes6_settings_current.controls == CTRL_PRO_KEYS ? 10 : 6; }
+/* The stick's edge sprints (Controles' switch, settings.rim_run); off, R does, and FLOW gets a Dash
+ * button of its own (the user's request, 2/11). */
+static int edge_sprint(void) { return pes6_settings_current.rim_run; }
+static int flow_dash(void) { return flow_mode() && !edge_sprint(); }
 static int pro_flicks(void) { return pes6_settings_current.controls != CTRL_PRO_KEYS && !flow_mode(); }
 static int pro_dpad(void) { return pes6_settings_current.controls == CTRL_PRO_DPAD; }
 
@@ -225,12 +231,19 @@ static int pro_dpad(void) { return pes6_settings_current.controls == CTRL_PRO_DP
  * are fractions of the screen as if right-handed (the left hand mirrors them, except SELECT and
  * START, which stay where they are put); a control never moved sits where the defaults put it,
  * which follow the screen's shape: the diamond from the right edge in units of the height. */
-enum { C_DPAD = 10, C_SELECT, C_START, C_COUNT };       /* 0..9: PRO_BTN */
+enum { C_DPAD = 10, C_SELECT, C_START, C_DASH, C_COUNT };   /* 0..9 and C_DASH: PRO_BTN */
 static const char *const C_NAME[C_COUNT] = { "square", "cross", "circle", "triangle", "l", "r", "l_square",
-                                             "r_square", "l_triangle", "r_triangle", "dpad", "select", "start" };
+                                             "r_square", "l_triangle", "r_triangle", "dpad", "select", "start", "dash" };
 static const char *const C_LABEL[C_COUNT] = { "Cuadrado", "Equis", "Circulo", "Triangulo", "L", "R", "L + cuadrado",
                                               "R + cuadrado", "L + triangulo", "R + triangulo", "Cruceta", "Select",
-                                              "Start" };
+                                              "Start", "Correr" };
+static int is_btn(int c) { return c < C_DPAD || c == C_DASH; }     /* a PRO_BTN, not the d-pad or a pill */
+/* The buttons a finger can take in this scheme. */
+static int pro_used(int i) {
+    if (i < 6) return 1;
+    if (i < C_DPAD) return pes6_settings_current.controls == CTRL_PRO_KEYS;
+    return i == C_DASH && flow_dash();
+}
 /* Three layouts, as their defaults differ: 0 CLASSIC, 1 the PRO schemes, 2 DPAD. */
 static struct { int set; float x, y, s; } g_lays[3][C_COUNT];
 #define g_lay (g_lays[pro_mode() ? 1 : dpad_mode() ? 2 : 0])
@@ -242,6 +255,7 @@ static char g_layout_path[800];
 
 static void ctl_default(int c, float *x, float *y) {
     const float W = (float)(g_w ? g_w : 1), H = (float)(g_h ? g_h : 1);
+    if (c == C_DASH) { *x = (W - PRO_BTN[c].a * H) / W; *y = PRO_BTN[c].b; return; }
     if (c >= C_SELECT) { *x = c == C_SELECT ? 0.485f : 0.560f; *y = 0.93f; return; }
     if (pro_mode()) {
         if (c < C_DPAD) { *x = (W - PRO_BTN[c].a * H) / W; *y = PRO_BTN[c].b; }
@@ -257,7 +271,7 @@ static void ctl_default(int c, float *x, float *y) {
     else if (dpad_mode()) { *x = DPAD_X; *y = DPAD_Y; }
     else { *x = PDPAD_A * H / W; *y = PDPAD_B; }                                    /* CLASSIC's, above the stick */
 }
-static int ctl_mirrored(int c) { return lefty() && c < C_SELECT; }
+static int ctl_mirrored(int c) { return lefty() && (c < C_SELECT || c == C_DASH); }
 static float ctl_size(int c) { return g_lay[c].set ? g_lay[c].s : 1.0f; }
 static void ctl_pos(int c, float *px, float *py) {           /* the centre, in pixels */
     float x, y;
@@ -301,7 +315,8 @@ static void layout_save(void) {
 static int pro_hit(float px, float py) {
     int best = -1;
     float best_q = pro_mode() ? 1.25f : 1.9f;
-    for (int i = 0; i < pro_count(); i++) {
+    for (int i = 0; i < C_COUNT; i++) {
+        if (!pro_used(i)) continue;
         float x, y;
         ctl_pos(i, &x, &y);
         const float q = sqrtf((px - x) * (px - x) + (py - y) * (py - y)) / pro_r(i);
@@ -388,12 +403,15 @@ static void pro_touch(int32_t id, float px, float py, uint64_t now) {
         g_fing[i].used = g_fing[i].down = 1;
         g_fing[i].id = id;
         g_fing[i].btn = b;
-        g_fing[i].flow = pes6_flow_control_at(g_flow_ctx, b);    /* never NULL, whatever the scheme */
+        g_fing[i].flow = pes6_flow_control_at(g_flow_ctx, b);    /* never NULL, whatever the scheme (clamped) */
         g_fing[i].t0 = g_fing[i].t_dec = now;
         g_fing[i].variant = PRO_BTN[b].flick && pro_flicks() ? -1 : 0;
         g_fing[i].y0 = g_fing[i].y = py;
         g_fing[i].x0 = g_fing[i].x = px;
-        if (flow_mode()) {
+        if (b == C_DASH) {                                         /* plain R, no gestures */
+            g_fing[i].variant = 0;
+            g_fing[i].held = PRO_BTN[b].mask;
+        } else if (flow_mode()) {
             g_fing[i].flow = pes6_flow_control_at(g_flow_ctx, b);
             g_fing[i].variant = -1;
             /* No gesture to wait for, or a first touch: the ball will not wait. */
@@ -419,9 +437,12 @@ static void pro_lift_missing(const int32_t *ids, int n, uint64_t now) {
  * draws from g_pro_lit, what the last call published: running it there as well raced pro_touch
  * and crashed on a finger whose `flow` was not set yet (2/11, Completa + 60 Hz). */
 static _Atomic uint32_t g_pro_lit;
+#define LIT_DASH 0x10000u     /* in g_pro_lit: FLOW's Dash button (its R is not B's) */
+static int g_dash_down;       /* a finger holds FLOW's Dash (game thread) */
 static uint32_t pro_buttons(uint32_t *shown) {
     const uint64_t now = now_ms();
     uint32_t b = 0, lit = 0;
+    g_dash_down = 0;
     for (int i = 0; i < MAX_FINGERS; i++) {
         if (!g_fing[i].used) continue;
         const pro_button *p = &PRO_BTN[g_fing[i].btn];
@@ -461,10 +482,14 @@ static uint32_t pro_buttons(uint32_t *shown) {
             if (end < g_fing[i].t_dec + TAP_MS) end = g_fing[i].t_dec + TAP_MS;
         }
         if (now >= end) { g_fing[i].used = 0; continue; }
-        const uint32_t m = flow_mode() ? g_fing[i].held
-                                       : p->mask | (g_fing[i].variant == 1 ? 0x0100u : g_fing[i].variant == 2 ? 0x0200u : 0);
+        uint32_t m = flow_mode() ? g_fing[i].held
+                                 : p->mask | (g_fing[i].variant == 1 ? 0x0100u : g_fing[i].variant == 2 ? 0x0200u : 0);
+        if (g_fing[i].btn == C_DASH) {
+            if (g_fing[i].down) g_dash_down = 1;
+            if (pes6_keeper_has_ball()) m = 0;                   /* R would put the ball down (docs/36 PT-05) */
+        }
         b |= m;
-        lit |= flow_mode() ? p->mask : m;
+        lit |= g_fing[i].btn == C_DASH ? LIT_DASH : flow_mode() ? p->mask : m;
     }
     if (shown) *shown = lit;
     atomic_store_explicit(&g_pro_lit, lit, memory_order_relaxed);
@@ -593,11 +618,12 @@ static int face_index(int32_t code) {
 static struct { int on, sel, drag, btn, done; float offx, offy; } g_ed = { 0, -1, 0, -1, 0, 0, 0 };
 
 static int ctl_visible(int c) {
+    if (c == C_DASH) return flow_dash();
     if (c < 6 || c >= C_SELECT) return 1;
     return c == C_DPAD ? has_dpad() : pes6_settings_current.controls == CTRL_PRO_KEYS;
 }
 static float ctl_reach(int c) {                  /* how near a finger must land to take it */
-    if (c < C_DPAD) return pro_r(c) * 1.2f;
+    if (is_btn(c)) return pro_r(c) * 1.2f;
     if (c == C_DPAD) return pdpad_arm() * 1.6f;
     return 0.09f * (float)g_h * ctl_size(c);
 }
@@ -807,7 +833,7 @@ static uint32_t stick_buttons(void) {
     if (in_match()) {
         if (pro_mode()) {                          /* PRO: the zone, with hysteresis and a tick */
             const int was = g_sprinting;
-            g_sprinting = d >= SPRINT_ON || (g_sprinting && d >= SPRINT_OFF);
+            g_sprinting = edge_sprint() && (d >= SPRINT_ON || (g_sprinting && d >= SPRINT_OFF));
             if (g_sprinting && !was) haptic(45);
         }
         if (d < STICK_DEAD) return 0;
@@ -815,8 +841,9 @@ static uint32_t stick_buttons(void) {
                                 : d >= STICK_RUN && pes6_settings_current.rim_run ? 0x0200u : 0;
         if (flow_mode()) {
             if (g_flow_rhold) b |= 0x0200u;
-            else if (!g_sprinting && d < FLOW_SLOW && g_flow_ctx == FLOW_BALL) b |= PES6_PAD_R2;
+            else if (!g_sprinting && !g_dash_down && d < FLOW_SLOW && g_flow_ctx == FLOW_BALL) b |= PES6_PAD_R2;
         }
+        if (pes6_keeper_has_ball()) b &= ~(0x0200u | PES6_PAD_R2);   /* R would drop the ball at his feet */
         if (dx > 0.38f * d) b |= 0x0020; else if (dx < -0.38f * d) b |= 0x0080;
         if (dy > 0.38f * d) b |= 0x0040; else if (dy < -0.38f * d) b |= 0x0010;
         return b;
@@ -852,7 +879,7 @@ static uint32_t android_buttons(void) {
     if (flow_mode()) {
         int face = 0;
         for (int i = 0; i < MAX_FINGERS; i++) face |= g_fing[i].used && g_fing[i].down && g_fing[i].btn < 4;
-        g_flow_ctx = in_match() ? pes6_flow_context_now(g_sprinting, (g_touch_buttons & 1) != 0, face) : FLOW_OFF;
+        g_flow_ctx = in_match() ? pes6_flow_context_now(g_sprinting || g_dash_down, (g_touch_buttons & 1) != 0, face) : FLOW_OFF;
     }
     return g_touch_buttons | g_key_buttons | stick_buttons() | pad_buttons(!in_match()) | replay_buttons() |
            (pro_mode() ? pro_buttons(NULL) : 0);
@@ -1157,11 +1184,19 @@ static void ov_flow(uint32_t lit) {
         if (t < 1.0f) ov_label(x, y, cap, r * 1.34f, was[i], 1.0f - t);
         ov_label(x, y, cap, r * 1.34f, c->label, t);
     }
+    if (flow_dash()) {
+        float x, y;
+        ctl_pos(C_DASH, &x, &y);
+        const float r = pro_r(C_DASH);
+        ov_quad(x, y, r, r, OV_FLOW, (lit & LIT_DASH) != 0, g_flow_col[0], g_flow_col[1], g_flow_col[2], 0);
+        ov_label(x, y, 0.0205f * (float)g_h * ctl_size(C_DASH), r * 1.34f, "Dash", 1.0f);
+    }
 }
 
 static void ov_pro(uint32_t lit) {
     if (flow_mode()) { ov_flow(lit); return; }
-    for (int i = 0; i < pro_count(); i++) {
+    for (int i = 0; i < C_DPAD; i++) {
+        if (!pro_used(i)) continue;
         const pro_button *p = &PRO_BTN[i];
         float x, y;
         ctl_pos(i, &x, &y);
@@ -1201,7 +1236,7 @@ static void ov_draw(void) {
      * boundary, then the knob under the thumb */
     const float sx = g_stick_ox, sy = g_stick_oy, sr = STICK_R * H;
     const int moving = g_stick_x != 0 || g_stick_y != 0;
-    const int running = in_match() && (pro_mode() ? g_sprinting : pes6_settings_current.rim_run &&
+    const int running = in_match() && (pro_mode() ? g_sprinting || (atomic_load_explicit(&g_pro_lit, memory_order_relaxed) & LIT_DASH) : pes6_settings_current.rim_run &&
                         sqrtf(g_stick_x * g_stick_x + g_stick_y * g_stick_y) >= STICK_RUN);
     if (flow_mode()) {                   /* the well in the same chalk as the buttons, faint until touched */
         const float ix = mirror_x(0.20f) * (float)g_w, iy = 0.62f * H;
@@ -1216,7 +1251,7 @@ static void ov_draw(void) {
     } else if (!dpad_mode() && g_stick_id >= 0) {
         /* the dashed walk/run ring only when the rim runs (radius > 1 hides it) */
         ov_quad(sx, sy, sr, sr, OV_STICK, moving, 1.0f, 1.0f, 1.0f,
-                pro_mode() ? SPRINT_ON : pes6_settings_current.rim_run ? STICK_RUN : 2.0f);
+                !edge_sprint() ? 2.0f : pro_mode() ? SPRINT_ON : STICK_RUN);
         if (running) ov_quad(sx + g_stick_x * sr, sy + g_stick_y * sr, sr * 0.36f, sr * 0.36f, OV_KNOB, 1, 1.0f, 0.62f, 0.20f, 1);
         else         ov_quad(sx + g_stick_x * sr, sy + g_stick_y * sr, sr * 0.36f, sr * 0.36f, OV_KNOB, moving, 0.88f, 0.90f, 0.94f, 1);
     }
@@ -1234,6 +1269,7 @@ static void ov_layout(uint32_t lit, int chosen) {
     const float u = (float)g_h * 0.01f;
     uint32_t show = lit;
     if (chosen >= 0 && chosen < C_DPAD) show |= PRO_BTN[chosen].mask;
+    if (chosen == C_DASH) show |= LIT_DASH;
     if (pro_mode()) {
         ov_pro(show);
     } else {
@@ -1440,8 +1476,89 @@ static void show_job(uint64_t fb_stride, uint64_t fmt_w_h) {
     atomic_fetch_sub(&g_shows, 1);
 }
 
+/* ADPF (Android 13+, docs/32 §12): tell the system how long each game frame's work takes against
+ * the time it has. Without it, a phone nobody touches drops its CPU clocks -- Android boosts them
+ * only on touches -- and in a WIRELESS match the other phone's game slowed down while its player
+ * was still (the user's report, 2/11: slow until both moved). Looked up at run time: the APK is
+ * built for Android 8. */
+typedef struct APerformanceHintManager APerformanceHintManager;
+typedef struct APerformanceHintSession APerformanceHintSession;
+static struct {
+    APerformanceHintSession *session;
+    int (*report)(APerformanceHintSession *, int64_t);
+    int (*target)(APerformanceHintSession *, int64_t);
+    int64_t target_ns;
+    int tried;
+} g_hint;
+static _Atomic int32_t g_ge_tid;
+
+static void note_ge_tid(void) { atomic_store(&g_ge_tid, (int32_t)gettid()); }
+
+static void hint_open(void) {
+    g_hint.tried = 1;
+    void *lib = dlopen("libandroid.so", RTLD_NOW);
+    APerformanceHintManager *(*get)(void) = lib ? (APerformanceHintManager * (*)(void)) dlsym(lib, "APerformanceHint_getManager") : NULL;
+    APerformanceHintSession *(*create)(APerformanceHintManager *, const int32_t *, size_t, int64_t) =
+        lib ? (APerformanceHintSession * (*)(APerformanceHintManager *, const int32_t *, size_t, int64_t))
+                  dlsym(lib, "APerformanceHint_createSession") : NULL;
+    g_hint.report = lib ? (int (*)(APerformanceHintSession *, int64_t))dlsym(lib, "APerformanceHint_reportActualWorkDuration") : NULL;
+    g_hint.target = lib ? (int (*)(APerformanceHintSession *, int64_t))dlsym(lib, "APerformanceHint_updateTargetWorkDuration") : NULL;
+    APerformanceHintManager *m = get ? get() : NULL;
+    if (!m || !create || !g_hint.report) { fprintf(stderr, "[hint] no performance hints on this Android\n"); return; }
+    if (pes6_ge_thread_on()) pes6_ge_call(note_ge_tid);
+    int32_t tids[2] = { (int32_t)gettid(), atomic_load(&g_ge_tid) };
+    g_hint.target_ns = 1000000000ll / 30;
+    g_hint.session = create(m, tids, tids[1] ? 2 : 1, g_hint.target_ns);
+    fprintf(stderr, "[hint] performance hint session %s (threads %d %d)\n", g_hint.session ? "on" : "refused", tids[0], tids[1]);
+}
+
+/* Once per game frame: how long it took, wall clock from the last one, against a frame at the
+ * match's rate. The game thread's CPU time alone (the first try, 2/11) did not do it on the
+ * second phone: the frame waits for the GE thread and the GPU too, and the system saw time to spare.
+ * A frame on time reports the target; a late one more, and the system raises the clocks. */
+static int g_spin;            /* the scheduler waits busy (psp_threadman_set_idle_spin) */
+static int g_spin_auto;       /* this match fell behind with the hints alone: busy until it ends */
+static void hint_frame(void) {
+    static uint64_t seen, at;
+    const uint64_t f = psp_display_flips();
+    if (f == seen) return;
+    seen = f;
+    if (!g_hint.tried) hint_open();
+    const uint64_t now = clock_ns(CLOCK_MONOTONIC);
+    const int64_t want = 1000000000ll / (pes6_match_at_60 ? 60 : 30);
+    int64_t took = at ? (int64_t)(now - at) : 0;
+    at = now;
+    if (took > 4 * want) took = 0;                /* a load or the menu's pause: not a frame's work */
+    /* No hints on this Android, a match at 60: keep the cores awake (env.txt PES6_SPIN=0 never,
+     * =1 always in a match). */
+    static int spin_env = -2;
+    if (spin_env == -2) { const char *e = getenv("PES6_SPIN"); spin_env = e && *e ? atoi(e) : -1; }
+    const int spin = in_match() && (spin_env == 1 || (spin_env != 0 && (g_spin_auto || (!g_hint.session && pes6_match_at_60))));
+    if (spin != g_spin) {
+        g_spin = spin;
+        psp_threadman_set_idle_spin(spin);
+        fprintf(stderr, "[hint] cores kept busy between frames: %s\n", spin ? "on" : "off");
+    }
+    if (!g_hint.session || took <= 0) return;
+    if (want != g_hint.target_ns && g_hint.target) { g_hint.target(g_hint.session, want); g_hint.target_ns = want; }
+    g_hint.report(g_hint.session, took);
+}
+
+/* What the other phone sees of this one, in its log (net.h): model, Android, hints, fps. */
+static void net_status(double fps) {
+    static char model[PROP_VALUE_MAX], sdk[PROP_VALUE_MAX];
+    if (!model[0]) { __system_property_get("ro.product.model", model); __system_property_get("ro.build.version.sdk", sdk); }
+    char line[48];
+    snprintf(line, sizeof line, "%.16s sdk%s hint%c spin%c %dHz %.0ffps", model, sdk, g_hint.session ? '+' : '-',
+             g_spin ? '+' : '-', pes6_match_at_60 ? 60 : 30, fps);
+    pes6_net_set_status(line);
+}
+
 static void on_vblank(void) {
     pump_events(0);
+    static int hint = -1;                        /* env.txt PES6_HINT=0 turns the hints off */
+    if (hint < 0) { const char *h = getenv("PES6_HINT"); hint = !(h && *h == '0'); }
+    if (hint) hint_frame();
     if (g_paused || g_surf == EGL_NO_SURFACE) {
         /* In the background: stop the clock and the sound, and sit here until
          * the activity is in front again with a window to draw on. */
@@ -1530,6 +1647,17 @@ static void on_vblank(void) {
         static uint64_t ge_cpu0, ge_wait0;
         uint64_t ge_cpu, ge_wait;
         pes6_ge_thread_stats(&ge_cpu, &ge_wait);
+        if (last.tv_sec) {
+            const double fps = (double)(flips - last_flips) / dt;
+            if (!in_match()) g_spin_auto = 0;
+            /* Only where the hints were refused: on a phone that takes them (the Redmi) the busy cores
+             * only warmed it, and it ran slower over a long match (3/11). */
+            else if (!g_spin_auto && !g_hint.session && fps < (pes6_match_at_60 ? 57.0 : 28.5)) {
+                g_spin_auto = 1;
+                fprintf(stderr, "[hint] the match fell to %.1f fps: cores kept busy until it ends\n", fps);
+            }
+            net_status(fps);
+        }
         if (last.tv_sec)
             fprintf(stderr, "[fps] %.1f  (scene %u frame %u) worst %d ms, %d over 50 ms; GE thread %.0f%%, game waits for it %.1f ms/frame\n",
                     (double)(flips - last_flips) / dt, psp_read32(PES6_SCENE_STACK), psp_read32(PES6_SCENE_FRAME), g_worst_ms, g_hitches,
@@ -1897,8 +2025,8 @@ static void menu_preview(pes6_launcher *l, const pes6_settings *s) {
         if (!ctl_visible(c)) continue;
         float x, y;
         ctl_pos(c, &x, &y);
-        const float r = c < C_DPAD ? pro_r(c) : c == C_DPAD ? pdpad_arm() * 0.8f : 0.03f * H;
-        p[n++] = (pes6_preview_control){ x / W, y / H, r / H, c };
+        const float r = is_btn(c) ? pro_r(c) : c == C_DPAD ? pdpad_arm() * 0.8f : 0.03f * H;
+        p[n++] = (pes6_preview_control){ x / W, y / H, r / H, c == C_DASH ? PES6_PV_DASH : c };
     }
     if (!dpad_mode()) p[n++] = (pes6_preview_control){ mirror_x(0.20f), 0.62f, 0.20f, PES6_PV_STICK };
     pes6_launcher_set_preview(l, p, n);
@@ -2221,6 +2349,7 @@ static void *wifi_thread(void *arg) {
     time_t left = 0;                     /* when the game left its last ad hoc group */
     char state[160] = "", owner[64] = "";
     time_t pads_at = 0;
+    int route = 0, holding = 0;          /* how this match reached the other phone (pes6_net_route) */
     for (;;) {
         pthread_mutex_lock(&g_wifi_mu);
         {                                /* wake once a second: Wi-Fi Direct, the gamepad */
@@ -2279,6 +2408,21 @@ static void *wifi_thread(void *arg) {
             snprintf(owner, sizeof owner, "%s", o);
             /* When we joined, the owner is the other phone: HELLO it directly too. */
             if (o[0] && strncmp(s, "host", 4)) pes6_net_hint_peer(o);
+        }
+        /* A match that started over the router: the group comes and goes every ~40 s while nobody
+         * joins it, and each change costs frames and evens out the arrivals worse (3/11). Leave it
+         * alone until the match ends. A match that started over Wi-Fi Direct keeps its group. */
+        const int match = in_match();
+        if (!match) route = 0;
+        else if (!route && (route = pes6_net_route()) == 1)
+            fprintf(stderr, "[net] the match goes through the router: Wi-Fi Direct waits until it ends\n");
+        const int hold = match && route == 1;
+        if (hold != holding) {
+            holding = hold;
+            jclass c = (*env)->GetObjectClass(env, wd);
+            (*env)->CallVoidMethod(env, wd, (*env)->GetMethodID(env, c, "hold", "(Z)V"), hold ? JNI_TRUE : JNI_FALSE);
+            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+            (*env)->DeleteLocalRef(env, c);
         }
     }
     return NULL;
@@ -2387,6 +2531,7 @@ void android_main(struct android_app *app) {
         pes6_ge_gl_configure(scale, cs->quality == QUALITY_HIGH, cs->quality != QUALITY_LOW);
         setup_commentary(dir, mods);
         pes6_camera_set_distance(pes6_settings_camera_distance(cs));
+        pes6_match_rate_60(cs->rate == MATCH_60);          /* Partido: 60 fps (docs/18 §5b) */
         /* the match in the screen's shape (docs/31), unless the player keeps the PSP's 16:9
          * (Pantalla); env.txt PES6_WIDE=0 keeps it 480:272 too */
         const char *wide = getenv("PES6_WIDE");

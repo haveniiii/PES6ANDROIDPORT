@@ -47,6 +47,18 @@ static inline float pes6_step_30(void) {
     return fps ? 30.0f / (float)fps : 1.0f;
 }
 
+/* ---- the WIRELESS match's state replication (pes6_addrs.h, docs/15 §15) --------------- */
+static inline int32_t pes6_net_ease_frames(void) { return (int32_t)psp_read32(PES6_NET_EASE_FRAMES); }
+static inline void pes6_net_set_ease_frames(int32_t n) { psp_write32(PES6_NET_EASE_FRAMES, (uint32_t)n); }
+static inline int32_t pes6_net_err_count(void) { return (int32_t)psp_read32(PES6_NET_ERR_COUNT); }
+static inline int32_t pes6_net_err_mean_sq(void) { return (int32_t)psp_read32(PES6_NET_ERR_MEAN_SQ); }
+/* 1: state messages overwrite this side's positions outright (FUN_088206b8 returns 0). It changes
+ * with the phase of play (Mac, 3/11), not a fixed role of the console. */
+static inline int pes6_net_follows(void) {
+    const uint32_t a = psp_read32(PES6_NET_ROLE_A), b = psp_read32(PES6_NET_ROLE_B);
+    return a == 1 ? b - 1u < 2u : a == 0 && b < 2u;
+}
+
 /* game.ovl is resident: a match is being played (scene 8, or 15 in a WIRELESS match). */
 static inline int pes6_game_ovl_loaded(void) {
     return psp_read32(PES6_OVL_GAME_AT) == PES6_MWO3_MAGIC && psp_read32(PES6_OVL_GAME_AT + 4) == PES6_OVL_GAME_ID;
@@ -56,6 +68,7 @@ static inline int pes6_game_ovl_loaded(void) {
 static inline uint8_t pes6_phase(int level) { return psp_read8(PES6_MATCH_PHASE + (uint32_t)level); }
 static inline uint8_t pes6_stop_cause(void) { return psp_read8(PES6_STOP_CAUSE); }     /* 2 goal, 3 out, 4 foul, 5 offside */
 static inline uint8_t pes6_restart_type(void) { return psp_read8(PES6_RESTART_TYPE); } /* 0 kick-off, 1 throw-in, 2 goal kick, 3 corner, 4 free kick */
+static inline uint8_t pes6_paused(void) { return psp_read8(PES6_PAUSED); }        /* the pause menu is open */
 static inline uint8_t pes6_goal_flag(void) { return psp_read8(PES6_GOAL_FLAG); }
 static inline uint8_t pes6_goal_team(void) { return psp_read8(PES6_GOAL_TEAM); }
 static inline uint8_t pes6_own_goal(void) { return psp_read8(PES6_OWN_GOAL); }

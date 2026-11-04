@@ -13,6 +13,7 @@
 #include <psprecomp/mem.h>
 #include "pes6_addrs.h"
 #include "pes6_game.h"
+#include "net.h"
 
 enum {
     B_SELECT = 0x0001, B_UP = 0x0010, B_RIGHT = 0x0020, B_DOWN = 0x0040, B_LEFT = 0x0080, B_L = 0x0100, B_R = 0x0200,
@@ -117,6 +118,17 @@ static const pes6_flow_control TABLE[FLOW_CONTEXTS][FLOW_SLOTS] = {
         ONE("Pressure\n2", A_SQ),
         ONE("Pressure\n1", A_X),
         ONE("Sliding\ntackle", A_CIR),
+        { "Rush\nforward", { A_TRI, A_GK_CURSOR, 0, 0, 0 } },
+        ONE("Cursor\nchange", A_L),
+        ONE("Super\ncancel", A_CANCEL),
+    },
+    /* A ball in the air to defend: whoever reaches it plays it with the attack's buttons -- □ clears
+     * it (docs/36 DF-04), × and ○ head it to a team-mate -- and a slide is no use (the user's
+     * report, 3/11: at the rival's corner Flow still showed the tackles). */
+    [FLOW_AERIAL] = {
+        ONE("Clear", A_SQ),
+        ONE("Header\npass", A_X),
+        ONE("Header\nlong", A_CIR),
         { "Rush\nforward", { A_TRI, A_GK_CURSOR, 0, 0, 0 } },
         ONE("Cursor\nchange", A_L),
         ONE("Super\ncancel", A_CANCEL),
@@ -230,12 +242,20 @@ uint32_t pes6_flow_step(uint32_t buttons, uint32_t *analog) {
 
 /* ---- the situation ------------------------------------------------------------------- */
 
+/* The player this device's person controls. In a WIRELESS match the other console's player has a
+ * pad too, and the first one found was often that one: on the console that accepted the challenge
+ * Flow showed the rival's situation (the user's report, 3/11). */
 static pes6_chara *controlled(void) {
+    const int mine = pes6_scene() == PES6_SCENE_WIRELESS ? pes6_net_local_pad() : -1;
+    pes6_chara *any = NULL;
     for (int i = 1; i < PES6_CHARAS; i++) {
         pes6_chara *c = pes6_chara_at(i);
-        if (c && psp_read8(PES6_PLAYERS + (uint32_t)i * PES6_PLAYER_SIZE + PES6_PLAYER_PAD) < 8) return c;
+        const uint8_t pad = c ? psp_read8(PES6_PLAYERS + (uint32_t)i * PES6_PLAYER_SIZE + PES6_PLAYER_PAD) : 0xFF;
+        if (pad >= 8) continue;
+        if (mine < 0 || pad == mine) return c;
+        if (!any) any = c;
     }
-    return NULL;
+    return mine < 0 ? any : NULL;
 }
 
 /* A player at the ball: dribbling, trapping it, dashing with it, the knock-on (docs/21 §1c). */
@@ -248,6 +268,11 @@ static int g_at_feet;
 
 int pes6_flow_at_feet(void) { return g_at_feet; }
 
+int pes6_keeper_has_ball(void) {
+    const pes6_chara *c = pes6_phase(0) == 4 && !psp_read8(PES6_PAUSED) ? controlled() : NULL;
+    return c && keeper_holds(psp_read8(PES6_PLAYERS + (uint32_t)(c - pes6_chara_at(0)) * PES6_PLAYER_SIZE + PES6_PLAYER_STATE));
+}
+
 /* A corner given to team `team` and not taken yet: from the whistle (sub-phase 10) through the
  * game's cut and the wait at the flag (14) until the kick, when the sub-phase goes back to 1 in
  * play (measured 2/11, docs/37 §8). The defending side is the game's own flag. */
@@ -256,6 +281,17 @@ static int corner_pending(int team) {
     const uint8_t mine = psp_read8(PES6_TEAM_DEFENDS + (uint32_t)team);
     const uint8_t theirs = psp_read8(PES6_TEAM_DEFENDS + ((uint32_t)team ^ 1u));
     return theirs && !mine;
+}
+
+/* The ball high enough to be headed or volleyed, not dribbled or tackled: above ~1.5 m going up,
+ * and it stays "high" until it is below ~0.8 m, so a bounce does not flicker the controls.
+ * 1 m is about 257 units; y grows downwards. */
+static int ball_high(void) {
+    static int high;
+    const uint32_t ball = psp_read32(PES6_BALL_PTR);
+    const float h = ball ? -psp_read_f32(ball + PES6_BALL_POS + 4) : 0;
+    high = high ? h > 200.0f : h > 380.0f;
+    return high;
 }
 
 /* PES6_FLOW_SIDE=<0|1> (tests): the team taken as the player's while nobody is controlled, so a
@@ -283,6 +319,7 @@ static pes6_flow_context read_situation(int dashing, int face) {
         const uint8_t st = c ? psp_read8(PES6_PLAYERS + (uint32_t)(c - pes6_chara_at(0)) * PES6_PLAYER_SIZE + PES6_PLAYER_STATE) : 0;
         return face && (st == 0x30 || st == 0x2D) ? FLOW_GAUGE : FLOW_CORNER;
     }
+    if (side >= 0 && corner_pending(side ^ 1)) return FLOW_AERIAL;   /* the rival's corner, whistle to kick */
     if (pes6_phase(0) != 4) return FLOW_WAIT;
     if (!c) {                                        /* a stoppage: nobody is his, yet his side is known */
         if (last_team < 0) return FLOW_CONTEXTS;
@@ -318,7 +355,7 @@ static pes6_flow_context read_situation(int dashing, int face) {
     g_at_feet = with_ball(state);
     if (g_at_feet) return dashing ? FLOW_DASH : FLOW_BALL;
     const uint8_t mine = psp_read8(PES6_TEAM_DEFENDS + team), theirs = psp_read8(PES6_TEAM_DEFENDS + (team ^ 1u));
-    if (mine && !theirs) return FLOW_DEFEND;
+    if (mine && !theirs) return ball_high() ? FLOW_AERIAL : FLOW_DEFEND;
     if (theirs && !mine) return FLOW_RECEIVE;
     return FLOW_CONTEXTS;                            /* a loose ball: as it was */
 }
@@ -357,7 +394,8 @@ static int attacking(pes6_flow_context c) { return c == FLOW_BALL || c == FLOW_D
 static int settle(pes6_flow_context from, pes6_flow_context to) {
     if (to == FLOW_OFF) return 1;
     if (attacking(from) && attacking(to)) return (from == FLOW_RECEIVE || to == FLOW_RECEIVE) ? 12 : 4;
-    if ((attacking(from) && to == FLOW_DEFEND) || (from == FLOW_DEFEND && attacking(to))) return 9;
+    const int def_from = from == FLOW_DEFEND || from == FLOW_AERIAL, def_to = to == FLOW_DEFEND || to == FLOW_AERIAL;
+    if ((attacking(from) && def_to) || (def_from && attacking(to))) return 9;
     return 3;
 }
 
@@ -375,7 +413,7 @@ pes6_flow_context pes6_flow_context_now(int dashing, int select, int face) {
 void pes6_flow_colour(pes6_flow_context c, float rgb[3]) {
     static const float COL[FLOW_CONTEXTS][3] = {
         [FLOW_OFF] = { 1, 1, 1 },             [FLOW_WAIT] = { 0.95f, 0.72f, 0.29f }, [FLOW_BALL] = { 0.95f, 0.72f, 0.29f }, [FLOW_DASH] = { 0.95f, 0.72f, 0.29f },
-        [FLOW_RECEIVE] = { 0.95f, 0.72f, 0.29f }, [FLOW_DEFEND] = { 1.00f, 0.48f, 0.42f }, [FLOW_KEEPER] = { 0.73f, 0.65f, 1.00f },
+        [FLOW_RECEIVE] = { 0.95f, 0.72f, 0.29f }, [FLOW_DEFEND] = { 1.00f, 0.48f, 0.42f }, [FLOW_AERIAL] = { 1.00f, 0.48f, 0.42f }, [FLOW_KEEPER] = { 0.73f, 0.65f, 1.00f },
         [FLOW_CORNER] = { 1.00f, 0.89f, 0.48f }, [FLOW_FREE_KICK] = { 1.00f, 0.89f, 0.48f }, [FLOW_GAUGE] = { 1.00f, 0.89f, 0.48f },
         [FLOW_WALL] = { 1.00f, 0.89f, 0.48f }, [FLOW_THROW] = { 1.00f, 0.89f, 0.48f }, [FLOW_PENALTY] = { 1.00f, 0.89f, 0.48f },
         [FLOW_TACTICS] = { 0.70f, 0.95f, 0.70f },

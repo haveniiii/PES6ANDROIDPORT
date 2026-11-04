@@ -219,3 +219,13 @@ vuelta, Atrás y Pro atajos. Regresión PASS.
 
 Flow (`docs/37`) es el sexto esquema, con su propio dibujo (`flow_control`), y la lista ya no tiene
 sitio para más.
+
+### 9b. Interruptor «Correr al borde» (2026-11-02)
+
+Bajo la lista de esquemas, encima de Editar (`run_switch` en `launcher.c`; con la cruceta se llega con ↑↓
+y se cambia con ×). Guarda `edge_run` en `settings.txt` (campo `rim_run`); la antigua clave `rim_run`,
+que se derivaba del esquema, se ignora. Encendido (por defecto): el borde del stick corre, como antes.
+Apagado: el stick nunca pulsa R. En Clásico y Pro se corre con el botón R. En Flow, que no tiene R, sale
+un botón **Dash** abajo a la derecha (`C_DASH` en `runtime/android/main.c`, `layout.txt` «dash»),
+que se mueve en Editar. Con el arquero con el balón en las manos tampoco pulsa R. En el esquema Cruceta
+el interruptor sale gris. Comprobado dibujando la página en escritorio; falta en el teléfono.

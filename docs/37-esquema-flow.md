@@ -208,3 +208,26 @@ Regresión PASS.
 
 **Falta:** verlo en el teléfono. Otros balones parados no se tocaron: en el tiro libre a favor el
 lanzador ya está en `0x30` en la subfase 14 y Flow pasa a Falta antes de patear.
+
+## 11. Botón Dash (2026-11-02)
+
+Con «Correr al borde» apagado (docs/19 §9b), el borde del stick no corre y aparece un séptimo control,
+**Dash**: mantiene R mientras se pulsa, sin gestos. Cuenta como sprint para el contexto (`FLOW_DASH`, Kick far)
+y apaga el Low-speed dribbling del centro del stick. Se dibuja con el mismo cristal que los demás.
+En el hilo GE se lee como `LIT_DASH` de `g_pro_lit`, nunca de los dedos (docs/32 §11b).
+
+## 12. Flow en red y balón aéreo en defensa (2026-11-03)
+
+**En red, el jugador de cada teléfono.** En WIRELESS los jugadores de las dos consolas llevan mando
+(`PES6_PLAYER_PAD` < 8). `controlled()` tomaba el primero, que era el del otro teléfono: en el que
+aceptó el desafío (el Redmi en las pruebas) Flow mostraba la situación del rival (Cursor change al
+atacar, Portero cuando lo tenía el otro). Medido en el Mac con dos instancias (`PES6_PEEK` sobre la
+tabla de mandos `0x090B4050`): **quien acepta es el mando 1 y quien pide el partido el mando 0**.
+`net.c` lo guarda en `SelectTarget` (`pes6_net_local_pad`) y `controlled()` solo acepta ese mando en
+la escena 15. Fuera de la red no cambia nada.
+
+**`FLOW_AERIAL`** (rojo, como Defensa): □ Clear (DF-04), × Header pass, ○ Header long, △ Rush
+forward, L Cursor change, R Super cancel. Sale en el córner del rival, del pitido al tiro
+(`corner_pending` del otro equipo), y al defender con el balón a más de ~1,5 m (sale bajo ~0,8 m;
+`ball_high`). Pedido del usuario (3/11): en el córner en contra seguían Pressure y Sliding.
+× y ○ como cabezazo a un compañero es inferido, sin medir. **Falta:** verlo en el teléfono.

@@ -50,7 +50,7 @@ public final class WifiDirect {
     private WifiP2pManager.Channel channel;
     private Phase phase = Phase.IDLE;
     private long phaseEnd;                       /* elapsedRealtime: when to switch (auto) or retry */
-    private boolean asked, stopped;
+    private boolean asked, stopped, held;
     private volatile String state = "starting";
     private volatile String owner;
 
@@ -105,8 +105,32 @@ public final class WifiDirect {
                                            : Manifest.permission.ACCESS_FINE_LOCATION;
     }
 
+    /* While held (a match that goes through the router): no group, no tries, until released.
+     * The native side holds only when the other phone is not reached over Wi-Fi Direct, so a
+     * group in use is never taken down here. */
+    public void hold(final boolean on) {
+        handler.post(() -> {
+            if (stopped || held == on) return;
+            held = on;
+            Log.i(TAG, "Wi-Fi Direct: " + (on ? "held for the match" : "released"));
+            phase = Phase.IDLE;
+            owner = null;
+            if (on) {
+                state = "waiting for the match to end";
+                if (manager != null) {
+                    manager.cancelConnect(channel, null);
+                    manager.removeGroup(channel, null);
+                }
+            }
+        });
+    }
+
     private void tick() {
         if (stopped) return;
+        if (held) {
+            handler.postDelayed(this::tick, TICK_MS);
+            return;
+        }
         final String perm = permission();
         if (activity.checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) {
             if (!asked) {

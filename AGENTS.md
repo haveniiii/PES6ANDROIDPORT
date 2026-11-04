@@ -227,9 +227,59 @@ banda, penal y portero.
 - **Catálogo:** solo ~17 % de los clips coincidía con el audio de PECH. Rehecho con `blocks_pech.txt` sobre
   `build/comm_pech/phrases.tsv`. Nuevos `shot_near`, `shot_chance`, `shot_wild`. El banco completo de PECH ya no
   está en el Mac. `half_time` y `full_time` siguen sin dispararse. **Falta oírlo el usuario.**
-- **Teléfono:** tiene `PES6_SIM60=1` en `env.txt` y la APK de antes de estos arreglos.
-  `build/android/PES6-1.2.2-sim60.apk` (firma release, no publicar) tiene todo; instalar con `adb install -r`.
-  Una APK con firma debug obligaría a desinstalar y borraría ISO y guardado. `tools/net_pair.sh` borra el perfil
+- **2/11 (commits `a704dec`, `4957afd`, `384ccf2`):** red con el parche verificada a 30 y a 60 Hz
+  (`NET_ARGS` en `net_pair.sh`). Crash con Pantalla «Completa» + 60 Hz: `pro_buttons` corría también en el hilo
+  GE y leía un dedo sin `flow`; ahora solo el hilo del juego, que publica `g_pro_lit` (`docs/32` §11b). Tareas
+  de vblank: 16 en vez de 4, con aviso. Flow muestra el set de córner desde el pitido hasta el tiro
+  (`docs/37` §10; `PES6_FLOW_LOG`, `PES6_FLOW_SIDE`).
+- **2/11 noche (sin commit):** fila **Partido 30/60 fps** en el menú previo (`settings.rate`, `pes6_match_rate_60`
+  en `rules.c`; `PES6_SIM60` sigue forzándolo). En red, a 60 Hz el protocolo es `P6N6`: una consola a 30 no ve a una
+  a 60. Comentarista: calla y congela sus tiempos en la pausa (`PES6_PAUSED`) y al salir del partido; sin «arranca
+  el segundo tiempo» en la prórroga; elogio de pase como mucho una vez por minuto y fuera de `through_pass`.
+  Táctil: con el arquero con el balón en las manos el stick no pulsa R (lo dejaba a sus pies). Interruptor
+  «Correr al borde» en la pantalla Controles (`edge_run`); apagado, R corre y Flow tiene botón Dash (`docs/19` §9b).
+  Red a 60 Hz entre dos teléfonos: llega la mitad de los datagramas y el partido va lento si el otro no
+  toca la pantalla; avisos ADPF (`docs/32` §12) y columnas `lost`/`recovered` en `PES6_NET_TIMING` (`docs/15` §14b).
+  **Prueba con fix5 (2/11, 23:55):** el otro teléfono es un `RBN-NX3` con Android 14, sin ADPF (`hint-`), así que se
+  activó el respaldo (`spin+`). Datagramas recibidos: de 22–24/s a 38–50/s, con 0 perdidos y el Redmi a 59,8 fps.
+  El otro iba a 44–58 fps mientras Wi-Fi Direct `auto` hacía y deshacía su grupo, y a 59–60 cuando el grupo quedó
+  unido. Siguiente: parar ese ciclo durante el partido.
+  El usuario siente en el otro teléfono saltos cortos y constantes del balón y los jugadores. **fix6** (`net.c`
+  tipo 3 TIMING): cada consola manda siempre sus filas de `PES6_NET_TIMING` al otro lado, ahora con 12 columnas
+  (dos jugadores, `TRACK_A`/`TRACK_B`); quien tenga `PES6_NET_TIMING` o `PES6_NET_LOG` las guarda en
+  `<io root>/peer_timing.txt`. `tools/net_timing.py` cuenta saltos por minuto en bandas. Referencia limpia
+  (dos instancias en el Mac, 30 Hz): un jugador da ~1 salto por minuto de 40 unidades o más. Instalada en el
+  Redmi y subida al enlace.
+  **Partido con fix6 (3/11, 8,5 min, el usuario en el `RBN-NX3`):** los saltos de jugadores de 40 unidades o más
+  son ~10–15 por minuto en los dos teléfonos aun con los dos a ≥58 fps. La referencia del Mac (30 Hz, localhost)
+  es ~1. Cuando un teléfono baja de 55 fps, suben de 2,5 a 10 veces en los dos. El balón difiere entre los
+  teléfonos en x: mediana 43, p99 725. Esta vez el lento fue el Redmi (mediana 59, 10 % 52; con `spin+`);
+  el otro iba a 59,5. Llegadas: 0 perdidas, p90 84 ms. Wi-Fi Direct hizo y deshizo su grupo 15 veces.
+  Alineado por la trayectoria del balón: `scratchpad/corr.py` de la sesión, a pasar a `tools/`.
+  **Cambios tras esa prueba (sin APK):**
+  - Wi-Fi Direct: un partido que empieza por el router deja quieto Wi-Fi Direct hasta que termina
+    (`pes6_net_route`, `WifiDirect.hold`). Uno que empieza por Wi-Fi Direct conserva su grupo.
+  - El respaldo de CPU (`spin`) solo se activa si Android rechazó los avisos de rendimiento.
+  - `PES6_NET_BUFFER=45` por defecto en Android (`=0` lo apaga).
+  **Banco en el Mac (`tools/net_bench.sh`, `docs/15` §15):** con `--gpu` dos instancias sostienen 60 fps,
+  con movimiento aleatorio y WiFi simulada. En el lado corregido, el juego tal cual da ~106 saltos chicos
+  y ~9,5 de 40+ por minuto; con suavizado ×2 a 60 Hz y colchón 45 ms, ~8–18 y ~1,5. Contra la CPU, ~1 por minuto.
+  El suavizado es `0x089C4BC8` (el juego lo cambia, 1–4). `net_ease_task` lo duplica a 60 Hz; `PES6_NET_EASE`
+  lo fija. `PES6_NET_TIMING` tiene 15 columnas (`follows err_n err_rms`) y se escribe también contra la CPU.
+  Falta: APK y probarlo entre teléfonos; el usuario conectará un segundo teléfono con depuración inalámbrica.
+  **No compilar APK hasta que el usuario lo pida.**
+  **Partidos con fix7 (3/11 noche, Redmi 23129RA5FL + moto g35 5G, el moto siempre local):** red limpia (0 perdidos).
+  En el moto los jugadores dan ~1 salto por minuto (como la referencia). El Redmi en red bajaba a 35 fps sin el
+  respaldo de CPU: los núcleos se quedan a ~1 GHz mientras el juego espera la red (contra la CPU va bien);
+  con `PES6_SPIN=1` en su `env.txt`, 59–60 fps y corrección del juego p90 9 (antes 67–110). Los avisos ADPF no
+  bastan en el Redmi. Quedan en su `env.txt`: `PES6_SPIN=1`, `PES6_NET_BUFFER=0`, `PES6_NET_EASE=3` (pruebas).
+  Input lag claro en el teléfono que no es local; sin colchón se siente igual. Falta probar con el Redmi de local.
+  Un partido se cortó a los ~3 min: dejaron de llegar los datos de juego del moto (sus HELLO sí); causa sin aclarar.
+  Flow en red usaba el jugador del otro teléfono y no tenía balón aéreo en defensa: arreglado (`docs/37` §12).
+- **Teléfono (adb por WiFi, `adb connect`; puerto por `adb mdns services`):** `PES6-1.2.2-sim60-fix3.apk`
+  instalada, `PES6_SIM60` quitado de `env.txt` (los 60 Hz se eligen en el menú). Falta: dos teléfonos a 60, y medir
+  los bajones de ~1 s jugando.
+  `android_build.sh` escribe `PES6-<versión>.apk`; renombrar al momento. Una APK con firma debug obligaría a desinstalar y borraría ISO y guardado. `tools/net_pair.sh` borra el perfil
   `ULES004764001000`: respaldarlo antes.
 
 **Infraestructura genérica que queda (iteraciones 33–35):**
