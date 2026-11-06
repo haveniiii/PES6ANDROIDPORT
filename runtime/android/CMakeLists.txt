@@ -36,6 +36,7 @@ add_library(pes6 SHARED
     main.c
     "${PES6_ROOT}/runtime/desktop/overlays.c"
     "${PES6_ROOT}/runtime/desktop/input.c"
+    "${PES6_ROOT}/runtime/desktop/bot.c"
     "${COMMON}/ge.c" "${COMMON}/mpeg.c" "${COMMON}/atrac.c" "${COMMON}/h264.c"
     "${COMMON}/version.c" "${COMMON}/afs_mods.c" "${COMMON}/launcher.c"
     "${COMMON}/at3.c" "${COMMON}/audio.c" "${COMMON}/commentary.c" "${COMMON}/widescreen.c" "${COMMON}/net.c" "${COMMON}/osk.c" "${COMMON}/settings.c"

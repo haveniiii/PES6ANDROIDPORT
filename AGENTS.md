@@ -227,7 +227,7 @@ banda, penal y portero.
 - **Catálogo:** solo ~17 % de los clips coincidía con el audio de PECH. Rehecho con `blocks_pech.txt` sobre
   `build/comm_pech/phrases.tsv`. Nuevos `shot_near`, `shot_chance`, `shot_wild`. El banco completo de PECH ya no
   está en el Mac. `half_time` y `full_time` siguen sin dispararse. **Falta oírlo el usuario.**
-- **2/11 (commits `a704dec`, `4957afd`, `384ccf2`):** red con el parche verificada a 30 y a 60 Hz
+- **2/11 (commits `92934bf`, `3bada2e`, `9a3a590`):** red con el parche verificada a 30 y a 60 Hz
   (`NET_ARGS` en `net_pair.sh`). Crash con Pantalla «Completa» + 60 Hz: `pro_buttons` corría también en el hilo
   GE y leía un dedo sin `flow`; ahora solo el hilo del juego, que publica `g_pro_lit` (`docs/32` §11b). Tareas
   de vblank: 16 en vez de 4, con aviso. Flow muestra el set de córner desde el pitido hasta el tiro
@@ -281,6 +281,125 @@ banda, penal y portero.
   los bajones de ~1 s jugando.
   `android_build.sh` escribe `PES6-<versión>.apk`; renombrar al momento. Una APK con firma debug obligaría a desinstalar y borraría ISO y guardado. `tools/net_pair.sh` borra el perfil
   `ULES004764001000`: respaldarlo antes.
+
+**4/11 — rendimiento a 60 Hz y dos fallos de la VFPU (`docs/32` §13, sin commit) — RETOMAR AQUÍ:**
+- Origen: el usuario reportó bajones severos con fix8 en el Redmi (60 fps, ×2, Normal). fix8 = fix7 en código; la
+  causa del teléfono sin confirmar (falta su `pes6.log`).
+- Perfil en el Mac (60 Hz, GE en su hilo, ancho): el hilo del GE iba al ~96 %.
+- **Arreglos del recompilador:** saltos VFPU `bv*` nunca tomados (`emit.c` `branch_cond`) y `vhtfm` sin escribir `w`
+  (`vfpu.c`, `emit_vmatrix`). Con eso el juego recorta por frustum lo que está fuera de cámara, cosa que antes nunca hacía.
+- **Recorte en pantalla ancha:** ganchos `frustum_cull_*` (`rules.c`, `pes6_hooks.h`); `PES6_GAME_CULL=0` lo apaga.
+- **GE:** textura del PRIM anterior reutilizada (`PES6_TEX_MEMO=0` la apaga), sin `project()` en GL, matrices
+  plegadas en GL (`PES6_GE_FOLD=0`).
+- **Medido en el Mac** (recorrido hasta 8@2400): hilo del juego 3,15 → 2,37 s, hilo del GE 6,29 → 3,9 s. Regresión PASS
+  con dos capturas del partido regrabadas (slerp). `net_bench` igual que HEAD.
+- C regenerado (`build/gen`, `build/gen_ovl`).
+- **APK `PES6-1.2.2-sim60-fix9.apk`** (iso, release; SHA-256 `73ef26f7…d897fb`). **Probada por el usuario en el Redmi
+  (4/11): a ×2, 60 fps y calidad Normal va fluida todo el partido**, con un solo bajón corto y aislado. Sin `pes6.log` de esa
+  partida (no había adb). Hipótesis: carga en el primer uso:
+  - caras (`faces.c` `face_of`): una lectura de archivo por jugador **la primera vez que se dibuja, a cualquier distancia**,
+    en el **hilo del juego** (gancho `model_render`); casi todas en la salida de los equipos, y luego con cada cambio;
+  - texturas de reemplazo (`tr_lookup`, `ge.c`, hilo del GE): lee y decodifica el `.pam` y lo sube a la GPU.
+  La temperatura no encaja: limitar por calor baja los fps de forma sostenida, no en un pico. Falta ×3.
+- **Prueba del bajón lista (`tools/phone_dip_test.sh`, sin probar aún con el teléfono; probada con un `adb` falso y logs
+  sintéticos y reales viejos).** Cuando el usuario llegue, con el Redmi por adb inalámbrico:
+  ```bash
+  tools/phone_dip_test.sh
+  ```
+  Hace, en orden:
+  1. Busca el teléfono. Sin dispositivo, intenta `adb connect` con lo que anuncie `adb mdns services`; si no lo encuentra,
+     explica qué hacer en el teléfono (Depuración inalámbrica, `adb pair`, `adb connect`) y sale con código 2.
+     Con dos teléfonos pide `ANDROID_SERIAL`.
+  2. Elige `com.pes6port.iso` (la fix9) o, si no está, `com.pes6port`.
+  3. **Antes de abrir la app** se trae el `pes6.log` de la sesión anterior y lo analiza (`antes_pes6.log`,
+     `antes_informe.txt`). Si la app estaba abierta, la cierra después de traer el log.
+  4. Guarda el `env.txt` del teléfono (`env.txt.orig`) y le añade `PES6_SLOW_LOG=1`, `PES6_COMMENTARY_LOG=1` (goles,
+     pitidos, saque: el contexto) y `PES6_FACE_LOG=1` (cada cara leída).
+  5. Le dice al usuario qué hacer: abrir la app y jugar un partido a 60 fps / ×2 / Normal.
+  6. Vigila cada 15 s los fps del log y la temperatura (`dumpsys thermalservice` → `thermal.tsv`). Termina con Enter,
+     Ctrl-C o al cerrarse la app.
+  7. Se trae el log, imprime y guarda `informe.txt` (`tools/dip_report.py`) y devuelve el `env.txt` original
+     (`KEEP_ENV=1` lo deja).
+  El informe da, por cada cuadro de más de 40 ms, en qué se fue el tiempo (juego / espera al GE / presentar / sistema). Marca
+  con ★ los que coinciden con un gol y su repetición (del gol a `restart after the goal`), con una parada (del pitido a la
+  siguiente jugada) o con la salida de los equipos (antes del saque), o los que llegan justo después de leer caras. También
+  da la temperatura de cada ventana y los fps del tercio más frío frente al más caliente.
+  Resultados en `build/phone_dip/<fecha>/` (`latest`). Por partes: `prep`, `watch`, `report`, `restore`;
+  `analyze <pes6.log> [thermal.tsv]` analiza un log que ya esté en el Mac.
+- **Prueba hecha (4/11 noche, `build/phone_dip/20261104-212132/`):** partido de ~6,5 min reales contra la CPU, 60 Hz,
+  **a ×3** (`settings.txt` `res=3`, 1440×816; también la sesión de las 14:52 era ×3, así que el «×2» de la fix9 no está
+  confirmado). Mediana 59,9 fps, 13 cuadros de más de 40 ms, 12 con contexto:
+  - salida de los equipos (6, hasta 211 ms): las 22 caras leídas de golpe en el hilo del juego, más texturas en el GE;
+  - descanso y final (5, de 41 a 78 ms, hilo del juego): justo al pararse el partido (`paused: quiet`), no jugando;
+  - un cambio (46 ms, una cara).
+  El único bajón jugando: una ventana a 50,8 fps (≈6:12), sin cuadros de más de 42 ms y con el GE al 41–42 %, en un centro
+  al área. Coincide con el pico del sensor más caliente (63–64 °C) y Android en estado térmico 0. Con un solo caso no se
+  separa el calor de la carga de la jugada. Temperatura frente a fps en todo el partido: sin relación (59,2 frente a 59,4).
+- **Prioridad del usuario (4/11):** ese bajón jugando, hacia el minuto 70 del reloj del partido: unos 5 s a pocos fps. A 60 Hz
+  nativos el juego avanza un paso por cuadro, así que el juego entero va más lento. Lo que dice el log de ese momento:
+  - dos ventanas seguidas: 57,5 fps (peor cuadro 32 ms) y 50,8 fps (peor 42 ms);
+  - el GE al 42 % (normal ~31 %) y el juego esperándolo 2,7–3,8 ms por cuadro (normal ~1,5);
+  - el único `[slow]`: 43 ms = juego 22,5 + sistema 20 (el hilo sin correr).
+  Muchos cuadros apenas atrasados, no un tirón. **Pista:** el `env.txt` del Redmi tenía `PES6_SPIN=1`, que quedó de las
+  pruebas en red: núcleos ocupados entre cuadros también contra la CPU («cores kept busy: on»), lo que el 3/11 solo lo
+  calentaba. HyperOS (`mi_thermald`) recorta la CPU sin mover el estado térmico de Android.
+- **Script ampliado para esa prueba:**
+  - `watch` muestrea en el teléfono, cada ~1,3 s, la frecuencia de cada clúster y su techo (`scaling_max_freq`, legible sin
+    root), además de las temperaturas de CPU, GPU y piel (`freq.txt`). La frecuencia de la GPU no se puede leer.
+  - El informe marca las ventanas con bajón en las que el techo bajó.
+  - `NO_SPIN=1` quita `PES6_SPIN` del `env.txt` de la prueba (`report` devuelve el original).
+  - Probado con el muestreo en el Redmi real y con un `adb` falso.
+  Siguiente prueba (partido entero, ×3 como juega el usuario):
+  ```bash
+  NO_SPIN=1 tools/phone_dip_test.sh
+  ```
+  Si con el techo bajado coincide el bajón, es calor. Si no hay bajón sin `PES6_SPIN`, el spin era la causa: quitarlo de
+  su `env.txt` para jugar contra la CPU.
+- **Segundo partido (4/11, 22:31, `build/phone_dip/20261104-2232-spin/`):** jugado sin el script, así que con
+  `PES6_SPIN=1` y sin muestreo de frecuencia ni comentarista. ×3, 60 Hz, ~6:50 reales. **Sin bajón jugando:** la peor
+  ventana en juego da 59,3 fps, y lo demás es el arranque, el descanso y el final. El GE llegó al 45 % con el peor cuadro
+  en 17 ms, así que el 42 % del bajón anterior no basta para explicarlo. Lo distinto de aquel momento eran los 20 ms de
+  «sistema» (el hilo sin correr). El spin no causa el bajón por sí solo: aparece a veces y es probable que venga del
+  sistema (calor de HyperOS u otra tarea). Sigue faltando el muestreo de frecuencia en un partido con bajón.
+  `dip_report.py`: sin `PES6_COMMENTARY_LOG` ya no marca todo como «antes del saque», y un tiempo negativo impreso sin
+  signo (`present blocked 18446744073709.5`, `main.c`) cuenta como 0.
+
+**6/11 — ¿online por internet? (`docs/15` §16, sin commit) — RETOMAR AQUÍ:** el usuario preguntó cuánto cuesta un
+modo online con servidor y salas. Estimación dada: servidor de 5–10 USD/mes; 3–4 semanas si el modo WIRELESS aguanta
+la latencia; si no, más 2–3 meses de *rollback* (`docs/27`).
+- **Bot para los bancos:** `runtime/desktop/bot.c` (`PES6_BOT`, solo escritorio): pasa, tira, presiona y cambia de
+  jugador según la jugada, como pidió el usuario. `BOT=1 tools/net_bench.sh …`.
+- **Medido con dos bots, colchón 45:** hasta 50 ms por tramo, el partido se ve igual que en la WiFi de casa (~37
+  saltos chicos y ~3–4 grandes por minuto). A 80 ms, ~105 y ~19; con colchón 90, ~60 y ~7,5.
+- **Siguiente (necesita al usuario y dos teléfonos en redes distintas):**
+  1. Tailscale en los dos.
+  2. `PES6_NET_PEERS=<IP Tailscale del otro>:27600` en el `env.txt` de cada uno.
+  3. Jugar y medir con `PES6_NET_TIMING`.
+
+  Falta juzgar jugando el retardo de los controles.
+- **Primer intento hecho (`docs/15` §16b):** Redmi por 4G y moto por WiFi, por Tailscale. El moto quedó con la fix9.
+  - Se conectaron y jugaron ~35 s con la red como en casa.
+  - Después, ~15 s sin datos en los dos sentidos: fue el camino, no la app, que siguió a 59 fps. El juego se desconectó.
+  - **Segundo y tercer partido (`docs/15` §16c):**
+    - Con el Redmi (4G) de anfitrión, la subida del 4G se atoraba (cola de 5–25 s) y el juego se trababa.
+    - Con el moto (WiFi) de anfitrión: 7 min limpios, 0 pérdidas, p99 67 ms y saltos como contra la CPU.
+    - El anfitrión sube ~230 kbit/s y el otro ~90.
+    - Online viable si el anfitrión es el de mejor subida; comprimir el estado ayudaría.
+  - **fix10 (`docs/15` §17, pedido del usuario: que un 4G pueda ser anfitrión):** en `net.c`:
+    - informes del receptor (tipo 4);
+    - repetición `auto`: 0 en limpio y 0 al ver una cola;
+    - colchón `auto`, entre 8 y 60 ms;
+    - las filas de medición solo con registro activado;
+    - subida de prueba `PES6_NET_RATE`.
+
+    Con bots, el anfitrión en 4G simulado pasa de 283 a 117 kbit/s y de 1 829 paquetes perdidos a 0. Regresión PASS.
+    fix10 probada (Redmi por 4G de anfitrión): sin atascos, 101 perdidos (antes ~1 900). Pero el colchón quedó en
+    40–54 ms por el escalonado de un cuadro.
+    **fix11** (`docs/15` §17b): hora de llegada del kernel (`SO_TIMESTAMP`); colchón de 8 ms en el banco limpio.
+    **fix12** (`docs/15` §17c), instalada en los dos: registra los kbit/s que sube cada lado. El anfitrión de la red
+    puede ser el local, no el que acepta, así que las pruebas del 4G de anfitrión no son seguras. Falta: un partido con
+    el Redmi local y otro con el Redmi visitante.
+  - Los `env.txt` siguen con `PES6_NET_PEERS`. Los originales están en `build/net_tailscale/`: devolverlos al terminar.
 
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,

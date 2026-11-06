@@ -63,6 +63,7 @@ add_executable(pes6
     main.c
     overlays.c
     input.c
+    bot.c
     ../common/ge.c
     ../common/mpeg.c
     ../common/atrac.c

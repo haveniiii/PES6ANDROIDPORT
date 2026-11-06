@@ -660,16 +660,18 @@ void psp_vhtfm(uint32_t vd, uint32_t vs, uint32_t vt, int order) {
     const int n = order - 1;
     matrix_read(vs, order, m);
     psp_vfpu_regs(vt, n, t);
-    psp_vfpu_regs(vd, n, d);
+    /* PES6PORT: the destination is `order` lanes, the last one included (PPSSPP Int_Vtfm: n++ and
+     * the write at the grown size). vhtfm4 writes w: the game's frustum test reads it (docs/32 §13). */
+    psp_vfpu_regs(vd, order, d);
 
     float in[4], out[4];
     for (int i = 0; i < n; i++) in[i] = psp_cpu.v[t[i]];
-    for (int r = 0; r < n; r++) {
+    for (int r = 0; r < order; r++) {
         float sum = m[r][n];
         for (int c = 0; c < n; c++) sum += m[r][c] * in[c];
         out[r] = sum;
     }
-    for (int r = 0; r < n; r++) psp_cpu.v[d[r]] = out[r];
+    for (int r = 0; r < order; r++) psp_cpu.v[d[r]] = out[r];
 }
 
 /* Matrix product, composed from the same transform used above so the two

@@ -33,13 +33,23 @@
  *   PES6_NET_PORT=27600          this instance's UDP port (default 27600)
  *   PES6_NET_PEERS=ip:port,...   also say HELLO to these (besides broadcast)
  *   PES6_NET_LOG=1               log the firmware calls and the traffic
- *   PES6_NET_REDUNDANCY=2        previous messages repeated in each datagram (0 = none)
+ *   PES6_NET_REDUNDANCY=auto     previous messages repeated in each datagram: auto (default) starts
+ *                                at 2 and follows the other side's reports (type 4, every 250 ms):
+ *                                0 on a clean link, up while messages are lost, 0 at once when a
+ *                                queue builds up (a 4G uplink that cannot keep up, docs/15 §16c);
+ *                                a number fixes it (0 = none)
  *   PES6_NET_DROP=10             testing: lose this percentage of outgoing PDP datagrams
+ *   PES6_NET_RATE=kbps[,queue_ms[,dip_kbps,every_s,dip_s]]   testing: an uplink of that many kbit/s
+ *                                (28 bytes of IP/UDP and 60 of a VPN counted per datagram); what does
+ *                                not fit waits in a queue of up to queue_ms (default 4000), then is
+ *                                lost; every every_s seconds it falls to dip_kbps for dip_s (a 4G cell)
  *   PES6_NET_LAG=base[,jitter[,spike%,spike]]   testing: hold outgoing PDP datagrams base ms
  *                                plus 0..jitter ms, and spike% of them spike ms more (a WiFi
  *                                in power save); order is kept, as on one radio link
  *   PES6_NET_TIMING=path         one line per vblank of the WIRELESS match: pacing and motion
  *                                (wall ms, virtual ms, scene frame, datagrams in, ball x z)
+ *   PES6_NET_BUFFER=auto|ms|0    hold arriving game messages so that they reach the game evenly:
+ *                                auto (phones' default) sizes it from the arrivals' spread, 8-60 ms
  *   PES6_NET_SLOW=ms[,every]     testing: during the WIRELESS match, spend ms of wall time in
  *                                every 'every'-th vblank (default 1), like a host that cannot
  *                                keep up (a busy phone)
@@ -72,6 +82,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -105,6 +117,13 @@ typedef struct {
     /* PES6_NET_BUFFER: arrival minus send time (ms, both clocks), its smallest
      * value in this 2 s window and in the previous one. */
     int64_t off_min, off_prev; uint64_t off_window; int off_any;
+    /* Reports to it (type 4): its sequence numbers covered and received since the last report,
+     * and how much later than the fastest delivery (10 s windows) its messages came. */
+    uint32_t rep_span, rep_fresh; int64_t rep_late_sum; int rep_late_n, rep_late_max;
+    int64_t q_min, q_prev; uint64_t q_window; int q_any;
+    uint64_t rep_sent;
+    /* Its reports to us: the repeats we send it now (adaptive), and when that last changed. */
+    int red; uint64_t red_changed, loss_seen, congested_until, reports;
 } peer;
 typedef struct { uint8_t mac[6]; uint16_t sport; uint16_t len; uint8_t data[MAX_PACKET]; } pdp_packet;
 typedef struct { int used; uint16_t port; pdp_packet *q; int head, count; } pdp_socket;
@@ -139,9 +158,15 @@ static struct {
     uint64_t lag_last;
     uint64_t game_rx;                 /* game datagrams delivered, for PES6_NET_TIMING */
     FILE *timing, *dump;
-    int buffer_ms;
-    uint64_t held_late;               /* buffered messages that arrived after their due time */
-} N = { .sock = -1, .redundancy = 2 };
+    int buffer_ms, buffer_auto;
+    uint64_t held_late;
+    int adaptive;                     /* PES6_NET_REDUNDANCY=auto */
+    uint64_t congestions, red_ups, red_downs;
+    uint64_t wire_bytes;              /* datagrams to peers, with IP/UDP and a VPN's headers */
+    /* PES6_NET_RATE: the simulated uplink. */
+    int rate_kbps, rate_queue_ms, rate_dip_kbps, rate_dip_every, rate_dip_len;
+    uint64_t rate_free, rate_start, rate_lost;               /* buffered messages that arrived after their due time */
+} N = { .sock = -1, .redundancy = 2, .adaptive = 1 };
 
 #define LAG_QUEUE 512
 typedef struct { uint64_t due; struct sockaddr_in to; size_t len; uint8_t b[BUNDLE_MAX + MAX_PACKET + 32]; } lag_dgram;
@@ -246,6 +271,9 @@ static int net_open(void) {
     int bufsize = 256 * 1024;
     setsockopt(N.sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof bufsize);
     setsockopt(N.sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof bufsize);
+    /* The kernel's arrival time of each datagram: the buffer then measures the network's spread,
+     * not when the game got round to reading (once a frame: 17, 34, 50 ms steps, fix10 on phones). */
+    setsockopt(N.sock, SOL_SOCKET, SO_TIMESTAMP, &on, sizeof on);
     fcntl(N.sock, F_SETFL, fcntl(N.sock, F_GETFL, 0) | O_NONBLOCK);
     struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)port),
                              .sin_addr.s_addr = htonl(INADDR_ANY) };
@@ -360,6 +388,43 @@ static peer *find_peer(const uint8_t *mac) {
 static int matching_packet(const uint8_t *mac, uint16_t port, const uint8_t *data, size_t len);
 static void matching_tick(uint64_t now);
 
+#define WIRE_EXTRA (28 + 60)        /* IP and UDP headers, and a VPN's (Tailscale's WireGuard) */
+
+/* PES6_NET_RATE: the uplink's speed now, kbit/s. */
+static int rate_now(uint64_t now) {
+    if (!N.rate_dip_every || !N.rate_dip_kbps) return N.rate_kbps;
+    const uint64_t t = (now - N.rate_start) / 1000000u % (uint64_t)N.rate_dip_every;
+    return t >= (uint64_t)(N.rate_dip_every - N.rate_dip_len) ? N.rate_dip_kbps : N.rate_kbps;
+}
+
+/* A datagram to a peer: now, or through the tests' loss, lag and uplink. */
+static void out_dgram(const struct sockaddr_in *to, const uint8_t *b, size_t n) {
+    N.sent++;
+    N.wire_bytes += n + WIRE_EXTRA;
+    if (N.drop_pct && (int)(test_rand() % 100u) < N.drop_pct) { N.test_lost++; return; }
+    if (lag_q) {
+        const uint64_t now = wall_usec();
+        uint64_t due = now;
+        if (N.rate_kbps) {                   /* its turn on the uplink, after what is queued */
+            const uint64_t start = N.rate_free > now ? N.rate_free : now;
+            if (start - now > 1000ull * (uint64_t)N.rate_queue_ms || lag_count == LAG_QUEUE) { N.rate_lost++; return; }
+            N.rate_free = start + (uint64_t)(n + WIRE_EXTRA) * 8000u / (uint64_t)rate_now(now);
+            due = N.rate_free;
+        }
+        due += 1000ull * (uint64_t)N.lag_base;
+        if (N.lag_jitter) due += 1000ull * (test_rand() % (uint32_t)(N.lag_jitter + 1));
+        if (N.lag_spike_pct && (int)(test_rand() % 100u) < N.lag_spike_pct) due += 1000ull * (uint64_t)N.lag_spike;
+        if (due < N.lag_last) due = N.lag_last;
+        N.lag_last = due;
+        if (lag_count == LAG_QUEUE) { N.rate_lost++; return; }
+        lag_dgram *g = &lag_q[(lag_head + lag_count++) % LAG_QUEUE];
+        g->due = due; g->to = *to; g->len = n;
+        memcpy(g->b, b, n);
+        return;
+    }
+    sendto(N.sock, b, n, 0, (const struct sockaddr *)to, sizeof *to);
+}
+
 /* One PDP message to every peer that dmac names (all of them for the
  * broadcast MAC), each datagram with the previous messages to that peer. */
 static void pdp_out(const uint8_t *dmac, uint16_t sport, uint16_t dport, const uint8_t *data, uint32_t len) {
@@ -375,7 +440,8 @@ static void pdp_out(const uint8_t *dmac, uint16_t sport, uint16_t dport, const u
         /* The newest always; older ones (newest first) while the datagram stays small. */
         int k = 0;
         size_t size = 11 + 11 + REC_HDR + len;
-        while (k < N.redundancy && k + 1 < HISTORY && k + 1 <= (int)m->seq) {
+        const int repeats = N.adaptive ? p->red : N.redundancy;
+        while (k < repeats && k + 1 < HISTORY && k + 1 <= (int)m->seq) {
             const pdp_msg *o = &p->hist[(m->seq - (uint32_t)k - 1) % HISTORY];
             if (size + REC_HDR + o->len > BUNDLE_MAX) break;
             size += REC_HDR + o->len;
@@ -397,20 +463,7 @@ static void pdp_out(const uint8_t *dmac, uint16_t sport, uint16_t dport, const u
             memcpy(b + n + REC_HDR, o->data, o->len);
             n += REC_HDR + o->len;
         }
-        N.sent++;
-        if (N.drop_pct && (int)(test_rand() % 100u) < N.drop_pct) { N.test_lost++; continue; }
-        if (lag_q && lag_count < LAG_QUEUE) {
-            uint64_t due = wall_usec() + 1000ull * (uint64_t)N.lag_base;
-            if (N.lag_jitter) due += 1000ull * (test_rand() % (uint32_t)(N.lag_jitter + 1));
-            if (N.lag_spike_pct && (int)(test_rand() % 100u) < N.lag_spike_pct) due += 1000ull * (uint64_t)N.lag_spike;
-            if (due < N.lag_last) due = N.lag_last;
-            N.lag_last = due;
-            lag_dgram *g = &lag_q[(lag_head + lag_count++) % LAG_QUEUE];
-            g->due = due; g->to = p->addr; g->len = n;
-            memcpy(g->b, b, n);
-            continue;
-        }
-        sendto(N.sock, b, n, 0, (const struct sockaddr *)&p->addr, sizeof p->addr);
+        out_dgram(&p->addr, b, n);
     }
 }
 
@@ -419,6 +472,7 @@ static int rx_fresh(peer *p, uint32_t stream, uint32_t seq) {
     if (!p->rx_any || p->rx_stream != stream) {
         p->rx_any = 1; p->rx_stream = stream; p->rx_top = seq; p->rx_mask = 1;
         N.seq_span++; N.seq_fresh++;
+        p->rep_span++; p->rep_fresh++;
         return 1;
     }
     const int32_t d = (int32_t)(seq - p->rx_top);
@@ -426,6 +480,7 @@ static int rx_fresh(peer *p, uint32_t stream, uint32_t seq) {
         p->rx_mask = d >= 64 ? 1 : (p->rx_mask << d) | 1;
         p->rx_top = seq;
         N.seq_span += (uint64_t)d; N.seq_fresh++;
+        p->rep_span += (uint32_t)d; p->rep_fresh++;
         return 1;
     }
     if (d <= -64) return 0;                      /* too old to tell: treat as a copy */
@@ -433,6 +488,7 @@ static int rx_fresh(peer *p, uint32_t stream, uint32_t seq) {
     if (p->rx_mask & bit) return 0;
     p->rx_mask |= bit;
     N.seq_fresh++;                               /* late, filling a hole */
+    p->rep_fresh++;
     return 1;
 }
 
@@ -457,13 +513,58 @@ static void pdp_deliver(const uint8_t *smac, uint16_t sport, uint16_t dport, con
 
 /* A PDP message for us: to the matching library, or to the game's socket --
  * at once, or (PES6_NET_BUFFER) when its time comes. */
+/* PES6_NET_BUFFER=auto: how late each message came against the fastest of the last 2-4 s, the
+ * last LATE_N of them; every 500 ms the buffer becomes their 95th percentile plus a margin,
+ * at once when that is more and 1 ms at a time when less (a smaller buffer delivers sooner:
+ * the step must not show). */
+#define LATE_N 128
+#define BUF_MIN 8
+#define BUF_MAX 60
+static int late_ring[LATE_N], late_n, late_i;
+static uint64_t buf_tuned;
+static void buffer_tune(uint64_t now) {
+    if (!N.buffer_auto || now - buf_tuned < 500000u || late_n < 32) return;
+    buf_tuned = now;
+    int v[LATE_N];
+    memcpy(v, late_ring, sizeof v);
+    for (int i = 1; i < late_n; i++)                 /* insertion sort: 128 at most */
+        for (int j = i; j > 0 && v[j - 1] > v[j]; j--) { const int t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
+    static uint64_t said_at;
+    if (now - said_at >= 10000000u) {
+        said_at = now;
+        nlog("late against the fastest: p50 %d p90 %d p95 %d p99 %d ms, buffer %d", v[late_n / 2], v[late_n * 90 / 100],
+             v[late_n * 95 / 100], v[late_n * 99 / 100], N.buffer_ms);
+    }
+    int want = v[late_n * 95 / 100] + 4;
+    want = want < BUF_MIN ? BUF_MIN : want > BUF_MAX ? BUF_MAX : want;
+    const int was = N.buffer_ms;
+    N.buffer_ms = want > N.buffer_ms ? want : N.buffer_ms - (N.buffer_ms > want);
+    static int said;
+    if (N.buffer_ms != was && (N.buffer_ms > said + 5 || N.buffer_ms < said - 5)) {
+        said = N.buffer_ms;
+        nlog("buffer now %d ms", N.buffer_ms);
+    }
+}
+
 static void pdp_in(peer *p, uint32_t sent_ms, const uint8_t *smac, uint16_t sport, uint16_t dport,
                    const uint8_t *data, size_t len, uint64_t now) {
-    if (matching_packet(smac, dport, data, len)) return;
-    if (!hold_q) { pdp_deliver(smac, sport, dport, data, len, now); return; }
     /* Each side's clock is its own: arrival minus send time is the latency plus
      * a constant offset, and its minimum is the fastest delivery seen. */
     const int64_t off = (int64_t)(now / 1000u) - (int64_t)sent_ms;
+    /* For the reports: late against the fastest of the last 10-20 s, the queue on the way. */
+    if (!p->q_any || now - p->q_window >= 10000000u) {
+        p->q_prev = p->q_any ? p->q_min : off;
+        p->q_min = off;
+        p->q_window = now;
+        p->q_any = 1;
+    }
+    if (off < p->q_min) p->q_min = off;
+    const int64_t late = off - (p->q_min < p->q_prev ? p->q_min : p->q_prev);
+    p->rep_late_sum += late;
+    p->rep_late_n++;
+    if (late > p->rep_late_max) p->rep_late_max = (int)(late > 60000 ? 60000 : late);
+    if (matching_packet(smac, dport, data, len)) return;
+    if (!hold_q) { pdp_deliver(smac, sport, dport, data, len, now); return; }
     if (!p->off_any || now - p->off_window >= 2000000u) {
         p->off_prev = p->off_any ? p->off_min : off;
         p->off_min = off;
@@ -472,6 +573,10 @@ static void pdp_in(peer *p, uint32_t sent_ms, const uint8_t *smac, uint16_t spor
     }
     if (off < p->off_min) p->off_min = off;
     const int64_t base = p->off_min < p->off_prev ? p->off_min : p->off_prev;
+    late_ring[late_i] = (int)(off - base > 1000 ? 1000 : off - base);
+    late_i = (late_i + 1) % LATE_N;
+    if (late_n < LATE_N) late_n++;
+    buffer_tune(now);
     uint64_t due = (uint64_t)((int64_t)sent_ms + base + N.buffer_ms) * 1000u;
     if (due < now) { due = now; N.held_late++; }
     if (hold_count == HOLD_QUEUE) { pdp_deliver(smac, sport, dport, data, len, now); return; }
@@ -527,6 +632,60 @@ int pes6_net_route(void) {
     return wall_usec() - atomic_load(&g_route_at) < 2000000u ? atomic_load(&g_route) : 0;
 }
 
+/* Type 4 REPORT, every 250 ms to each peer that sends us game messages: of its sequence numbers
+ * since the last report, how many were covered and how many arrived, and how late they came
+ * against its fastest delivery (mean and most, ms). The peer sets its repeats from it. */
+#define REPORT_USEC 250000u
+#define CONGESTED_MS 60                /* this much later than the fastest, on average: a queue */
+static void send_reports(uint64_t now) {
+    for (int i = 0; i < MAX_PEERS; i++) {
+        peer *p = &N.peers[i];
+        if (!p->seen || !p->rep_late_n || now - p->rep_sent < REPORT_USEC) continue;
+        p->rep_sent = now;
+        uint8_t b[32];
+        size_t n = header(b, 4);
+        memcpy(b + n, p->mac, 6);
+        n += 6;
+        const int64_t mean = p->rep_late_sum / p->rep_late_n;
+        const uint32_t v[4] = { p->rep_span, p->rep_fresh, (uint32_t)(mean < 0 ? 0 : mean > 60000 ? 60000 : mean),
+                                (uint32_t)p->rep_late_max };
+        for (int k = 0; k < 4; k++) {
+            const uint32_t w = v[k] > 0xFFFF ? 0xFFFF : v[k];
+            b[n] = (uint8_t)w; b[n + 1] = (uint8_t)(w >> 8);
+            n += 2;
+        }
+        p->rep_span = p->rep_fresh = 0;
+        p->rep_late_sum = 0; p->rep_late_n = p->rep_late_max = 0;
+        out_dgram(&p->addr, b, n);
+    }
+}
+
+/* Its report on what we send it: fewer repeats on a clean link, more while messages are lost,
+ * none while a queue builds up (repeats would only make it longer). */
+static void recv_report(peer *p, const uint8_t *b, size_t n, uint64_t now) {
+    if (n < 25 || memcmp(b + 11, N.mac, 6)) return;
+    const uint16_t span = (uint16_t)(b[17] | b[18] << 8), fresh = (uint16_t)(b[19] | b[20] << 8);
+    const uint16_t mean = (uint16_t)(b[21] | b[22] << 8), most = (uint16_t)(b[23] | b[24] << 8);
+    p->reports++;
+    if (!N.adaptive) return;
+    const int lost = span > fresh ? span - fresh : 0, was = p->red;
+    if (mean > CONGESTED_MS) {
+        if (now >= p->congested_until) { N.congestions++; nlog("queue on the way: %u ms late on average (most %u): no repeats", mean, most); }
+        p->congested_until = now + 4000000u;
+        p->red = 0;
+    } else if (lost && now >= p->congested_until) {
+        p->loss_seen = now;
+        if (p->red < N.redundancy && now - p->red_changed >= 500000u) p->red++;
+    } else if (p->red > 0 && now - p->loss_seen >= 8000000u && now - p->red_changed >= 8000000u) {
+        p->red--;
+    }
+    if (p->red != was) {
+        p->red_changed = now;
+        if (p->red > was) N.red_ups++; else N.red_downs++;
+        nlog("repeats %d -> %d (%d of %u lost, %u ms late on average)", was, p->red, lost, span, mean);
+    }
+}
+
 static void recv_timing(const uint8_t *b, size_t n);
 static void net_pump(void) {
     if (N.sock < 0) return;
@@ -540,12 +699,27 @@ static void net_pump(void) {
         lag_count--;
     }
 
+    struct timespec rt;
+    clock_gettime(CLOCK_REALTIME, &rt);
+    const int64_t real_now = (int64_t)rt.tv_sec * 1000000 + rt.tv_nsec / 1000;
     for (;;) {
         uint8_t b[MAX_PACKET + 64];
         struct sockaddr_in from;
-        socklen_t fl = sizeof from;
-        const ssize_t n = recvfrom(N.sock, b, sizeof b, 0, (struct sockaddr *)&from, &fl);
+        union { struct cmsghdr h; uint8_t space[CMSG_SPACE(sizeof(struct timeval))]; } ctl;
+        struct iovec iov = { b, sizeof b };
+        struct msghdr mh = { .msg_name = &from, .msg_namelen = sizeof from, .msg_iov = &iov, .msg_iovlen = 1,
+                             .msg_control = &ctl, .msg_controllen = sizeof ctl };
+        const ssize_t n = recvmsg(N.sock, &mh, 0);
         if (n < 11) break;
+        /* When it arrived, on our monotonic clock: now minus how long ago the kernel stamped it. */
+        uint64_t arr = now;
+        for (struct cmsghdr *c = CMSG_FIRSTHDR(&mh); c; c = CMSG_NXTHDR(&mh, c))
+            if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_TIMESTAMP) {
+                struct timeval tv;
+                memcpy(&tv, CMSG_DATA(c), sizeof tv);
+                const int64_t ago = real_now - ((int64_t)tv.tv_sec * 1000000 + tv.tv_usec);
+                if (ago > 0 && ago < 5000000 && (uint64_t)ago < now) arr = now - (uint64_t)ago;
+            }
         if (memcmp(b, net_magic(), 4) || !memcmp(b + 5, N.mac, 6)) continue;      /* not ours / our own echo */
         N.received++;
         peer *p = find_peer(b + 5);
@@ -554,6 +728,8 @@ static void net_pump(void) {
             if (!p) continue;
             memset(p, 0, sizeof *p);             /* sequence numbers start over, in a new stream */
             p->tx_stream = arc4random();
+            p->red = N.redundancy;               /* until its reports say otherwise (older builds send none) */
+            p->red_changed = p->loss_seen = now;
             memcpy(p->mac, b + 5, 6);
             nlog("new peer %02X:%02X:%02X:%02X:%02X:%02X at %s:%d", b[5], b[6], b[7], b[8], b[9], b[10],
                  inet_ntoa(from.sin_addr), ntohs(from.sin_port));
@@ -593,6 +769,8 @@ static void net_pump(void) {
             }
         } else if (b[4] == 3 && n >= 12) {
             recv_timing(b, (size_t)n);
+        } else if (b[4] == 4) {
+            recv_report(p, b, (size_t)n, now);
         } else if (b[4] == 2 && n >= 22) {
             if (memcmp(b + 11, N.mac, 6)) continue;
             const uint32_t stream = (uint32_t)b[17] | (uint32_t)b[18] << 8 | (uint32_t)b[19] << 16 | (uint32_t)b[20] << 24;
@@ -608,11 +786,12 @@ static void net_pump(void) {
                 at += REC_HDR + len;
                 if (!rx_fresh(p, stream, seq)) { N.duplicates++; continue; }
                 if (r + 1 < count) N.recovered++;   /* only came as a repeat: its datagram was lost */
-                pdp_in(p, sent_ms, b + 5, sport, dport, h + REC_HDR, len, now);
+                pdp_in(p, sent_ms, b + 5, sport, dport, h + REC_HDR, len, arr);
             }
         }
     }
     hold_release(wall_usec());
+    send_reports(now);
     for (int i = 0; i < MAX_PEERS; i++)          /* a peer silent for 5 s is gone */
         if (N.peers[i].seen && now - N.peers[i].seen > 5000000u) { nlog("peer lost"); N.peers[i].seen = 0; }
 
@@ -1009,9 +1188,10 @@ static void hle_MatchingSetHelloOpt(void) {
  * loaded in scene 15), to see how the match advances against the clock and
  * the arrival of the other side's datagrams.
  *
- * The same rows also go to the other side (type 3 TIMING, TROWS rows a datagram), always:
- * a phone without adb shows up in the log of the one with it, as <io root>/peer_timing.txt
- * (written only where PES6_NET_TIMING or PES6_NET_LOG is set). Older builds ignore type 3. */
+ * The same rows also go to the other side (type 3 TIMING, TROWS rows a datagram) when this side
+ * has PES6_NET_TIMING or PES6_NET_LOG: a phone without adb shows up in the log of the one with it,
+ * as <io root>/peer_timing.txt (written only where PES6_NET_TIMING or PES6_NET_LOG is set). They
+ * are ~23 kbit/s, so not in plain play (a 4G uplink, docs/15 §16c). Older builds ignore type 3. */
 #define TIMING_COLUMNS "wall_ms virt_ms scene_frame rx ball_x ball_z lost recovered p1_x p1_z p2_x p2_z " \
                        "follows err_n err_rms"
 #define TRACK_A 6                     /* two outfield players, one per side: their jumps are the other side's corrections */
@@ -1032,6 +1212,7 @@ static trow trows[TROWS];
 static int ntrows;
 static FILE *peer_timing;
 static uint64_t t_start;
+static uint64_t match_t0, match_t1, match_b0, match_b1;   /* the WIRELESS match: wall time and bytes sent */
 
 static void trow_print(FILE *f, const trow *r) {
     fprintf(f, "%.1f %.1f %u %u %.2f %.2f %u %u %.2f %.2f %.2f %.2f %u %u %u\n", r->wall_dms / 10.0, r->virt_dms / 10.0,
@@ -1046,7 +1227,7 @@ static void send_timing(void) {
     memcpy(b + n, trows, (size_t)ntrows * sizeof *trows);
     n += (size_t)ntrows * sizeof *trows;
     for (int i = 0; i < MAX_PEERS; i++)
-        if (N.peers[i].seen) sendto(N.sock, b, n, 0, (struct sockaddr *)&N.peers[i].addr, sizeof N.peers[i].addr);
+        if (N.peers[i].seen) out_dgram(&N.peers[i].addr, b, n);
 }
 
 static void recv_timing(const uint8_t *b, size_t n) {
@@ -1098,7 +1279,25 @@ static void timing_task(void) {
         r.err_rms = (uint16_t)(rms > 65534 ? 65534 : rms);
     }
     if (N.timing) trow_print(N.timing, &r);
-    if (!wireless || N.sock < 0 || !N.connected) return;
+    if (wireless) {
+        if (!match_t0) { match_t0 = wall_usec(); match_b0 = N.wire_bytes; }
+        match_t1 = wall_usec(); match_b1 = N.wire_bytes;
+        /* Every 10 s: what this side uploads (the side that sends the match state uploads ~3 times more,
+         * and which one it is is not the one that accepted the challenge, docs/15 §17c). */
+        static uint64_t at, bytes;
+        if (!at) { at = match_t1; bytes = N.wire_bytes; }
+        if (match_t1 - at >= 10000000u) {
+            int red = -1;
+            for (int i = 0; i < MAX_PEERS && red < 0; i++) if (N.peers[i].seen) red = N.peers[i].red;
+            nlog("sending %.0f kbit/s (repeats %d, buffer %d ms)", (double)(N.wire_bytes - bytes) * 8.0 / 1000.0 /
+                 ((double)(match_t1 - at) / 1e6), N.adaptive ? red : N.redundancy, N.buffer_ms);
+            at = match_t1; bytes = N.wire_bytes;
+        }
+    }
+    /* ~23 kbit/s: only for tests (PES6_NET_TIMING or PES6_NET_LOG here), not on a 4G uplink in play. */
+    static int send_rows = -1;      /* PES6_NET_PEER_TIMING=0: not even then (the benches: as in play) */
+    if (send_rows < 0) { const char *e = getenv("PES6_NET_PEER_TIMING"); send_rows = !(e && *e == '0'); }
+    if (!wireless || N.sock < 0 || !N.connected || (!N.timing && !N.log) || !send_rows) return;
     trows[ntrows++] = r;
     if (ntrows == TROWS) { send_timing(); ntrows = 0; }
 }
@@ -1107,23 +1306,38 @@ void pes6_net_init(void) {
     const char *l = getenv("PES6_NET_LOG");
     N.log = l && *l && *l != '0';
     const char *r = getenv("PES6_NET_REDUNDANCY");
-    if (r && *r) N.redundancy = atoi(r) < 0 ? 0 : atoi(r) >= HISTORY ? HISTORY - 1 : atoi(r);
+    if (r && *r && strcmp(r, "auto")) {
+        N.adaptive = 0;
+        N.redundancy = atoi(r) < 0 ? 0 : atoi(r) >= HISTORY ? HISTORY - 1 : atoi(r);
+    }
     const char *d = getenv("PES6_NET_DROP");
     if (d && *d) { N.drop_pct = atoi(d); N.drop_rng = arc4random() | 1; }
     const char *buf = getenv("PES6_NET_BUFFER");
 #ifdef __ANDROID__
     /* Phones: on unless env.txt says PES6_NET_BUFFER=0. Over real WiFi the arrivals come every
      * 33 ms but 10 % after 84 ms or more, and each late one is a correction on screen (3/11). */
-    if (!buf || !*buf) buf = "45";
+    if (!buf || !*buf) buf = "auto";
 #endif
-    if (buf && *buf && atoi(buf) > 0) { N.buffer_ms = atoi(buf); hold_q = calloc(HOLD_QUEUE, sizeof *hold_q); }
-    if (N.buffer_ms) fprintf(stderr, "[net] arrivals evened out: %d ms buffer (PES6_NET_BUFFER)\n", N.buffer_ms);
-    const char *lag = getenv("PES6_NET_LAG");
-    if (lag && *lag) {
-        sscanf(lag, "%d,%d,%d,%d", &N.lag_base, &N.lag_jitter, &N.lag_spike_pct, &N.lag_spike);
+    if (buf && !strcmp(buf, "auto")) { N.buffer_auto = 1; N.buffer_ms = 30; hold_q = calloc(HOLD_QUEUE, sizeof *hold_q); }
+    else if (buf && *buf && atoi(buf) > 0) { N.buffer_ms = atoi(buf); hold_q = calloc(HOLD_QUEUE, sizeof *hold_q); }
+    if (N.buffer_ms)
+        fprintf(stderr, "[net] arrivals evened out: %s%d ms buffer (PES6_NET_BUFFER)\n", N.buffer_auto ? "auto, from " : "",
+                N.buffer_ms);
+    const char *lag = getenv("PES6_NET_LAG"), *rate = getenv("PES6_NET_RATE");
+    if ((lag && *lag) || (rate && *rate)) {
+        if (lag && *lag) sscanf(lag, "%d,%d,%d,%d", &N.lag_base, &N.lag_jitter, &N.lag_spike_pct, &N.lag_spike);
         lag_q = calloc(LAG_QUEUE, sizeof *lag_q);
         N.drop_rng = N.drop_rng ? N.drop_rng : (arc4random() | 1);
     }
+    if (rate && *rate) {
+        N.rate_queue_ms = 4000;
+        sscanf(rate, "%d,%d,%d,%d,%d", &N.rate_kbps, &N.rate_queue_ms, &N.rate_dip_kbps, &N.rate_dip_every, &N.rate_dip_len);
+        N.rate_start = wall_usec();
+        fprintf(stderr, "[net] test uplink: %d kbit/s, queue up to %d ms", N.rate_kbps, N.rate_queue_ms);
+        if (N.rate_dip_every) fprintf(stderr, ", %d kbit/s for %d s every %d s", N.rate_dip_kbps, N.rate_dip_len, N.rate_dip_every);
+        fprintf(stderr, "\n");
+    }
+    fprintf(stderr, "[net] repeats per datagram: %s\n", N.adaptive ? "auto (from the other side's reports)" : r);
     psp_add_vblank_task(net_pump);       /* events reach the game even if it never polls */
     const char *dump = getenv("PES6_NET_DUMP");
     if (dump && *dump && (N.dump = fopen(dump, "w"))) setvbuf(N.dump, NULL, _IOLBF, 0);
@@ -1186,6 +1400,12 @@ void pes6_net_report(FILE *out) {
             (unsigned long long)N.waits, (unsigned long long)N.wait_16ms, (unsigned long long)N.wait_50ms,
             (unsigned long long)N.wait_200ms, (unsigned long long)(N.wait_max / 1000),
             (unsigned long long)(N.gap_max / 1000), (unsigned long long)N.dropped);
+    const double secs = (double)(match_t1 - match_t0) / 1e6;
+    fprintf(out, "net: sent %.1f kbit/s during the match (with IP, UDP and VPN headers); repeats %s: %llu up, %llu down, "
+            "%llu queue(s) seen\n", secs > 0 ? (double)(match_b1 - match_b0) * 8.0 / 1000.0 / secs : 0.0,
+            N.adaptive ? "auto" : "fixed", (unsigned long long)N.red_ups, (unsigned long long)N.red_downs,
+            (unsigned long long)N.congestions);
+    if (N.rate_kbps) fprintf(out, "net: test uplink: %llu datagram(s) lost to its queue\n", (unsigned long long)N.rate_lost);
     fprintf(out, "net: redundancy %d: %llu message(s) recovered from a repeat, %llu copies discarded%s",
             N.redundancy, (unsigned long long)N.recovered, (unsigned long long)N.duplicates,
             N.drop_pct ? "" : "\n");

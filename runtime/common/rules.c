@@ -128,6 +128,61 @@ static void net_ease_task(void) {
     }
 }
 
+/* Frustum tests in the wide match frame (docs/32 §13). The game culls a model when its box is
+ * outside |x| <= w in clip space: the PSP's 480. The wide frame (widescreen.c) shows
+ * |x| <= w * width / 480, so a player entering the side strips vanished. Dividing the x row of
+ * the matrix by that factor (2 % margin) widens the test; the matrix is restored bit for bit. */
+static float cull_factor(void) {
+    const uint32_t w = psp_read32(PES6_CAMERA_SCREEN_W);
+    return w > 480 && w <= 1024 ? (float)w / 480.0f * 1.02f : 1.0f;
+}
+
+/* PES6_GAME_CULL=0: the tests always answer "visible", as before the VFPU branches were fixed
+ * (diagnosis). What is culled changes the game's logic, and in WIRELESS each console culls with
+ * its own camera; measured with tools/net_bench.sh it corrects no more than without culling
+ * (docs/32 §13), so it stays on there too. */
+static int cull_keep_all(void) {
+    static int mode = -1;
+    if (mode < 0) { const char *e = getenv("PES6_GAME_CULL"); mode = e && *e == '0' ? 1 : 0; }
+    return mode;
+}
+
+static void frustum_cull_box_wide(void);
+static void frustum_cull_box(void) { frustum_cull_box_wide(); if (cull_keep_all()) psp_cpu.r[2] = 0; }
+static void frustum_cull_box_wide(void) {            /* matrix at $a0, column-major */
+    const float k = cull_factor();
+    if (k == 1.0f) { psp_orig_frustum_cull_box(); return; }
+    const uint32_t a0 = psp_cpu.r[4];
+    uint32_t keep[4];
+    for (int c = 0; c < 4; c++) {
+        keep[c] = psp_read32(a0 + 16u * (uint32_t)c);
+        float v;
+        memcpy(&v, &keep[c], 4);
+        v /= k;
+        uint32_t b;
+        memcpy(&b, &v, 4);
+        psp_write32(a0 + 16u * (uint32_t)c, b);
+    }
+    psp_orig_frustum_cull_box();
+    for (int c = 0; c < 4; c++) psp_write32(a0 + 16u * (uint32_t)c, keep[c]);
+}
+
+/* M6 transposed (v56): the x row is v[24], v[56], v[88], v[120] (psp_vfpu_regs(56, 4)). */
+static void cull_v56(void (*orig)(void)) {
+    const float k = cull_factor();
+    if (k == 1.0f) orig();
+    else {
+        static const int X[4] = { 24, 56, 88, 120 };
+        float keep[4];
+        for (int i = 0; i < 4; i++) { keep[i] = psp_cpu.v[X[i]]; psp_cpu.v[X[i]] = keep[i] / k; }
+        orig();
+        for (int i = 0; i < 4; i++) psp_cpu.v[X[i]] = keep[i];
+    }
+    if (cull_keep_all()) psp_cpu.r[2] = 0;
+}
+static void frustum_cull_v56(void) { cull_v56(psp_orig_frustum_cull_v56); }
+static void frustum_cull_pt(void) { cull_v56(psp_orig_frustum_cull_pt); }
+
 void pes6_match_rate_60(int on) {
     if (!on || pes6_match_at_60) return;
     pes6_match_at_60 = 1;
@@ -137,6 +192,9 @@ void pes6_match_rate_60(int on) {
 
 void pes6_rules_init(const char *io_root) {
     psp_hook_of_default_build = keep_mod_data;
+    psp_hook_frustum_cull_box = frustum_cull_box;
+    psp_hook_frustum_cull_v56 = frustum_cull_v56;
+    psp_hook_frustum_cull_pt = frustum_cull_pt;
     const char *ease = getenv("PES6_NET_EASE");
     if (ease && *ease) g_ease_env = atoi(ease);
     psp_add_vblank_task(net_ease_task);

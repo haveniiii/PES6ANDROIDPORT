@@ -27,6 +27,14 @@ PES6_HOOK(model_render, "EBOOT.elf", 0x08816418u, "renderer: one model instance"
  * data; a mod version keeps its own instead (rules.c, docs/29 §5c) */
 PES6_HOOK(of_default_build, "defaultdataset.ovl", 0x08D4EEA0u, "factory option-file data over the loaded one")
 
+/* renderer: frustum tests of a model's bounding box (corners through a 4x4 matrix against w;
+ * $v0 = 1 when it is all outside). They test the PSP's frame: rules.c widens them in x to the
+ * wide match frame (docs/32 §13). 0x088135A4 takes the matrix at $a0; the other two find it in
+ * the VFPU, M6 transposed (v56). */
+PES6_HOOK(frustum_cull_box, "EBOOT.elf", 0x088135A4u, "renderer: bounding box outside the view?")
+PES6_HOOK(frustum_cull_v56, "EBOOT.elf", 0x08813774u, "renderer: frustum test, matrix in v56")
+PES6_HOOK(frustum_cull_pt, "EBOOT.elf", 0x08813934u, "renderer: frustum test of points, matrix in v56")
+
 /* camera: the view matrix from the camera's eye (0x089F64E0) and target (0x089F64F0) with
  * mat4_look_at, each frame (camera_frame); rules.c moves the eye back for a wider match camera */
 PES6_HOOK(camera_build_view, "EBOOT.elf", 0x08839348u, "camera: view matrix from eye and target")

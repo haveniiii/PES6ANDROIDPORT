@@ -87,6 +87,11 @@ static double game_thread_cpu(void) { return -1.0; }
 
 static void report(void) {
     fprintf(stderr, "game thread user CPU: %.2f s\n", game_thread_cpu());
+    {
+        uint64_t ge_cpu, ge_wait;
+        pes6_ge_thread_stats(&ge_cpu, &ge_wait);
+        if (ge_cpu) fprintf(stderr, "GE thread CPU: %.2f s (game waited for it %.2f s)\n", ge_cpu / 1e9, ge_wait / 1e9);
+    }
     if (g_sample_out) fflush(g_sample_out);
     fnprof_write();
     fprintf(stderr, "guest ra=0x%08X sp=0x%08X a0=0x%08X a1=0x%08X s0=0x%08X\n", psp_cpu.r[31], psp_cpu.r[29], psp_cpu.r[4], psp_cpu.r[5], psp_cpu.r[16]);

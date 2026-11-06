@@ -475,3 +475,192 @@ minuto. **Falta confirmarlo entre teléfonos.**
   (`pes6_net_route`, `WifiDirect.hold`). Si empieza por Wi-Fi Direct, conserva su grupo.
 - **El respaldo de CPU (`spin`)** solo se activa si Android rechazó los avisos de rendimiento.
 - Banco reproducible: `tools/net_bench.sh OUTDIR game:4:0 both:8:45` (~6 min por configuración).
+
+## 16. ¿Aguanta internet? Latencia simulada con dos bots (6/11)
+
+Pregunta del usuario: cuánto costaría un modo online con servidor y salas. Antes de construir nada, se
+midió en el Mac si el modo WIRELESS soporta los retrasos de internet.
+
+**Bot (`runtime/desktop/bot.c`, `PES6_BOT=<semilla>`, solo escritorio).** El paseo al azar del banco dejaba
+a casi todos los jugadores quietos. El bot lee el partido (`pes6_game.h`) y juega:
+
+- con el balón, corre al arco rival, pasa (×, △, ○) cada 0,5–1,5 s y tira (□) cerca del área;
+- si su equipo tiene el balón, corre por delante de él;
+- defendiendo, va al balón con × (presión), a veces □ (presión de un compañero) y ○ (barrida) de cerca, y
+  cambia de jugador (L) si el balón está lejos;
+- en saques y escenas, × de vez en cuando.
+
+El arco al que ataca sale del portero de su equipo (`slot` 0), que cambia de lado en el descanso. Los ejes del
+stick se calibraron con un partido contra la CPU: x del campo = lx, z del campo = ly. `PES6_BOT_LOG=1` registra
+una línea por segundo. En el banco: `BOT=1 tools/net_bench.sh …` (`NET_BOT=1` en `net_pair.sh`).
+
+**Resultados** (60 Hz, `--gpu`, colchón 45 ms, suavizado por defecto). Lado que recibe las correcciones; el
+otro queda en ~1–3 saltos por minuto en todas. `PES6_NET_LAG` retiene cada datagrama que sale, así que el
+tramo es «base + 0..jitter», y un 5 % de los datagramas sufre un pico extra:
+
+| Retraso por tramo (`PES6_NET_LAG`) | Saltos 15–40/min | 40–100/min | Error del juego por mensaje (rms p50 / p90) |
+|---|---|---|---|
+| Sin bot, WiFi de casa (`5,50,5,80`) | ~27 | ~2 | 10 / 21 |
+| Sin bot, 25 ms (`25,50,5,100`) | ~52 | ~4,5 | 10 / 25 |
+| **Bot**, WiFi de casa | ~37 | ~3 | 21 / 48 |
+| Bot, 25 ms | ~38 | ~4 | 20 / 47 |
+| Bot, 50 ms (`50,50,5,120`) | ~31–53 | ~4 | 13 / 43 |
+| Bot, 80 ms (`80,60,5,150`) | ~105 | ~19 | 24 / 57 |
+| Bot, 80 ms, colchón 90 | ~60 | ~7,5 | 21 / 49 |
+
+- **Hasta ~50 ms por tramo** (~100 ms de ida y vuelta con jitter) el partido se ve como en la WiFi de casa.
+  Entre dos casas en Chile, con fibra, lo normal es menos.
+- **A 80 ms por tramo** los saltos se triplican y los grandes se multiplican por 5. Un colchón de 90 ms los
+  reduce a la mitad, a cambio de más retardo para ver al otro.
+- **No medido:** el retardo de los controles del jugador que no es local. Ya se nota en la WiFi de casa
+  (3/11) y crece con la latencia; solo se puede juzgar jugando.
+
+**Siguiente:** dos teléfonos en redes distintas, unidos por Tailscale (VPN gratuita entre dispositivos), con
+`PES6_NET_PEERS=<IP Tailscale del otro>:27600` en el `env.txt` de cada uno. No cambia código. Si es jugable, el
+modo online con salas (servidor de salas y reenvío) son unas 3–4 semanas; si no, hace falta sincronizar
+entradas (`docs/27`).
+
+### 16b. Primer partido por internet (6/11): Redmi por 4G y moto por WiFi, unidos por Tailscale
+
+Montaje: los dos con la fix9 (el moto tenía la fix7 y se actualizó). En el `env.txt` de cada uno:
+`PES6_NET_PEERS=<IP Tailscale del otro>:27600` y `PES6_WIFI_DIRECT=off`. Al Redmi se le quitaron
+`PES6_NET_BUFFER=0` y `PES6_NET_EASE=3`. Los originales están en `build/net_tailscale/*_env.orig`, y los registros
+en `build/net_tailscale/{redmi,moto}/`.
+
+- **Se encontraron y el desafío entró sin tocar código.** El HELLO a la IP explícita basta, y la `/24` no hace falta.
+- **~35 s de partido con la red bien:** 38–47 datagramas por segundo en cada sentido; hueco entre llegadas p50 33 ms,
+  p90 64–67, p99 70–150. Es lo mismo que en la WiFi de casa. Los dos a ~59 fps.
+- **Corte:** los dos sentidos dejaron de llegar a la vez durante ~14–16 s. Lo que quedó retenido llegó luego de golpe
+  (126 en un segundo en el moto). La app del Redmi siguió a 59 fps durante el corte, así que no fue ella: fue el
+  camino (4G con CGNAT o Tailscale cambiando de ruta, directa o por relé DERP). `net.c` dijo «peer lost» y el juego
+  se desconectó. Ping del moto al Redmi después: 7–157 ms, muy irregular.
+- **Siguiente:**
+  - repetir mirando en la app de Tailscale si el otro aparece como «direct» o «relay»;
+  - un servidor de reenvío propio evitaría los cambios de ruta de Tailscale;
+  - el juego no aguanta huecos de varios segundos, y el servidor tampoco lo arregla si el corte es del 4G.
+
+### 16c. Segundo y tercer partido por internet (6/11): la subida del 4G del anfitrión
+
+El Redmi seguía por 4G y el moto por WiFi. Tailscale mostraba «direct», con ~55 ms. Desde el moto corría un ping al Redmi
+cada 0,2 s (`build/net_tailscale/try2/ping.txt`). Registros del moto en `build/net_tailscale/try3/moto/`: la app no se
+reinició, así que trae el segundo partido (pared < 488 s) y el tercero (> 491 s).
+
+- **Segundo partido, con el Redmi de anfitrión** (aceptó el desafío). El usuario: «cuando juego en el moto, va perfecto,
+  pero cuando tomo el Redmi y aprieto algún botón, todo se lagea».
+  - Del Redmi al moto: 1 914 datagramas perdidos y 6 huecos de más de 1 s, de hasta 6 s.
+  - El ping llegó a 5–25 s en tramos de ~1 min, entre tramos normales de 55–75 ms. Es una cola en la subida del 4G
+    (*bufferbloat*).
+  - Del moto al Redmi iba bien.
+- **Lo que manda cada lado,** medido en el Mac con el banco de bots (`PES6_NET_DUMP`):
+  - quien acepta el desafío manda el estado: ~8,7 KB/s del juego en ~31 mensajes por segundo;
+  - el otro, ~2,6 KB/s en ~38;
+  - con la repetición de 2 mensajes por datagrama, UDP y WireGuard, son ~230 y ~90 kbit/s en el aire.
+- **Tercer partido, con el moto (WiFi) de anfitrión:** 410 s sin un solo hueco de más de 1 s y 0 perdidos en los dos
+  sentidos. Llegadas p50 33 ms, p90 34, p99 67. Ping p50 54, p90 79, p99 154. Saltos de jugador de 40+ unidades:
+  0,3–1,4 por minuto, como contra la CPU.
+
+**Conclusión:** el modo WIRELESS se juega por internet con ~55 ms de ida y vuelta, siempre que el anfitrión tenga una
+subida que aguante ~230 kbit/s sostenidos. La subida de un 4G con señal regular no siempre llega. Para un modo online:
+
+- elegir de anfitrión al lado con mejor subida, midiéndola en la sala;
+- bajar lo que se manda: los mensajes de estado tienen mucho relleno (0xFF) y se comprimen bien, y la repetición
+  puede adaptarse a las pérdidas;
+- un servidor de reenvío no ayuda con la subida, aunque sí para unir dos teléfonos detrás de NAT sin Tailscale.
+
+Falta la opinión del usuario sobre el retardo de los controles en cada teléfono.
+
+## 17. Red para el 4G: repetición adaptable, aviso de cola y colchón automático (6/11, fix10)
+
+Problema (§16c): un anfitrión por 4G sube ~230–280 kbit/s. Cuando la celda baja, se forma una cola de segundos.
+
+**Cambios en `net.c`:**
+
+- **Informe del receptor (tipo 4 REPORT, cada 250 ms).** Cuenta, desde el informe anterior:
+  - cuántos números de secuencia del otro cubrió y cuántos llegaron;
+  - cuánto más tarde que la entrega más rápida de los últimos 10–20 s llegaron los mensajes (media y máximo).
+
+  Las versiones anteriores lo ignoran.
+- **`PES6_NET_REDUNDANCY=auto`**, por defecto. Empieza en 2 repeticiones y se ajusta con los informes:
+  - con una media de más de 60 ms de atraso (una cola en camino), pasa a 0 al instante y espera 4 s;
+  - si hay pérdidas sin cola, sube 1, como mucho cada 0,5 s;
+  - tras 8 s limpios, baja 1.
+
+  Un número la deja fija. Contra una versión anterior, que no informa, se queda en 2.
+- **`PES6_NET_BUFFER=auto`**, por defecto en Android. Antes eran 45 ms fijos.
+  - Guarda los últimos 128 atrasos frente a la entrega más rápida de 2–4 s.
+  - Cada 0,5 s el colchón pasa a ser su p95 más 4 ms, entre 8 y 60. Sube de golpe y baja de a 1 ms.
+  - Va en los dos lados y suma al retardo de los controles del que no es anfitrión.
+  - `PES6_NET_LOG` registra los percentiles cada 10 s.
+- **Las filas de `PES6_NET_TIMING` al otro lado** (~23 kbit/s) solo se mandan si este lado tiene `PES6_NET_TIMING`
+  o `PES6_NET_LOG`. `PES6_NET_PEER_TIMING=0` no las manda nunca; el banco lo usa por defecto, como en un partido
+  normal.
+- **El simulador de subida, `PES6_NET_RATE=kbps[,cola_ms[,kbps_bajón,cada_s,dura_s]]`:**
+  - cuenta 28 B de IP/UDP y 60 de VPN por datagrama;
+  - lo que no cabe espera en una cola de hasta 4 s y después se pierde.
+
+  Todos los envíos a un compañero pasan por `out_dgram` (pérdida, retraso y subida de prueba).
+- El informe final da los kbit/s enviados durante el partido, los cambios de repetición y las colas vistas.
+- **Bancos:**
+  - `NET_A_RATE`/`NET_B_RATE` en `net_pair.sh` y `net_bench.sh`. B acepta, así que es el anfitrión.
+  - El bot va también en la APK (`runtime/android/CMakeLists.txt`), apagado salvo con `PES6_BOT`.
+
+**Banco con bots** (`BOT=1`, 60 Hz; el lado que recibe las correcciones; saltos por minuto 15–40 / 40–100 / 100+):
+
+| Escenario | Esquema | Subida del anfitrión | Perdidos en la cola | Saltos | Colchón |
+|---|---|---|---|---|---|
+| Anfitrión en «4G»: 400 kbit/s, 120 durante 20 s cada 60 s, `LAG=25,30,3,80` | antes (2 fijas, 45 ms) | 283 kbit/s | 1 829 | ~52 / 2,5 / 8 | 45 |
+| ídem | **nuevo** | **117 kbit/s** | **0** | ~40 / 3,8 / 4,4 | 54–60 |
+| Los dos en «4G» (300→100 y 400→120), `LAG=30,25,2,80` | nuevo | 98 y 60 kbit/s | 0 | ~25 / 2,4 / 2,9 | 60 |
+| Internet limpio, `LAG=25,20,1,60` | nuevo | 98 kbit/s | — | ~17 / 0,9 / 1,7 | 60 |
+| Sin retraso simulado | nuevo | 94 kbit/s | — | ~20 / 1,7 / 1,7 | ~33 |
+
+- El colchón llega al tope en el Mac porque el simulador suelta lo retenido una vez por cuadro en cada instancia:
+  - sin retraso, el p95 del atraso es ~32 ms;
+  - con `LAG`, 55–60.
+
+  En el tercer partido real las llegadas venían cada 33 ms con p90 34, así que en los teléfonos debería quedar más bajo
+  que los 45 fijos de antes. Hay que medirlo.
+- Regresión PASS 9/9.
+
+**APK `PES6-1.2.2-sim60-fix10.apk`** (iso, release, misma clave que la fix9; SHA-256 `c11f42749d0e080e…`). **Falta:**
+la prueba con el Redmi de anfitrión por 4G, con `PES6_NET_PEER_TIMING=0` en los dos para no gastar subida en las filas.
+
+### 17b. fix10 en los teléfonos y hora de llegada del kernel (6/11, fix11)
+
+**Partido con la fix10:** Redmi por 4G de anfitrión, moto por WiFi. Registros en `build/net_tailscale/fix10/`.
+
+- En el moto: 101 perdidos en ~4,5 min (antes ~1 900), un solo hueco de 1 s, llegadas p99 67 ms.
+- Tres colas de 0,3–0,7 s detectadas y cortadas («queue on the way … no repeats»).
+- Saltos en el moto: ~1–2 grandes por minuto. Ping durante el partido: p90 70–80 ms, máximo 310 (antes, 5–25 s).
+- **El colchón no bajó:** 40–54 ms en el moto y 23–54 en el Redmi. Los atrasos caían en múltiplos de un cuadro (17, 34,
+  50 ms): era cuándo el juego revisaba la red (una vez por cuadro), no la red.
+
+**fix11:** `SO_TIMESTAMP` en el socket y `recvmsg`. El atraso se mide con la hora de llegada del kernel, pasada al reloj
+monótono.
+
+| Banco con bots | Colchón | Saltos 15–40 / 40–100 / 100+ por minuto |
+|---|---|---|
+| Sin retraso, fix10 | ~33 ms (p95 ~32) | ~20 / 1,7 / 1,7 |
+| Sin retraso, **fix11** | **8 ms** (p95 1–2) | ~4 / 0,5 / 3 |
+| «4G» con bajones y `LAG=25,30,3,80`, fix10 | 54–60 | ~40 / 3,8 / 4,4 |
+| ídem, **fix11** | 55–60 (la red de prueba sí varía) | ~17 / 1,7 / 3,5; 0 perdidos en la cola |
+
+Regresión PASS. **APK `PES6-1.2.2-sim60-fix11.apk`** (SHA-256 `2276ea84b36a1838…`), **instalada en los dos teléfonos**.
+Falta el partido.
+
+### 17c. ¿Quién es el anfitrión? (6/11, fix12)
+
+Partido corto con la fix11 (~25 s de juego; registros en `build/net_tailscale/fix11/`). El usuario desafió desde el moto y
+aceptó en el Redmi, y en el registro el Redmi «pide unirse» y el moto «acepta»: el rol de la conexión es el contrario de lo
+que se ve en pantalla. El usuario eligió local/visitante «al azar» en los dos, y salió local el Redmi. **No está claro qué
+lado manda el estado** (~3 veces más subida): puede ser el local. Así que en el segundo partido (§16c) y en el de la fix10
+(§17b) no se sabe con certeza cuál era el anfitrión.
+
+Con la fix11 los atrasos ya no caen en escalones de cuadro. Colchón del Redmi (recibe por la bajada del 4G): 30–34 ms, p90
+16–23. Colchón del moto (recibe lo que sube el 4G): 30–45 ms, p90 24–33. En 4G el colchón no baja a 8: es la variación de
+la subida.
+
+**fix12** (`PES6-1.2.2-sim60-fix12.apk`, SHA-256 `51fae7b46a115a5e…`, instalada en los dos): con `PES6_NET_LOG`, cada
+10 s del partido registra `sending N kbit/s (repeats R, buffer B ms)`. En el Mac, el que manda el estado da ~125 kbit/s y
+el otro ~74, con 0 repeticiones. Siguiente: un partido con el Redmi local y otro con el Redmi visitante, para saber quién
+sube más.

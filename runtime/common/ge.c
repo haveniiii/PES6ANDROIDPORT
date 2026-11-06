@@ -79,6 +79,8 @@ static struct {
 
 static pes6_ge_stats g_stats;
 static uint32_t g_clut_gen;      /* bumped when a CLUT load changes the palette */
+static uint32_t g_tex_epoch;     /* bumped when texels may have changed under the GE (texture_setup) */
+static uint64_t g_tex_memo_hits, g_tex_memo_miss;
 static uint64_t g_ophist[256];   /* commands executed, by opcode */
 static int g_cull_mode;          /* PES6_GE_CULL: 0 off, 1 / 2 the two senses */
 static long g_debug_prims;       /* PES6_GE_DEBUG=N[,skip] */
@@ -542,10 +544,51 @@ static void texrepl_init(void) {
 /* Resolve the level-0 texture from the registers. Returns 0 if texturing is
  * off or the texture cannot be read (then the primitive is drawn untextured,
  * which shows its shape and vertex colour instead of nothing). */
+static int texture_setup_slow(texture *t, uint32_t addr);
+static void texture_swap(texture *t, uint32_t addr) {
+    if (t->data && g_swap && t->name) {
+        g_swap_tex = t;
+        const uint32_t *r = g_swap(t->name, t->w, t->h, addr, swap_base);
+        if (r) { t->repl = r; t->hd = NULL; }
+    }
+}
+
 static int texture_setup(texture *t) {
     if (!(S.cmd[C_TEXENABLE] & 1)) return 0;
     uint32_t addr = ((S.cmd[C_TEXBUFW0] & 0xFF0000u) << 8) | S.cmd[C_TEXADDR0];
     if (addr < 0x04000000u) addr = vram_addr(addr);
+    /* Most PRIMs draw with the texture of the one before. Resolving it again (48 scattered reads of
+     * its texels, the replacement lookup) was ~15 % of the GE thread (docs/32 §13). Reused while the
+     * registers, the palette and g_tex_epoch (new list, block transfer) are the same; textures in
+     * VRAM (render targets) are always resolved again. The face swap depends on who is drawn: it
+     * still runs every time. */
+    static struct { uint32_t k[9]; texture t; int ok, valid; } memo;
+    const uint32_t key[9] = { S.cmd[C_TEXADDR0], S.cmd[C_TEXBUFW0], S.cmd[C_TEXSIZE0], S.cmd[C_TEXFORMAT],
+                              S.cmd[C_TEXMODE], S.cmd[C_TEXWRAP], S.cmd[C_CLUTFORMAT], g_clut_gen, g_tex_epoch };
+    static int memo_on = -1;                     /* PES6_TEX_MEMO=0 turns it off (measuring) */
+    if (memo_on < 0) { const char *e = getenv("PES6_TEX_MEMO"); memo_on = !(e && *e == '0'); }
+    const int in_vram = !memo_on || (addr >= 0x04000000u && addr < 0x04800000u);
+    if (memo.valid && !in_vram && !memcmp(memo.k, key, sizeof key)) {
+        g_tex_memo_hits++;
+        if (!memo.ok) return 0;
+        *t = memo.t;
+        texture_swap(t, addr);
+        return t->data != NULL;
+    }
+    g_tex_memo_miss++;
+    memo.valid = 0;
+    const int ok = texture_setup_slow(t, addr);
+    if (!in_vram) {
+        memcpy(memo.k, key, sizeof key);
+        memo.ok = ok;
+        if (ok) { tex_hash(t); memo.t = *t; }
+        memo.valid = 1;
+    }
+    texture_swap(t, addr);
+    return ok;
+}
+
+static int texture_setup_slow(texture *t, uint32_t addr) {
     t->bufw = (int)(S.cmd[C_TEXBUFW0] & 0xFFFF);
     t->w = 1 << (S.cmd[C_TEXSIZE0] & 0xF);
     t->h = 1 << ((S.cmd[C_TEXSIZE0] >> 8) & 0xF);
@@ -580,11 +623,6 @@ static int texture_setup(texture *t) {
     t->addr = addr;
     if (!g_tr.inited) texrepl_init();
     if (t->data && g_tr.on) texrepl_apply(t, addr);
-    if (t->data && g_swap && t->name) {
-        g_swap_tex = t;
-        const uint32_t *r = g_swap(t->name, t->w, t->h, addr, swap_base);
-        if (r) { t->repl = r; t->hd = NULL; }
-    }
     return t->data != NULL;
 }
 
@@ -1047,7 +1085,29 @@ typedef struct {
     float su, ou, sv, ov;        /* texture scale and offset (TEXSCALE/TEXOFFSET) */
     float tw, th;                /* texture size */
     uint32_t ambient;            /* the material colour, for vertices without one */
+    int screen;                  /* project to screen space too (software raster, GL sprites) */
+    float m[16];                 /* !screen: projection x view x world, column-major (vshared_matrix) */
 } vshared;
+
+/* GL path: the three matrices folded into one per primitive. 16 multiply-adds a vertex instead of
+ * 34; the rounding is not the chained one, so the software raster (the reference the regression
+ * checks) keeps the chain. */
+static void vshared_matrix(vshared *sh) {
+    const float *W = S.world, *V = S.view, *P = S.proj;
+    float mv[12];                                /* view x world, 4x3 */
+    for (int c = 0; c < 4; c++)
+        for (int r = 0; r < 3; r++) {
+            float s = V[0 * 3 + r] * W[c * 3 + 0] + V[1 * 3 + r] * W[c * 3 + 1] + V[2 * 3 + r] * W[c * 3 + 2];
+            if (c == 3) s += V[9 + r];
+            mv[c * 3 + r] = s;
+        }
+    for (int c = 0; c < 4; c++)
+        for (int r = 0; r < 4; r++) {
+            float s = P[0 * 4 + r] * mv[c * 3 + 0] + P[1 * 4 + r] * mv[c * 3 + 1] + P[2 * 4 + r] * mv[c * 3 + 2];
+            if (c == 3) s += P[12 + r];
+            sh->m[c * 4 + r] = s;
+        }
+}
 
 /* Decode one vertex and take it to screen space. */
 GE_STAGE static void vertex_transform(const vformat *f, const uint8_t *p, const vshared *sh, int textured,
@@ -1110,6 +1170,22 @@ GE_STAGE static void vertex_transform(const vformat *f, const uint8_t *p, const 
         return;
     }
 
+    if (!sh->screen) {
+        const float *M = sh->m;
+        const float cx = x * M[0] + y * M[4] + z * M[8] + M[12];
+        const float cy = x * M[1] + y * M[5] + z * M[9] + M[13];
+        const float cz = x * M[2] + y * M[6] + z * M[10] + M[14];
+        const float cw = x * M[3] + y * M[7] + z * M[11] + M[15];
+        o->cx = cx; o->cy = cy; o->cz = cz; o->cw = cw;
+        if (textured) {
+            o->u = (u * sh->su + sh->ou) * sh->tw;
+            o->v = (v * sh->sv + sh->ov) * sh->th;
+        } else {
+            o->u = o->v = 0;
+        }
+        if (!(cw > 1e-6f) || cz + cw < 0.0f) o->clipped = 1;
+        return;
+    }
     /* model -> world -> view (4x3 each, column-major), then projection. */
     const float *W = S.world, *V = S.view, *P = S.proj;
     float wx = x * W[0] + y * W[3] + z * W[6] + W[9];
@@ -1132,7 +1208,9 @@ GE_STAGE static void vertex_transform(const vformat *f, const uint8_t *p, const 
     /* Behind the near plane (z < -w) a vertex cannot be projected; triangles
      * that cross it are clipped in draw_triangle_clipped. */
     if (!(cw > 1e-6f) || cz + cw < 0.0f) { o->clipped = 1; return; }
-    project(o);
+    /* GL takes triangles in clip space and divides on the GPU: only the software raster and
+     * GL sprites need the vertex on screen (docs/32 §13). */
+    if (sh->screen == 1) project(o);
 }
 
 #define MAX_VERTS 65536
@@ -1436,6 +1514,16 @@ GE_STAGE static void draw_prim(uint32_t arg) {
         sh.sv = f24(S.cmd[C_TEXSCALEV]); sh.ov = f24(S.cmd[C_TEXOFFSETV]);
         sh.tw = (float)c.tex.w; sh.th = (float)c.tex.h;
         sh.ambient = (S.cmd[C_MATAMBIENT] & 0xFFFFFFu) | ((S.cmd[C_MATALPHA] & 0xFFu) << 24);
+        sh.screen = 1;
+#ifdef PES6_HAVE_GL
+        if (G.on && type != 6 && g_debug_prims <= 0 && !g_tr.uv) sh.screen = 0;
+#endif
+        if (!sh.screen && !f.through) {
+            static int fold = -1;                /* PES6_GE_FOLD=0: the chained matrices (measuring) */
+            if (fold < 0) { const char *e = getenv("PES6_GE_FOLD"); fold = !(e && *e == '0'); }
+            if (fold) vshared_matrix(&sh);
+            else sh.screen = 2;                  /* chained, still no projection */
+        }
         uint32_t n = 0;
         for (uint32_t i = 0; i < count && i < MAX_VERTS; i++, n++) {
             uint32_t index = i;
@@ -1689,6 +1777,7 @@ static void run_list(ge_list *l) {
     uint64_t budget = 1u << 24;
 
     g_stats.lists++;
+    g_tex_epoch++;                   /* the CPU may have written texels since the last list */
     g_dl_stack = l->stack;
     g_dl_sp = &l->sp;
     while (budget--) {
@@ -1795,7 +1884,7 @@ static void run_list(ge_list *l) {
             S.cmd[cmd] = arg;
             break;
         }
-        case C_TRKICK: block_transfer(arg); break;
+        case C_TRKICK: block_transfer(arg); g_tex_epoch++; break;
 
         default:
             S.cmd[cmd] = arg;
@@ -1939,6 +2028,8 @@ void pes6_ge_report(FILE *out) {
             (unsigned long long)g_stats.prims, (unsigned long long)g_stats.textured_prims,
             (unsigned long long)g_stats.vertices, (unsigned long long)g_stats.pixels,
             (unsigned long long)g_stats.transfers);
+    fprintf(out, "ge texture memo: %llu reused, %llu resolved\n", (unsigned long long)g_tex_memo_hits,
+            (unsigned long long)g_tex_memo_miss);
     if (getenv("PES6_GE_OPHIST")) {              /* which commands the game actually uses */
         fprintf(out, "ge opcodes:");
         for (int i = 0; i < 256; i++)

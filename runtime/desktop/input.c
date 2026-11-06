@@ -23,6 +23,7 @@
 #include <psprecomp/mem.h>
 #include <psprecomp/cpu.h>
 
+#include "bot.h"
 #include "flow.h"
 #include "pes6_game.h"
 #include "ge.h"
@@ -178,6 +179,7 @@ static void hle_CtrlRead(void) {
                            (pes6_input_extra_buttons ? pes6_input_extra_buttons() : 0);
         uint32_t analog = analog_at(vblank, pes6_input_extra_analog ? pes6_input_extra_analog()
                                                                     : pes6_window_analog());   /* lx, ly; 0x80 = centred */
+        if (pes6_bot_on()) buttons |= pes6_bot_step(&analog);      /* PES6_BOT: the benches' player */
         if (g_flow_test_n > g_flow_test_i && when_fires(&g_flow_test[g_flow_test_i], vblank))
             pes6_flow_start(g_flow_test_act[g_flow_test_i++]);
         static int flow_log = -1;      /* PES6_FLOW_LOG: the context Android's Flow would show (flow.c) */

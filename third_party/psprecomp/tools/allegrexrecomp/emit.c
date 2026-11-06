@@ -507,15 +507,17 @@ static void emit_vmatrix(FILE *f, const a_insn *in, const char *ind, int kind, i
         for (int c = 0; c < order; c++)
             for (int r = 0; r < order; r++) fprintf(f, " psp_cpu.v[%d] = _o%d%d;", d[c][r], c, r);
     } else {
+        /* vhtfm writes `order` lanes, w included (psp_vhtfm, vfpu.c). */
+        const int nd = kind == 2 ? order : n;
         emit_vregs(in->vt, n, t);
-        emit_vregs(in->vd, n, dv);
+        emit_vregs(in->vd, nd, dv);
         for (int i = 0; i < n; i++) fprintf(f, " const float _i%d = psp_cpu.v[%d];", i, t[i]);
-        for (int r = 0; r < n; r++) {
+        for (int r = 0; r < nd; r++) {
             if (kind == 2) fprintf(f, " float _o%d = psp_cpu.v[%d];", r, a[r][n]);
             else           fprintf(f, " float _o%d = 0.0f;", r);
             for (int c = 0; c < n; c++) fprintf(f, " _o%d += psp_cpu.v[%d] * _i%d;", r, a[r][c], c);
         }
-        for (int r = 0; r < n; r++) fprintf(f, " psp_cpu.v[%d] = _o%d;", dv[r], r);
+        for (int r = 0; r < nd; r++) fprintf(f, " psp_cpu.v[%d] = _o%d;", dv[r], r);
     }
     fprintf(f, " }\n");
 }
@@ -981,6 +983,21 @@ static void branch_cond(char *buf, size_t n, const a_insn *in) {
     case A_BGEZAL: case A_BGEZALL: snprintf(buf, n, "(int32_t)%s >= 0", rs); break;
     case A_BC1T: case A_BC1TL: snprintf(buf, n, "psp_fpu_cond()"); break;
     case A_BC1F: case A_BC1FL: snprintf(buf, n, "!psp_fpu_cond()"); break;
+    /* PES6PORT: VFPU branches on a vcmp condition bit, imm3 = bits 18-20 (RT >> 2). They used to
+     * fall to the default and were never taken (docs/32 §13). */
+    case A_BVT: case A_BVTL: case A_BVF: case A_BVFL: {
+        const char *r = getenv("ALLEGREX_BV_RANGE");     /* bisecting: lo-hi (hex), others never taken */
+        unsigned lo = 0, hi = 0xFFFFFFFFu;
+        if (r && sscanf(r, "%x-%x", &lo, &hi) == 2 && (in->addr < lo || in->addr > hi)) {
+            snprintf(buf, n, "0 /* unhandled branch */");
+            break;
+        }
+        if (in->op == A_BVT || in->op == A_BVTL)
+            snprintf(buf, n, "((psp_cpu.vfpu_cc >> %u) & 1u)", (in->raw >> 18) & 7u);
+        else
+            snprintf(buf, n, "!((psp_cpu.vfpu_cc >> %u) & 1u)", (in->raw >> 18) & 7u);
+        break;
+    }
     default:                   snprintf(buf, n, "0 /* unhandled branch */"); break;
     }
 }

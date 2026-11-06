@@ -376,3 +376,91 @@ Tres cambios:
   `2312DRA50G sdk33 hint+ spin- 60Hz 45fps`, con modelo, Android, si hay avisos, si hay CPU ocupada, el ritmo
   y los fps. El otro teléfono la anota cuando cambia: `[net] peer xx:xx:xx says: ...`. Así se sabe del
   teléfono sin adb. Va después del grupo y los builds anteriores la ignoran.
+
+## 13. El hilo del GE a 60 Hz y dos fallos de la VFPU (2026-11-04)
+
+**Informe del usuario:** con fix8 (60 fps, ×2, calidad Normal, contra la CPU) el Redmi tiene bajones
+severos. Antes iba a 60 con algún bajón aislado.
+
+**fix7 y fix8 son el mismo código:** `classes.dex` idéntico y `libpes6.so` con un solo símbolo nuevo
+(`pes6_net_local_pad`). La diferencia está en el teléfono: `env.txt` (en las pruebas buenas con fix7
+tenía `PES6_SPIN=1`), la temperatura, o los avisos ADPF, que en el Redmi impiden el respaldo de CPU
+automático (`main.c`, `g_spin_auto` solo sin sesión de avisos). Sin `pes6.log` de esa partida no se puede
+decir cuál de las tres fue.
+
+**A 60 Hz el trabajo por segundo se duplica** (cada paso dibuja un cuadro entero). Perfil en el Mac, a
+60 Hz, GE en su hilo, pantalla ancha (`sample` por hilo):
+- el **hilo del GE iba al ~96 %** y el del juego esperaba el 56 % del tiempo;
+- dentro del GE: `vertex_transform` 25 %, `run_list` 11 %, `tex_hash` 10 %, `draw_prim` 8 %,
+  `texrepl_apply` 4 %, `psp_mem_ptr` 4 %.
+
+Medida (`ab.sh`, scratchpad de la sesión): `ref_match.sh --window --gpu` hasta 8@2400 con
+`PES6_SIM60=1 PES6_GE_ASYNC=1 PES6_WIDE=2.222 PES6_UNLIMITED=1`; CPU del hilo del juego y del GE en todo
+el recorrido (el informe de escritorio imprime ahora `GE thread CPU`). Dos pasadas por caso; varían menos
+de un 3 %.
+
+| Paso | Juego (s) | GE (s) | Último cuadro |
+|---|---|---|---|
+| fix8 (`PES6_TEX_MEMO=0`) | 3,15 | 6,29 | `e0fbfa429a` |
+| 1. textura del PRIM anterior reutilizada | 3,16 | 5,71 | idéntico |
+| 2. sin `project()` en el camino GL | 3,13 | 5,60 | idéntico |
+| 3. matrices plegadas (solo GL) | 3,14 | 5,40 | 4 de 164 288 píxeles |
+| 4. saltos `bv*` + `vhtfm` (el juego recorta) | **2,37** | **3,81–3,93** | cambia (ver abajo) |
+| con el parche (`pech2026`): fix8 → ahora | 3,27 → 2,17 | 6,55 → 3,95 | |
+
+1. **Textura del PRIM anterior** (`texture_setup`, `ge.c`): el 89,5 % de los PRIM dibujan con la misma
+   textura que el anterior, y cada uno rehacía 48 lecturas dispersas y la búsqueda de reemplazo. Se
+   reutiliza mientras los registros de textura, la paleta (`g_clut_gen`) y `g_tex_epoch` no cambien.
+   `g_tex_epoch` sube con cada lista y cada transferencia de bloque. Las texturas en VRAM se resuelven
+   siempre. El cambio de cara (`faces.c`) sigue corriendo cada vez. `PES6_TEX_MEMO=0` lo apaga. El
+   informe dice `ge texture memo: N reused, M resolved`.
+2. **Sin `project()` en GL:** GL recibe los triángulos en coordenadas de recorte y divide en la GPU; la
+   proyección en CPU (una división y cinco `f24` por vértice) solo la usan los sprites y el raster por
+   software. Exacto.
+3. **Matrices plegadas:** proyección × vista × mundo una vez por primitiva (`vshared_matrix`): 16
+   multiplicaciones-sumas por vértice en vez de 34. El redondeo cambia: solo en GL. El software, que es
+   la referencia de la regresión, sigue con la cadena. `PES6_GE_FOLD=0` lo apaga.
+4. **Dos fallos del recompilador, el de más peso:**
+   - **Los saltos de la VFPU (`bvt`/`bvf`/`bvtl`/`bvfl`) no se tomaban nunca.** `branch_cond`
+     (`emit.c`) no los conocía y escribía `0 /* unhandled branch */`: 41 sitios del EBOOT; los overlays no
+     tienen. El bit es `imm3` = bits 18–20 de la instrucción.
+   - Al activarlos, los jugadores desaparecían. Bisección por grupos: los 24 saltos de
+     `0x088135A4`/`0x08813774`/`0x08813934` son el **recorte por frustum** de las cajas de los modelos
+     (`$v0 = 1`: fuera). Sin los saltos nunca recortaba: se transformaba y dibujaba también lo que queda
+     fuera de cámara.
+   - Recortaba mal porque **`vhtfm` escribía una componente de menos.** PPSSPP (`Int_Vtfm`) escribe
+     `order` componentes, `w` incluida; el runtime y el emisor escribían `order − 1` y dejaban `w` vieja,
+     y el recorte compara contra `w`. Arreglado en `psp_vhtfm` (`vfpu.c`) y `emit_vmatrix`. Solo, el
+     arreglo de `vhtfm` deja la regresión idéntica (PASS).
+   - Con los dos arreglos, el recorte deja los cuadros de la regresión idénticos píxel a píxel. Primitivas
+     8,07 M → 5,45 M, vértices 74 M → 43 M, comandos 145 M → 72 M en el recorrido.
+   - Los otros 17 saltos (slerp de `0x08991xxx`, y tres de `0x0898F46C`/`0x0898FE70`/`0x08990524`) no
+     cambian el tiempo. El slerp ahora toma, como la PSP, el camino lineal con cuaterniones casi iguales.
+     Mueve la cámara uno o dos píxeles y cambia 4 y 539 píxeles en las dos capturas del partido de
+     la regresión, que se volvieron a grabar (`tools/regress/expected.txt`).
+
+**El recorte en pantalla ancha.** El juego prueba `|x| ≤ w`: los 480 de la PSP. El cuadro ancho muestra
+`|x| ≤ w · ancho/480`, así que un jugador que entraba por la franja lateral desaparecía (visto a 8@900,
+borde derecho). `rules.c` engancha las tres funciones (`pes6_hooks.h`: `frustum_cull_box`,
+`frustum_cull_v56`, `frustum_cull_pt`): divide la fila x de la matriz por `ancho/480 · 1,02`, llama al código
+del juego y deja la matriz como estaba, bit a bit. Comparado con el mismo build sin recorte en tres instantes
+iguales: del borde quedan 9 píxeles y una sombra de 25 en el borde de abajo, igual con margen de 10 %.
+Es el recorte vertical, que la pantalla ancha no cambia (en la PSP es igual). `PES6_GAME_CULL=0` desactiva
+el recorte (diagnóstico).
+
+**Lo que se recorta cambia la lógica del juego**: el partido guionizado diverge a partir de 8@2100, como en la
+PSP real. En WIRELESS cada consola recorta con su cámara. `tools/net_bench.sh … default::45` (lado que
+corrige, saltos de 15–40 por minuto y error del juego p90):
+
+| Build | Saltos 15–40/min | p90 |
+|---|---|---|
+| HEAD `ce15352` (worktree aparte) | 33,5–37,0 | 42 |
+| ahora, con recorte | 36,3–42,5 | 42 |
+| ahora, sin recorte en WIRELESS | 33,5–37,4 | 42 |
+| ahora, sin saltos `bv*` | 29,7–30,3 | 41 |
+
+No hay diferencia medible: el recorte sigue activo también en WIRELESS. Las cifras de §15 de `docs/15` (~18 y
+p90 13) no se reproducen hoy ni con HEAD.
+
+**Pendiente:** medirlo en el Redmi. Hace falta una APK (no se compiló, pendiente del pedido del usuario). La
+regresión `--net` con dos instancias no se pasó (se usó `net_bench`).
