@@ -2,13 +2,14 @@
  *
  * A plain system menu in the manner of the PS2's own (docs/19 §6), apart from the game's look:
  * a deep blue backdrop, one big row per setting ("Label   < value >", the focused one on a
- * translucent blue bar), a line that explains the focused choice, and JUGAR below -- the only
+ * translucent blue bar), a line that explains the focused choice, and PLAY below -- the only
  * way into the game. Sized for a phone: a tap on a row's left half steps its value back, on the
  * right half forward; a pad or keyboard moves with up/down, changes with left/right and presses
  * with cross. On Android, CONTROLES opens a second page (docs/19 §9): the schemes, a picture of
  * the chosen one, its description and EDITAR. Text comes from a 5x7 bitmap font smoothed when
- * scaled; nothing is taken from the game's data. */
+ * scaled; nothing is taken from the game's data. Its words are in the phone's language (lang.h). */
 #include "launcher.h"
+#include "lang.h"
 #include "product.h"
 
 #include <math.h>
@@ -343,9 +344,18 @@ static int league_switch(const pes6_launcher *l) {
 }
 
 static const char *row_label(const pes6_launcher *l, int kind) {
-    static const char *label[ROW_KINDS] = { "ISO", "Version", "Motor", "Mano", "Pantalla", "Camara", "Partido", "Resolucion",
-                                            "Calidad" };
-    return kind == ROW_VERSION && league_switch(l) ? "Liga chilena" : label[kind];
+    switch (kind) {
+    case ROW_ISO:     return "ISO";
+    case ROW_VERSION: return league_switch(l) ? L("Chilean league", "Liga chilena") : L("Version", "Version");
+    case ROW_RENDER:  return L("Engine", "Motor");
+    case ROW_HAND:    return L("Hand", "Mano");
+    case ROW_SCREEN:  return L("Screen", "Pantalla");
+    case ROW_CAMERA:  return L("Camera", "Camara");
+    case ROW_RATE:    return L("Match", "Partido");
+    case ROW_RES:     return L("Resolution", "Resolucion");
+    case ROW_QUALITY: return L("Quality", "Calidad");
+    default:          return "";
+    }
 }
 
 /* "Name (detail)" -> the name, for the version row. */
@@ -362,18 +372,18 @@ static int row_choices(const pes6_launcher *l, int kind, const char **out, int *
     switch (kind) {
     case ROW_ISO:      out[0] = l->iso ? l->iso : ""; *current = 0; return 1;
     case ROW_VERSION:
-        if (league_switch(l)) { out[0] = "Si"; out[1] = "No"; *current = l->ver; return 2; }
+        if (league_switch(l)) { out[0] = L("Yes", "Si"); out[1] = "No"; *current = l->ver; return 2; }
         for (int i = 0; i < l->n && i < 4; i++) { option_name(l->v[i].title, names[i], sizeof names[i]); out[i] = names[i]; }
         *current = l->ver;
         return l->n < 4 ? l->n : 4;
     case ROW_RENDER:   out[0] = "GPU"; out[1] = "Software"; *current = !s->gpu; return 2;
-    case ROW_SCREEN:   out[0] = "Completa"; out[1] = "16:9"; *current = s->screen; return SCREEN_COUNT;
-    case ROW_CAMERA:   out[0] = "Normal"; out[1] = "Lejana"; out[2] = "Muy lejana"; *current = s->camera; return CAMERA_COUNT;
+    case ROW_SCREEN:   out[0] = L("Full", "Completa"); out[1] = "16:9"; *current = s->screen; return SCREEN_COUNT;
+    case ROW_CAMERA:   out[0] = "Normal"; out[1] = L("Far", "Lejana"); out[2] = L("Very far", "Muy lejana"); *current = s->camera; return CAMERA_COUNT;
     case ROW_RATE:     out[0] = "30 fps"; out[1] = "60 fps"; *current = s->rate; return MATCH_RATE_COUNT;
-    case ROW_HAND:     out[0] = "Derecha"; out[1] = "Izquierda"; *current = s->hand; return 2;
+    case ROW_HAND:     out[0] = L("Right", "Derecha"); out[1] = L("Left", "Izquierda"); *current = s->hand; return 2;
     case ROW_RES:      out[0] = "Auto"; out[1] = "1x  480x272"; out[2] = "2x  960x544"; out[3] = "3x  1440x816";
                        *current = s->res; return RES_COUNT;
-    case ROW_QUALITY:  out[0] = "Baja"; out[1] = "Normal"; out[2] = "Alta"; *current = s->quality; return QUALITY_COUNT;
+    case ROW_QUALITY:  out[0] = L("Low", "Baja"); out[1] = "Normal"; out[2] = L("High", "Alta"); *current = s->quality; return QUALITY_COUNT;
     default: return 0;
     }
 }
@@ -457,64 +467,134 @@ static void side_button(uint32_t *px, float x, float y, const char *label, int f
 
 /* The schemes' names and what they do. Action names are the game's own, from its Command List
  * (docs/36). "# " starts a heading, "\n" a line; the rest wraps to the box. */
-static const char *const SCHEME_NAME[CTRL_COUNT] = { "Clasico", "Cruceta", "Pro", "Pro atajos", "Pro + cruceta", "Flow" };
+static const char *scheme_name(int i) {
+    switch (i) {
+    case CTRL_CLASSIC:  return L("Classic", "Clasico");
+    case CTRL_DPAD:     return L("D-pad", "Cruceta");
+    case CTRL_PRO:      return "Pro";
+    case CTRL_PRO_KEYS: return L("Pro shortcuts", "Pro atajos");
+    case CTRL_PRO_DPAD: return L("Pro + d-pad", "Pro + cruceta");
+    case CTRL_FLOW:     return "Flow";
+    default:            return "";
+    }
+}
 
-#define DESC_BUTTONS \
+#define ES_BUTTONS \
     "# Con balon\n" \
     "\x01 Shoot   \x04 Short Pass\n\x03 Long Pass   \x02 Through Pass\n" \
     "L + \x01 Chip shot\nL + \x02 Through pass in the air\n" \
     "# Sin balon\n" \
     "\x04 Pressure 1   \x01 Pressure 2\n\x03 Sliding tackle   \x02 Rush forward\n" \
     "L Cursor change\n\x03 + \x02 Super cancel\n"
-#define DESC_ZONE \
+#define EN_BUTTONS \
+    "# With the ball\n" \
+    "\x01 Shoot   \x04 Short Pass\n\x03 Long Pass   \x02 Through Pass\n" \
+    "L + \x01 Chip shot\nL + \x02 Through pass in the air\n" \
+    "# Without the ball\n" \
+    "\x04 Pressure 1   \x01 Pressure 2\n\x03 Sliding tackle   \x02 Rush forward\n" \
+    "L Cursor change\n\x03 + \x02 Super cancel\n"
+#define ES_ZONE \
     "# Movimiento\n" \
     "Stick flotante: Dribbling. Hacia el borde entras en la zona de Dash: el telefono vibra y la " \
     "perilla se pone naranja. Volviendo hacia el centro dejas de correr. Con Correr al borde " \
     "apagado el stick no corre: corres con R.\n"
-#define DESC_SWIPE \
+#define EN_ZONE \
+    "# Movement\n" \
+    "Floating stick: Dribbling. Towards the rim you enter the Dash zone: the phone vibrates and the " \
+    "knob turns orange. Back towards the centre you stop running. With Edge sprint off the stick " \
+    "does not run: run with R.\n"
+#define ES_SWIPE \
     "# Deslizar\n" \
     "Desliza mientras pulsas el boton:\n" \
     "\x05 sobre \x01 Chip shot\n\x05 sobre \x02 Through pass in the air\n" \
     "\x06 sobre \x01 o \x02 agrega R\n"
+#define EN_SWIPE \
+    "# Swipes\n" \
+    "Swipe while you press the button:\n" \
+    "\x05 on \x01 Chip shot\n\x05 on \x02 Through pass in the air\n" \
+    "\x06 on \x01 or \x02 adds R\n"
 
-static const char *const SCHEME_TEXT[CTRL_COUNT] = {
-    [CTRL_CLASSIC] = "# Movimiento\n"
-                     "Stick flotante: Dribbling; en el borde, Dash. Tambien hay una cruceta pequena arriba, para "
-                     "quien la prefiera.\n" DESC_BUTTONS,
-    [CTRL_DPAD] = "# Movimiento\n"
-                  "Cruceta fija: Dribbling. Mantén R para Dash.\n" DESC_BUTTONS,
-    [CTRL_PRO] = DESC_ZONE DESC_SWIPE DESC_BUTTONS,
-    [CTRL_PRO_KEYS] = DESC_ZONE
-                      "# Atajos\n"
-                      "Cuatro botones pequenos, sin deslizar:\n"
-                      "L+\x01 Chip shot\nL+\x02 Through pass in the air\nR+\x01 y R+\x02\n" DESC_BUTTONS,
-    [CTRL_PRO_DPAD] = "Igual que Pro, con una cruceta ademas del stick.\n" DESC_ZONE DESC_SWIPE DESC_BUTTONS,
-    [CTRL_FLOW] = "Los botones no se mueven: cambia lo que hacen segun la jugada, y cada uno muestra su nombre. "
-                  "El color indica la jugada: ambar en ataque, coral en defensa.\n"
-                  "# Como leerlos\n"
-                  "Las muescas del borde son los deslizamientos posibles. Un disco vacio no tiene funcion en esa jugada.\n"
-                  "# Pulgar izquierdo\n"
-                  "Centro del stick, con balon: Low-speed dribbling\nZona media: Dribbling\n"
-                  "Borde de color: Dash, con vibracion. Con Correr al borde apagado, el boton Dash, abajo a la derecha\n"
-                  "1 toque: Quick stop\n2 toques: Stop ball, Quick stop and turn, Jump\n"
-                  "Toque y arrastrar: Turn around without touching the ball\n"
-                  "# Ataque\n"
-                  "\x01 Shoot\n\x05 Chip shot   \x06 Controlled shot\n\x07 Kick dummy   \x08 Chip shot 2\n"
-                  "\x04 Short Pass\n\x05 1-2 pass   \x06 Pass and follow\n"
-                  "\x03 Long Pass\n\x05 Early cross   \x06 Cross along the ground\n\x07 Cross near side   \x08 Kick dummy\n"
-                  "\x02 Through Pass\n\x05 Through pass in the air\n"
-                  "Skill: Step over\n\x05 Marseille Roulette   \x06 Lift ball\n\x08 Step over 2\n"
-                  "Tap out; en carrera, Kick far\n"
-                  "# Recepcion\n"
-                  "Los mismos cuatro botones, al primer toque y sin espera. Los dos de arriba pasan a Cursor change y "
-                  "Super cancel.\n"
-                  "# Defensa\n"
-                  "\x04 Pressure 1   \x01 Pressure 2\n\x03 Sliding tackle   \x02 Rush forward\n"
-                  "Cursor change y Super cancel\n"
-                  "# Balon parado\n"
-                  "Cada boton muestra su accion. Al ejecutar, los dos de arriba son Adjust left y Adjust right.\n"
-                  "# Tactica\n"
-                  "Mantén Select: el stick elige Strategy, y los dos de arriba son Defence-strong y Attack-strong.\n",
+/* The schemes' texts, [language][scheme]. Action names are the game's own, from its Command List
+ * (docs/36), in English in both. "# " starts a heading, "\n" a line; the rest wraps to the box. */
+static const char *const SCHEME_TEXT[PES6_LANG_COUNT][CTRL_COUNT] = {
+    [PES6_LANG_EN] = {
+        [CTRL_CLASSIC] = "# Movement\n"
+                         "Floating stick: Dribbling; at the rim, Dash. There is also a small d-pad at the top, for "
+                         "those who prefer it.\n" EN_BUTTONS,
+        [CTRL_DPAD] = "# Movement\n"
+                      "Fixed d-pad: Dribbling. Hold R to Dash.\n" EN_BUTTONS,
+        [CTRL_PRO] = EN_ZONE EN_SWIPE EN_BUTTONS,
+        [CTRL_PRO_KEYS] = EN_ZONE
+                          "# Shortcuts\n"
+                          "Four small buttons, no swiping:\n"
+                          "L+\x01 Chip shot\nL+\x02 Through pass in the air\nR+\x01 and R+\x02\n" EN_BUTTONS,
+        [CTRL_PRO_DPAD] = "Like Pro, with a d-pad as well as the stick.\n" EN_ZONE EN_SWIPE EN_BUTTONS,
+        [CTRL_FLOW] = "The buttons stay in place: what they do changes with the play, and each one shows its name. "
+                      "The colour tells the play: amber in attack, coral in defence.\n"
+                      "# How to read them\n"
+                      "The notches on the rim are the swipes you can make. An empty disc does nothing in that play.\n"
+                      "# Left thumb\n"
+                      "Centre of the stick, with the ball: Low-speed dribbling\nMiddle zone: Dribbling\n"
+                      "Coloured rim: Dash, with vibration. With Edge sprint off, the Dash button, bottom right\n"
+                      "1 tap: Quick stop\n2 taps: Stop ball, Quick stop and turn, Jump\n"
+                      "Tap and drag: Turn around without touching the ball\n"
+                      "# Attack\n"
+                      "\x01 Shoot\n\x05 Chip shot   \x06 Controlled shot\n\x07 Kick dummy   \x08 Chip shot 2\n"
+                      "\x04 Short Pass\n\x05 1-2 pass   \x06 Pass and follow\n"
+                      "\x03 Long Pass\n\x05 Early cross   \x06 Cross along the ground\n\x07 Cross near side   \x08 Kick dummy\n"
+                      "\x02 Through Pass\n\x05 Through pass in the air\n"
+                      "Skill: Step over\n\x05 Marseille Roulette   \x06 Lift ball\n\x08 Step over 2\n"
+                      "Tap out; while running, Kick far\n"
+                      "# Receiving\n"
+                      "The same four buttons, on the first touch and with no wait. The top two become Cursor change "
+                      "and Super cancel.\n"
+                      "# Defence\n"
+                      "\x04 Pressure 1   \x01 Pressure 2\n\x03 Sliding tackle   \x02 Rush forward\n"
+                      "Cursor change and Super cancel\n"
+                      "# Set pieces\n"
+                      "Each button shows its action. While kicking, the top two are Adjust left and Adjust right.\n"
+                      "# Tactics\n"
+                      "Hold Select: the stick picks a Strategy, and the top two are Defence-strong and Attack-strong.\n",
+    },
+    [PES6_LANG_ES] = {
+        [CTRL_CLASSIC] = "# Movimiento\n"
+                         "Stick flotante: Dribbling; en el borde, Dash. Tambien hay una cruceta pequena arriba, para "
+                         "quien la prefiera.\n" ES_BUTTONS,
+        [CTRL_DPAD] = "# Movimiento\n"
+                      "Cruceta fija: Dribbling. Mantén R para Dash.\n" ES_BUTTONS,
+        [CTRL_PRO] = ES_ZONE ES_SWIPE ES_BUTTONS,
+        [CTRL_PRO_KEYS] = ES_ZONE
+                          "# Atajos\n"
+                          "Cuatro botones pequenos, sin deslizar:\n"
+                          "L+\x01 Chip shot\nL+\x02 Through pass in the air\nR+\x01 y R+\x02\n" ES_BUTTONS,
+        [CTRL_PRO_DPAD] = "Igual que Pro, con una cruceta ademas del stick.\n" ES_ZONE ES_SWIPE ES_BUTTONS,
+        [CTRL_FLOW] = "Los botones no se mueven: cambia lo que hacen segun la jugada, y cada uno muestra su nombre. "
+                      "El color indica la jugada: ambar en ataque, coral en defensa.\n"
+                      "# Como leerlos\n"
+                      "Las muescas del borde son los deslizamientos posibles. Un disco vacio no tiene funcion en esa jugada.\n"
+                      "# Pulgar izquierdo\n"
+                      "Centro del stick, con balon: Low-speed dribbling\nZona media: Dribbling\n"
+                      "Borde de color: Dash, con vibracion. Con Correr al borde apagado, el boton Dash, abajo a la derecha\n"
+                      "1 toque: Quick stop\n2 toques: Stop ball, Quick stop and turn, Jump\n"
+                      "Toque y arrastrar: Turn around without touching the ball\n"
+                      "# Ataque\n"
+                      "\x01 Shoot\n\x05 Chip shot   \x06 Controlled shot\n\x07 Kick dummy   \x08 Chip shot 2\n"
+                      "\x04 Short Pass\n\x05 1-2 pass   \x06 Pass and follow\n"
+                      "\x03 Long Pass\n\x05 Early cross   \x06 Cross along the ground\n\x07 Cross near side   \x08 Kick dummy\n"
+                      "\x02 Through Pass\n\x05 Through pass in the air\n"
+                      "Skill: Step over\n\x05 Marseille Roulette   \x06 Lift ball\n\x08 Step over 2\n"
+                      "Tap out; en carrera, Kick far\n"
+                      "# Recepcion\n"
+                      "Los mismos cuatro botones, al primer toque y sin espera. Los dos de arriba pasan a Cursor change y "
+                      "Super cancel.\n"
+                      "# Defensa\n"
+                      "\x04 Pressure 1   \x01 Pressure 2\n\x03 Sliding tackle   \x02 Rush forward\n"
+                      "Cursor change y Super cancel\n"
+                      "# Balon parado\n"
+                      "Cada boton muestra su accion. Al ejecutar, los dos de arriba son Adjust left y Adjust right.\n"
+                      "# Tactica\n"
+                      "Mantén Select: el stick elige Strategy, y los dos de arriba son Defence-strong y Attack-strong.\n",
+    },
 };
 
 /* The chosen scheme's text, wrapped once to the box. */
@@ -535,7 +615,7 @@ static void desc_wrap(int scheme) {
     g_desc_for = scheme;
     g_ndesc = 0;
     const float width = PV_W - 2 * TEXT_PAD - BAR_W - 3;
-    for (const char *p = SCHEME_TEXT[scheme]; *p; ) {
+    for (const char *p = SCHEME_TEXT[pes6_lang][scheme]; *p; ) {
         const char *end = strchr(p, '\n');
         if (!end) end = p + strlen(p);
         const int head = p[0] == '#' && p[1] == ' ';
@@ -803,7 +883,7 @@ static void run_switch(const pes6_launcher *l, uint32_t *px) {
     rrect2(px, ROW_X, RUN_Y, LIST_W, RUN_H, 4, 0, RGB(18, 30, 66), RGB(8, 14, 38), 0.65f * a);
     rrect(px, ROW_X, RUN_Y, LIST_W, RUN_H, 4, 0.75f, RGB(90, 112, 170), 0.35f * a);
     const uint32_t ink = usable ? RGB(216, 226, 248) : RGB(110, 120, 150);
-    text_draw(px, ROW_X + 9, RUN_Y + (RUN_H - SMALL.cap) / 2, "Correr al borde", &SMALL, ink, ink, 0);
+    text_draw(px, ROW_X + 9, RUN_Y + (RUN_H - SMALL.cap) / 2, L("Edge sprint", "Correr al borde"), &SMALL, ink, ink, 0);
     const float pw = 22, ph = 11, pxl = ROW_X + LIST_W - pw - 8, py = RUN_Y + (RUN_H - ph) / 2;
     rrect(px, pxl, py, pw, ph, ph / 2, 0, on ? RGB(60, 150, 255) : RGB(40, 50, 80), a);
     rrect(px, pxl, py, pw, ph, ph / 2, 0.6f, RGB(150, 180, 240), 0.5f * a);
@@ -829,7 +909,7 @@ static void controls_static(const pes6_launcher *l, uint32_t *px) {
     rrect(px, BACK_X, BACK_Y, BACK_W, BACK_H, 6, 0.75f, RGB(150, 180, 240), 0.5f);
     chevron(px, BACK_X + 9, cy, 6, 0, RGB(236, 242, 255), 1);
     rrect(px, BACK_X + 9, cy - 0.9f, 13, 1.8f, 0.9f, 0, RGB(236, 242, 255), 1);
-    text_draw(px, BACK_X + BACK_W + 10, cy - TITLE.cap / 2, "Controles", &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
+    text_draw(px, BACK_X + BACK_W + 10, cy - TITLE.cap / 2, L("Controls", "Controles"), &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
 
     for (int i = 0; i < CTRL_COUNT; i++) {
         const float y = LIST_Y + i * LIST_DY;
@@ -842,10 +922,10 @@ static void controls_static(const pes6_launcher *l, uint32_t *px) {
             rrect(px, ROW_X, y, LIST_W, LIST_H, 4, 0.75f, RGB(90, 112, 170), 0.35f);
         }
         const uint32_t c = on ? RGB(255, 255, 255) : RGB(168, 182, 214);
-        text_draw(px, ROW_X + 12, y + (LIST_H - LABEL.cap) / 2, SCHEME_NAME[i], &LABEL, c, c, 0);
+        text_draw(px, ROW_X + 12, y + (LIST_H - LABEL.cap) / 2, scheme_name(i), &LABEL, c, c, 0);
     }
     run_switch(l, px);
-    side_button(px, EDIT_X, EDIT_Y, "Editar", l->ctl_sel == CTRL_COUNT);
+    side_button(px, EDIT_X, EDIT_Y, L("Edit", "Editar"), l->ctl_sel == CTRL_COUNT);
     preview_draw(l, px);
     rrect(px, PV_X, TEXT_Y, PV_W, TEXT_H, 6, 0, TEXT_BG, 1);
     rrect(px, PV_X, TEXT_Y, PV_W, TEXT_H, 6, 0.75f, RGB(150, 180, 240), 0.4f);
@@ -893,7 +973,7 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
 
     /* Title and a thin rule under it. */
     text_draw(px, ROW_X, 16, PES6_PRODUCT_NAME, &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
-    text_draw(px, ROW_X + text_width(PES6_PRODUCT_NAME, &TITLE) + 10, 20, "Ajustes", &SUB,
+    text_draw(px, ROW_X + text_width(PES6_PRODUCT_NAME, &TITLE) + 10, 20, L("Settings", "Ajustes"), &SUB,
               RGB(120, 140, 190), RGB(120, 140, 190), 0);
     fill(px, ROW_X, 38, ROW_W, 1, RGB(60, 84, 150));
 
@@ -934,33 +1014,34 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     rrect2(px, PLAY_X, PLAY_Y, PLAY_W, PLAY_H, 7, 0, pf ? RGB(78, 140, 255) : RGB(44, 84, 180),
            pf ? RGB(28, 70, 190) : RGB(18, 40, 110), 1);
     rrect(px, PLAY_X, PLAY_Y, PLAY_W, PLAY_H, 7, 0.75f, RGB(190, 215, 255), pf ? 0.9f : 0.5f);
-    const float pw = text_width("Jugar", &PLAY);
-    text_draw(px, PLAY_X + (PLAY_W - pw) / 2, PLAY_Y + (PLAY_H - PLAY.cap) / 2, "Jugar", &PLAY,
+    const char *play = L("Play", "Jugar");
+    const float pw = text_width(play, &PLAY);
+    text_draw(px, PLAY_X + (PLAY_W - pw) / 2, PLAY_Y + (PLAY_H - PLAY.cap) / 2, play, &PLAY,
               RGB(255, 255, 255), RGB(210, 225, 255), 0);
 
     /* CONTROLES: the same lozenge, smaller and quieter; focus is one step right of JUGAR. */
-    if (l->android) side_button(px, OPEN_X, OPEN_Y, "Controles", l->sel == nrows + 1);
+    if (l->android) side_button(px, OPEN_X, OPEN_Y, L("Controls", "Controles"), l->sel == nrows + 1);
 
     /* The gamepad, if there is one, and the keys. */
     char pad[96];
     if (l->pad_name[0] && !l->android) {
-        snprintf(pad, sizeof pad, "Mando conectado: %s", l->pad_name);
+        snprintf(pad, sizeof pad, L("Controller connected: %s", "Mando conectado: %s"), l->pad_name);
         disc(px, ROW_X + 4, 258, 2.5f, 0, RGB(90, 230, 130), 1);
         text_draw(px, ROW_X + 12, 254.5f, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
     } else if (l->pad_name[0]) {              /* Android: the pad goes top right */
-        snprintf(pad, sizeof pad, "Mando: %s", l->pad_name);
+        snprintf(pad, sizeof pad, L("Controller: %s", "Mando: %s"), l->pad_name);
         const float w = text_width(pad, &HELP);
         disc(px, ROW_X + ROW_W - w - 8, 23.5f, 2.5f, 0, RGB(90, 230, 130), 1);
         text_draw(px, ROW_X + ROW_W - w, 20, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
     }
-    const char *keys = "\x04 Aceptar   < > Cambiar";
+    const char *keys = L("\x04 Accept   < > Change", "\x04 Aceptar   < > Cambiar");
     text_draw(px, ROW_X + ROW_W - text_width(keys, &HELP), 254.5f, keys, &HELP, RGB(120, 136, 180), RGB(120, 136, 180), 0);
 }
 
 /* ---- the touch controls' editor ------------------------------------------------------------ */
 
-static const struct { const char *label; float x, w; } EDITOR_BTN[PES6_EDITOR_BUTTONS] = {
-    { "-", 220, 30 }, { "+", 256, 30 }, { "Restablecer", 292, 100 }, { "Listo", 398, 46 },
+static const struct { const char *en, *es; float x, w; } EDITOR_BTN[PES6_EDITOR_BUTTONS] = {
+    { "-", "-", 220, 30 }, { "+", "+", 256, 30 }, { "Reset", "Restablecer", 292, 100 }, { "Done", "Listo", 398, 46 },
 };
 #define EDITOR_BTN_Y 12
 #define EDITOR_BTN_H 22
@@ -969,15 +1050,16 @@ void pes6_launcher_draw_editor(uint32_t *px, int scale, const char *help, int fo
     K = scale < 1 ? 1 : scale > PES6_LAUNCHER_MAX_SCALE ? PES6_LAUNCHER_MAX_SCALE : scale;
     const uint32_t *bg = backdrop();
     if (bg) memcpy(px, bg, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
-    text_draw(px, ROW_X, 16, "Editar", &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
+    text_draw(px, ROW_X, 16, L("Edit", "Editar"), &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
     for (int i = 0; i < PES6_EDITOR_BUTTONS; i++) {
         const float x = EDITOR_BTN[i].x, w = EDITOR_BTN[i].w;
         const int f = i == focus, done = i == PES6_EDITOR_DONE;
         rrect2(px, x, EDITOR_BTN_Y, w, EDITOR_BTN_H, 5, 0, done || f ? RGB(70, 130, 245) : RGB(36, 60, 124),
                done || f ? RGB(26, 64, 170) : RGB(16, 30, 72), 1);
         rrect(px, x, EDITOR_BTN_Y, w, EDITOR_BTN_H, 5, 0.75f, RGB(170, 200, 250), f ? 0.95f : 0.5f);
-        const float tw = text_width(EDITOR_BTN[i].label, &VALUE);
-        text_draw(px, x + (w - tw) / 2, EDITOR_BTN_Y + (EDITOR_BTN_H - VALUE.cap) / 2, EDITOR_BTN[i].label, &VALUE,
+        const char *label = L(EDITOR_BTN[i].en, EDITOR_BTN[i].es);
+        const float tw = text_width(label, &VALUE);
+        text_draw(px, x + (w - tw) / 2, EDITOR_BTN_Y + (EDITOR_BTN_H - VALUE.cap) / 2, label, &VALUE,
                   RGB(255, 255, 255), RGB(215, 228, 255), 0);
     }
     fill(px, ROW_X, 40, ROW_W, 1, RGB(60, 84, 150));

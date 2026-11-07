@@ -24,6 +24,7 @@
  */
 #include <android_native_app_glue.h>
 #include <android/asset_manager.h>
+#include <android/configuration.h>
 #include <android/log.h>
 #include <android/window.h>
 #include <aaudio/AAudio.h>
@@ -51,6 +52,7 @@
 #include "iso_eboot.h"
 #include "flow.h"
 #include "flow_font.h"
+#include "lang.h"
 #include "launcher.h"
 #include "product.h"
 #include "version.h"
@@ -234,9 +236,13 @@ static int pro_dpad(void) { return pes6_settings_current.controls == CTRL_PRO_DP
 enum { C_DPAD = 10, C_SELECT, C_START, C_DASH, C_COUNT };   /* 0..9 and C_DASH: PRO_BTN */
 static const char *const C_NAME[C_COUNT] = { "square", "cross", "circle", "triangle", "l", "r", "l_square",
                                              "r_square", "l_triangle", "r_triangle", "dpad", "select", "start", "dash" };
-static const char *const C_LABEL[C_COUNT] = { "Cuadrado", "Equis", "Circulo", "Triangulo", "L", "R", "L + cuadrado",
-                                              "R + cuadrado", "L + triangulo", "R + triangulo", "Cruceta", "Select",
-                                              "Start", "Correr" };
+static const char *const C_LABEL_ES[C_COUNT] = { "Cuadrado", "Equis", "Circulo", "Triangulo", "L", "R", "L + cuadrado",
+                                                 "R + cuadrado", "L + triangulo", "R + triangulo", "Cruceta", "Select",
+                                                 "Start", "Correr" };
+static const char *const C_LABEL_EN[C_COUNT] = { "Square", "Cross", "Circle", "Triangle", "L", "R", "L + square",
+                                                 "R + square", "L + triangle", "R + triangle", "D-pad", "Select",
+                                                 "Start", "Dash" };
+#define C_LABEL (pes6_lang == PES6_LANG_ES ? C_LABEL_ES : C_LABEL_EN)
 static int is_btn(int c) { return c < C_DPAD || c == C_DASH; }     /* a PRO_BTN, not the d-pad or a pill */
 /* The buttons a finger can take in this scheme. */
 static int pro_used(int i) {
@@ -1442,10 +1448,20 @@ static void commentary_task(void) { pes6_commentary_frame(); }
 static void setup_commentary(const char *dir, const char *mods) {
     static const char *const banks[] = { "s_sound.afs", "e_sound.afs" };
     const char *id = getenv("PES6_MOD");
-    if (id && !*id) return;                  /* the original game (version.c): the PSP's, no commentary */
     char own[600];
+    /* the original game (version.c): the English PS2 bank in <files>/mods/commentary_en only; a
+     * version (the patch): its own bank (Palma's), then the general ones */
     snprintf(own, sizeof own, "%s/%s", mods, id && *id ? id : "");
     const char *const roots[] = { id && *id ? own : dir, dir, mods };
+    if (id && !*id) {
+        char path[900];
+        snprintf(path, sizeof path, "%s/commentary_en/e_sound.afs", mods);
+        if (pes6_commentary_open(path, NULL) != 0) return;
+        pes6_commentary_set_enabled(pes6_settings_current.commentary);
+        psp_add_vblank_task(commentary_task);
+        LOGI("commentary from %s", path);
+        return;
+    }
     char path[900];
     for (int r = 0; r < 3; r++)
         for (int b = 0; b < 2; b++) {
@@ -1906,7 +1922,8 @@ static void iso_take(JNIEnv *env) {
     if (slash) *slash = 0;
     if (I.size > 0 && statvfs(dir, &fs) == 0 && (int64_t)fs.f_bavail * (int64_t)fs.f_frsize < I.size + (64 << 20)) {
         close(fd);
-        snprintf(I.msg, sizeof I.msg, "Falta espacio: la ISO ocupa %.1f GB.", (double)I.size / 1e9);
+        snprintf(I.msg, sizeof I.msg, L("Not enough room: the ISO takes %.1f GB.", "Falta espacio: la ISO ocupa %.1f GB."),
+                 (double)I.size / 1e9);
         I.state = ISO_FAILED;
         return;
     }
@@ -1918,7 +1935,7 @@ static void iso_take(JNIEnv *env) {
     if (pthread_create(&t, NULL, iso_copy_thread, NULL) != 0) {
         close(fd);
         I.fd = -1;
-        snprintf(I.msg, sizeof I.msg, "No se pudo copiar la ISO.");
+        snprintf(I.msg, sizeof I.msg, "%s", L("The ISO could not be copied.", "No se pudo copiar la ISO."));
         I.state = ISO_FAILED;
         return;
     }
@@ -1943,31 +1960,32 @@ static void iso_step(pes6_launcher *l, int want_pick) {
     if (I.state == ISO_COPYING && I.copy_done) {
         I.state = I.copy_done > 0 ? ISO_READY : ISO_FAILED;
         I.have = I.copy_done > 0;
-        if (I.copy_done < 0) snprintf(I.msg, sizeof I.msg, "No se pudo copiar la ISO (espacio o permiso).");
+        if (I.copy_done < 0) snprintf(I.msg, sizeof I.msg, "%s",
+                                     L("The ISO could not be copied (room or permission).", "No se pudo copiar la ISO (espacio o permiso)."));
         fprintf(stderr, "[iso] copy %s: %s\n", I.copy_done > 0 ? "done" : "failed", I.iso);
     }
     const char *help;
     switch (I.state) {
     case ISO_READY:
-        snprintf(I.value, sizeof I.value, "PES6 lista");
-        help = "Tu copia de PES6 esta lista. Toca para cambiarla.";
+        snprintf(I.value, sizeof I.value, "%s", L("PES6 ready", "PES6 lista"));
+        help = L("Your copy of PES6 is ready. Tap to change it.", "Tu copia de PES6 esta lista. Toca para cambiarla.");
         break;
     case ISO_PICKING:
-        snprintf(I.value, sizeof I.value, "Eligiendo...");
-        help = "Elige el archivo .iso de tu PES6 (Europa, ULES00476).";
+        snprintf(I.value, sizeof I.value, "%s", L("Choosing...", "Eligiendo..."));
+        help = L("Choose the .iso file of your PES6 (Europe, ULES00476).", "Elige el archivo .iso de tu PES6 (Europa, ULES00476).");
         break;
     case ISO_COPYING:
-        snprintf(I.value, sizeof I.value, "Copiando %d%%",
+        snprintf(I.value, sizeof I.value, L("Copying %d%%", "Copiando %d%%"),
                  I.size > 0 ? (int)(I.copied * 100 / I.size) : 0);
-        help = "Copiando la ISO a la app. No cierres la app.";
+        help = L("Copying the ISO into the app. Do not close the app.", "Copiando la ISO a la app. No cierres la app.");
         break;
     case ISO_FAILED:                               /* a wrong pick keeps the copy there was */
-        snprintf(I.value, sizeof I.value, I.have ? "PES6 lista" : "Elegir ISO");
+        snprintf(I.value, sizeof I.value, "%s", I.have ? L("PES6 ready", "PES6 lista") : L("Choose ISO", "Elegir ISO"));
         help = I.msg;
         break;
     default:
-        snprintf(I.value, sizeof I.value, "Elegir ISO");
-        help = "Elige tu copia de PES6 (Europa, ULES00476) para jugar.";
+        snprintf(I.value, sizeof I.value, "%s", L("Choose ISO", "Elegir ISO"));
+        help = L("Choose your copy of PES6 (Europe, ULES00476) to play.", "Elige tu copia de PES6 (Europa, ULES00476) para jugar.");
         break;
     }
     pes6_launcher_set_iso(l, I.value, help, I.state == ISO_READY || (I.state == ISO_FAILED && I.have));
@@ -1999,8 +2017,11 @@ static int edit_controls(uint32_t *px) {
         g_back = 0;
         if (g_surf == EGL_NO_SURFACE) continue;
         char help[128];
-        if (g_ed.sel < 0) snprintf(help, sizeof help, "Arrastra un boton para moverlo. Toca uno y usa - y + para su tamano.");
-        else snprintf(help, sizeof help, "%s, tamano x%.1f: arrastralo, o - y + para el tamano.", C_LABEL[g_ed.sel],
+        if (g_ed.sel < 0)
+            snprintf(help, sizeof help, "%s", L("Drag a button to move it. Tap one and use - and + for its size.",
+                                                "Arrastra un boton para moverlo. Toca uno y usa - y + para su tamano."));
+        else snprintf(help, sizeof help, L("%s, size x%.1f: drag it, or - and + for the size.",
+                                           "%s, tamano x%.1f: arrastralo, o - y + para el tamano."), C_LABEL[g_ed.sel],
                       ctl_size(g_ed.sel));
         const int k = pes6_launcher_scale_for(g_w, g_h);
         pes6_launcher_draw_editor(px, k, help, -1);
@@ -2442,6 +2463,11 @@ void android_main(struct android_app *app) {
     LOGI("data directory: %s", dir);
     load_env(dir);
     layout_load(dir);
+    {   /* the port's own screens in the phone's language (lang.h) */
+        char lang[3] = { 0 };
+        AConfiguration_getLanguage(app->config, lang);
+        pes6_lang_init(lang);
+    }
 
     while (!app->window) pump_events(100);
     if (egl_init() != 0) { LOGE("EGL / OpenGL ES 3 unavailable"); return; }

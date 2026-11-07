@@ -16,6 +16,7 @@
 #include <psprecomp/mem.h>
 #include <psprecomp/cpu.h>
 
+#include "lang.h"
 #include "overlays.h"
 #include "../common/commentary.h"
 #include "../common/tuning.h"
@@ -332,8 +333,10 @@ static void setup_commentary(void) {
     if (!afs || !*afs) {                       /* default: <version>/commentary, <io root>/commentary */
         static const char *const names[] = { "s_sound.afs", "e_sound.afs" };
         const char *mods = getenv("PES6_MODS"), *id = getenv("PES6_MOD");
-        if (id && !*id) return;                /* the original game (version.c): the PSP's, no commentary */
-        snprintf(own, sizeof own, "%s/%s/commentary", mods && *mods ? mods : "mods", id ? id : "");
+        /* the original game (version.c): the English PS2 bank, mods/commentary_en/e_sound.afs */
+        snprintf(own, sizeof own, "%s/%s", mods && *mods ? mods : "mods", id && *id ? id : "commentary_en");
+        if (id && !*id) snprintf(dir, sizeof dir, "%s", own);
+        else strncat(own, "/commentary", sizeof own - strlen(own) - 1);
         const char *const dirs[] = { id && *id ? own : NULL, dir };
         afs = NULL;
         for (int d = 0; d < 2 && !afs; d++)
@@ -491,6 +494,12 @@ int main(int argc, char **argv) {
      * (PES6_INPUT) or PES6_MENU=0. It opens the window with OpenGL to present;
      * its renderer setting decides who rasterizes. */
     pes6_settings settings;
+    {   /* the port's own screens in the computer's language (lang.h) */
+        const char *lc = getenv("LC_ALL");
+        if (!lc || !*lc) lc = getenv("LC_MESSAGES");
+        if (!lc || !*lc) lc = getenv("LANG");
+        pes6_lang_init(lc);
+    }
     pes6_settings_load(&settings, psp_io_root());
     const char *menu_env = getenv("PES6_MENU");
     const int menu = window && !getenv("PES6_INPUT") && !(menu_env && *menu_env == '0');

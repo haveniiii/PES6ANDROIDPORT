@@ -347,3 +347,38 @@ repetir `transcribe_bank.py` sobre él, ampliar los `pick` y volver a pasar `tri
 - **«¡Uy, qué buen pase!»:** salía en `pass` y en `through_pass`, cada 12 s. Ahora solo en `pass` y, como
   `through_pass`, a lo sumo una vez por minuto (`PASS_GAP`).
 - `header` no tiene clips en el catálogo de PECH: los cabezazos no se comentan.
+
+### Comentarios en inglés para el PES6 original (6–7/11)
+
+Decisión del usuario: **el PES6 original («Liga chilena: No») habla en inglés** con el banco de PS2, y el
+parche solo con el de Claudio Palma. No hay que elegir idioma.
+
+- **Banco:** `e_sound.afs` de la versión PAL inglesa de PS2: Peter Brackley y Trevor Brooking, 13 127 clips.
+  0–76 son sonidos estéreo y desde 77 es voz mono, ADX a 24 kHz. Copia en `build/comm_en/e_sound.afs` (SHA-256
+  `fb57c374e347a34e`).
+- **Misma disposición que el banco español** de 77 a 6999, en los nombres (8156–13126, con las variantes
+  «And X!», «There's X», «X!» en los mismos números) y en los equipos (5279+k, 5509+k, 5739+k «versus X», con el
+  mismo k). Por eso sirven tal cual `teams_s_sound_original.txt` y `names_s_sound_original.txt`.
+- **Desde 7000 cambia:**
+  - las frases de marcador empiezan en 7114 (en español, 7108), cinco por resultado de 1-0 a 5-5;
+  - pases hacia atrás en 7214–7220 y pases en 7230–7351;
+  - pases filtrados en 7370–7402, 7570–7600 y 7658–7685;
+  - intercepciones en 7801–7917;
+  - conducciones en 7939–7999.
+- **Transcripción entera** con `transcribe_bank.py --lang en` (opciones nuevas `--lang` y `--clips`): 8 156 clips,
+  unas 2,5 h, en `build/comm_en/phrases.tsv`. Se cruzó con el mapa de la comunidad (PeSoccerWorld).
+- **Bloques:** `tools/commentary/blocks_e_sound_original.txt` → `mods/commentary_en/e_sound.txt`, con 2 748
+  entradas. Quedan fuera las frases de una final o de un partido numerado, «el primer / octavo córner», los tiros
+  libres directos e indirectos, la barrera y los remates por pie.
+- **Recorte:** `trim_bank.py` → `mods/commentary_en/e_sound.afs`, 207 MB y 9 016 clips.
+- **Hosts:**
+  - con `PES6_MOD` vacío (el original), Android carga `<files>/mods/commentary_en/e_sound.afs` y el escritorio
+    `mods/commentary_en/`;
+  - con el parche, todo sigue como antes.
+- **APK:** `tools/android_build.sh` mete `mods/commentary_en/` en las de prueba. En `release` lo deja fuera salvo
+  `COMMENTARY_EN=1`: es audio del disco y falta decidir cómo lo recibe la APK pública.
+- **Probado en el escritorio** (original, Auxerre–Bordeaux, con bot):
+  - dice la bienvenida, «Bourgogne… versus Aquitaine» y el saque;
+  - comenta una falta, pases filtrados, tiros, un tiro desviado («So close!»), un córner, un saque de banda y la
+    espera de un tiro libre;
+  - dice los nombres por su clip (8330, «Cissé»).

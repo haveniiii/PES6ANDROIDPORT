@@ -1,5 +1,6 @@
 /* PES6PORT — the game's EBOOT from the player's own ISO. See iso_eboot.h. */
 #include "iso_eboot.h"
+#include "lang.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -121,13 +122,14 @@ int pes6_iso_eboot_valid(const char *path) {
 
 const char *pes6_iso_eboot_message(int code) {
     switch (code) {
-    case ISO_EBOOT_OK:         return "ISO correcta.";
-    case ISO_EBOOT_READ:       return "No se pudo leer el archivo.";
-    case ISO_EBOOT_NOT_ISO:    return "No es una imagen ISO.";
-    case ISO_EBOOT_NO_EBOOT:   return "No es un juego de PSP.";
-    case ISO_EBOOT_DECRYPT:    return "No se pudo descifrar el EBOOT del juego.";
-    case ISO_EBOOT_OTHER_GAME: return "Otro juego: hace falta PES6 Europa (ULES00476).";
-    case ISO_EBOOT_WRITE:      return "No hay espacio para guardar los datos del juego.";
-    default:                   return "Error desconocido.";
+    case ISO_EBOOT_OK:         return L("ISO OK.", "ISO correcta.");
+    case ISO_EBOOT_READ:       return L("The file could not be read.", "No se pudo leer el archivo.");
+    case ISO_EBOOT_NOT_ISO:    return L("Not an ISO image.", "No es una imagen ISO.");
+    case ISO_EBOOT_NO_EBOOT:   return L("Not a PSP game.", "No es un juego de PSP.");
+    case ISO_EBOOT_DECRYPT:    return L("The game's EBOOT could not be decrypted.", "No se pudo descifrar el EBOOT del juego.");
+    case ISO_EBOOT_OTHER_GAME: return L("Another game: PES6 Europe (ULES00476) is needed.",
+                                        "Otro juego: hace falta PES6 Europa (ULES00476).");
+    case ISO_EBOOT_WRITE:      return L("No room to keep the game's data.", "No hay espacio para guardar los datos del juego.");
+    default:                   return L("Unknown error.", "Error desconocido.");
     }
 }

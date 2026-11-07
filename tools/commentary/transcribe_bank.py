@@ -2,6 +2,7 @@
 """Transcribe a voice bank clip by clip from its own audio (docs/24).
 
     python3 tools/commentary/transcribe_bank.py BANK.afs OUT.tsv [--last 7999] [--workers 2]
+        [--lang es|en] [--clips a-b,c,...]
 
 The catalogue must come from the bank it plays: PECH's recording has the same blocks as the older
 Palma bank, but not the same clip in each place. OUT.tsv (clip, seconds, event, score, text) is
@@ -16,6 +17,7 @@ import sys
 import tempfile
 
 MODEL = 'vendor/whisper/ggml-small.bin'
+LANG = 'es'
 PAD = 0.8
 
 
@@ -34,7 +36,7 @@ def transcribe(job):
     seconds = (os.path.getsize(base + '.wav') - 78) / 32000.0
     quiet('ffmpeg', '-nostdin', '-y', '-i', base + '.wav', '-af',
           'adelay=%d,apad=pad_dur=%g' % (PAD * 1000, PAD), base + '_p.wav')
-    quiet('whisper-cli', '-m', MODEL, '-l', 'es', '-nt', '-t', '3', '-otxt', '-of', base, '-f', base + '_p.wav')
+    quiet('whisper-cli', '-m', MODEL, '-l', LANG, '-nt', '-t', '3', '-otxt', '-of', base, '-f', base + '_p.wav')
     text = ''
     if os.path.exists(base + '.txt'):
         text = ' '.join(open(base + '.txt', errors='replace').read().split())
@@ -45,10 +47,23 @@ def transcribe(job):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    last = int(sys.argv[sys.argv.index('--last') + 1]) if '--last' in sys.argv else 7999
-    workers = int(sys.argv[sys.argv.index('--workers') + 1]) if '--workers' in sys.argv else 2
-    args = [a for a in args if a not in (str(last), str(workers))]
+    global LANG
+    opts, args, argv = {}, [], sys.argv[1:]
+    while argv:
+        a = argv.pop(0)
+        if a.startswith('--'):
+            opts[a[2:]] = argv.pop(0)
+        else:
+            args.append(a)
+    last = int(opts.get('last', 7999))
+    workers = int(opts.get('workers', 2))
+    LANG = opts.get('lang', 'es')
+    only = None
+    if 'clips' in opts:
+        only = set()
+        for part in opts['clips'].split(','):
+            a, _, b = part.partition('-')
+            only.update(range(int(a), int(b or a) + 1))
     bank, out = args
     f = open(bank, 'rb')
     if f.read(4) != b'AFS\0':
@@ -60,7 +75,8 @@ def main():
         done = {int(l.split('\t')[0]) for l in open(out) if l[0].isdigit()}
     else:
         open(out, 'w').write('clip\tseconds\tevent\tscore\ttext\n')
-    todo = [i for i in range(min(n, last + 1)) if table[i][1] and i not in done]
+    todo = [i for i in (sorted(only) if only is not None else range(min(n, last + 1)))
+            if i < n and table[i][1] and i not in done]
     print('%d clips to do, %d done' % (len(todo), len(done)), flush=True)
     with tempfile.TemporaryDirectory() as tmp, concurrent.futures.ThreadPoolExecutor(workers) as pool:
         def jobs():

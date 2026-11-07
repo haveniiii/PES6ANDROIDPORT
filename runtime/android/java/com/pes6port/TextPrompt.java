@@ -42,7 +42,7 @@ public final class TextPrompt {
             field.setSelectAllOnFocus(true);
 
             final AlertDialog dialog = new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                    .setTitle(title.isEmpty() ? "Nombre" : title)
+                    .setTitle(title.isEmpty() ? ("es".equals(java.util.Locale.getDefault().getLanguage()) ? "Nombre" : "Name") : title)
                     .setView(field)
                     .setPositiveButton(android.R.string.ok, (d, w) -> answer(true, field.getText().toString().trim(), initial))
                     .setNegativeButton(android.R.string.cancel, (d, w) -> answer(false, initial, initial))

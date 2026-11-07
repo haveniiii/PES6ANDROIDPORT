@@ -229,3 +229,19 @@ Apagado: el stick nunca pulsa R. En Clásico y Pro se corre con el botón R. En 
 un botón **Dash** abajo a la derecha (`C_DASH` en `runtime/android/main.c`, `layout.txt` «dash»),
 que se mueve en Editar. Con el arquero con el balón en las manos tampoco pulsa R. En el esquema Cruceta
 el interruptor sale gris. Comprobado dibujando la página en escritorio; falta en el teléfono.
+
+## 10. Idioma del menú previo (2026-11-06)
+
+Las pantallas propias del port (menú previo, Controles, editor de botones, mensajes de la ISO, diálogo del nombre) salen en
+el idioma del teléfono: **español si el teléfono está en español, inglés en cualquier otro caso**.
+
+- `runtime/common/lang.h|c`: `L("English", "Español")` devuelve el texto del idioma actual, y `pes6_lang_init(locale)` lo fija.
+- **Android:** `AConfiguration_getLanguage` al arrancar. **Escritorio:** `LC_ALL`, `LC_MESSAGES` o `LANG`.
+  `PES6_LANG=en|es` lo fuerza en cualquier host.
+- Las descripciones de los esquemas están enteras en los dos idiomas (`SCHEME_TEXT[idioma][esquema]`). Los nombres de
+  las acciones siguen en inglés, porque son los de la Command List del juego.
+- Java: `TextPrompt` titula «Name» o «Nombre» según `Locale`.
+- El texto del propio juego es del juego, y su idioma se elige en su pantalla de idioma.
+- Para agregar un idioma: un valor más en `PES6_LANG_*`, un argumento más en `L()` y una columna más en `SCHEME_TEXT`.
+- Comprobado dibujando el menú en los dos idiomas (programa de prueba en el scratchpad de la sesión). Regresión PASS.
+  La APK compila; falta verla en el teléfono.

@@ -1,0 +1,104 @@
+# Commentary events of the original English e_sound.afs of PES6 PS2 (PAL; Peter Brackley and
+# Trevor Brooking, with the players' and teams' names), by blocks of the bank (docs/24). The bank
+# has the Spanish one's layout clip for clip below 7000 and in the names (8156-13126) and teams
+# (5279+k, 5509+k, 5739+k "versus X"); from 7000 on it is shifted (the score lines start at 7114,
+# not 7108). Found by transcribing every clip in English (whisper.cpp, build/comm_en/phrases.tsv)
+# and the community map of e_sound (PeSoccerWorld). Plays only with the original game (6/11).
+#   <event> <first clip>-<last clip> [<regex the transcription must match> | *]
+# tools/commentary/build_catalogue.py turns this into e_sound.txt.
+
+# before the first kick-off: "Good afternoon and welcome, I'm Peter Brackley..." (then the teams)
+welcome       6319-6348 *
+# 6661-6663 are for a final or a numbered game
+kickoff       6660-6660 *
+kickoff       6664-6684 *
+second_half   6685-6698 *
+
+# goals: the shout (the name "X!" follows), a line on the goal, the score. 1018-1026 are the
+# right foot / left foot / header shouts, 1058+ early and late goals: not told apart here.
+goal          1027-1057 *
+goal          146-146   *
+equalizer     1010-1014 *
+equalizer     149-152   *
+equalizer     154-154   *
+goal_after    1298-1303 *
+goal_after    1380-1381 *
+goal_after    1383-1384 *
+goal_after    1406-1409 *
+goal_after    1418-1426 *
+goal_after    301-301   *
+goal_after    305-308   *
+goal_after    312-314   *
+goal_after    318-319   *
+goal_after    327-332   *
+goal_after    336-337   *
+goal_after    346-347   *
+goal_after    349-349   *
+own_goal      1674-1691 own|believe|didn't see
+# five whole score lines per score, 1-0 .. 5-5: three of the side ahead, two of the side behind
+score_lines   7114
+# the bare score "one nil", "one all"... (the Spanish table's order)
+score_table   3118
+
+# shots: the attempt, headers, woodwork, misses, saves
+shot          4239-4259 ^(?!.*head)
+shot          4285-4332 ^(?!.*head)
+header        4260-4284 head
+header        4196-4201 *
+woodwork      4339-4353 *
+woodwork      963-970   *
+shot_miss     4354-4365 *
+shot_miss     4380-4514 *
+shot_miss     960-962   *
+shot_miss     987-990   *
+save          3368-3379 *
+save          3392-3393 *
+save          3415-3445 keeper|save|stop|block|punch|react
+save          3935-3950 *
+save          3995-4060 *
+
+# the referee
+offside       4532-4570 *
+offside       3655-3675 offside
+foul          4649-4694 *
+foul          4790-4860 free kick|foul|whistle|challenge|tackle|ref
+penalty       4695-4774 penalty|spot
+red_card      4775-4784 max=12 red|sent off|second yellow
+red_card      4861-4866 max=12 red|sent off|second yellow
+yellow_card   4785-4789 max=12 ^(?!.*(red|second yellow|sent off)).*yellow
+yellow_card   4867-4878 max=12 ^(?!.*(red|second yellow|sent off)).*yellow
+
+# restarts; the corners leave out "the first / eighth corner of the game"
+throw_in      3851-3901 *
+goal_kick     5019-5029 *
+corner        5030-5097 ^(?!.*(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|today's)).*corner
+# before a free kick (not the direct / indirect, wall and target counts, nor the score-state lines)
+setpiece_wait 4907-4927 *
+setpiece_wait 4937-4969 ^(?!.*injury)
+setpiece_wait 5102-5124 *
+
+# open play
+cross         76-87     *
+cross         755-806   cross|swing|ball in|in comes|post|middle|deliver|whip|float|box|centre|center
+cross         5125-5190 *
+through_pass  7370-7402 *
+through_pass  7570-7600 *
+through_pass  7658-7685 *
+back_pass     7214-7220 *
+pass          7230-7238 *
+pass          7250-7256 *
+pass          7294-7320 *
+tackle        7535-7546 *
+tackle        7801-7826 *
+tackle        7843-7847 *
+tackle        7873-7917 *
+dribble       7939-7955 *
+dribble       7990-7999 *
+dribble       6316-6318 *
+chatter       3840-3850 *
+chatter       7696-7701 *
+chatter       7703-7709 *
+chatter       7725-7765 *
+half_time     1920-1930 *
+full_time     2322-2328 *
+substitution  1728-1760 *

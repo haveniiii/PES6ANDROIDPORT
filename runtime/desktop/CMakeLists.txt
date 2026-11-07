@@ -79,6 +79,7 @@ add_executable(pes6
     ../common/net.c
     ../common/osk.c
     ../common/settings.c
+    ../common/lang.c
     ../common/version.c
     ../common/afs_mods.c
     ../common/launcher.c

@@ -401,6 +401,13 @@ la latencia; si no, más 2–3 meses de *rollback* (`docs/27`).
     el Redmi local y otro con el Redmi visitante.
   - Los `env.txt` siguen con `PES6_NET_PEERS`. Los originales están en `build/net_tailscale/`: devolverlos al terminar.
 
+**6/11 — antes de la versión final (pedidos del usuario):** (1) menú previo en el idioma del teléfono: **hecho, sin
+commit** (`docs/19` §10, `lang.h`; inglés salvo teléfono en español). (2) comentarios del PES6 de PS2 en inglés:
+**hechos, sin commit** (`docs/24`, último apartado). Solo el original habla en inglés, con Brackley y Brooking; el
+parche sigue con Palma (decisión del usuario). Banco en `mods/commentary_en/`. APK de prueba `PES6-1.2.2-en1.apk`
+(`d553e8d07c007076`, sin instalar). Falta decidir cómo lo recibe la APK pública: `release` lo deja fuera salvo
+`COMMENTARY_EN=1`. Las pruebas de red pendientes siguen en `docs/15` §17c. Beta publicada: GitHub Release `v1.2.2-beta` (fix12).
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.

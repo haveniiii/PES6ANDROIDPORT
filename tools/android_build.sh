@@ -123,6 +123,15 @@ if [ "$MODS" = 1 ]; then
     # s_sound.txt, cut down with tools/commentary/trim_bank.py). The product has its own
     # (mods/$PRODUCT/commentary).
     [ -z "$PRODUCT" ] && (cd "$ROOT/mods" && find commentary -maxdepth 1 -type f \( -name '*.afs' -o -name '*.txt' \) 2>/dev/null) >> "$LIST"
+    # The original game's commentary (decision of the user, 6/11): the English PS2 bank
+    # (Brackley and Brooking) in mods/commentary_en/ (e_sound.afs, cut down, + e_sound.txt); the
+    # patch keeps Palma's. The bank is disc audio: a release build leaves it out unless
+    # COMMENTARY_EN=1 (how the public APK gets it is still open).
+    if [ "$RELEASE" = 0 ] || [ "${COMMENTARY_EN:-0}" = 1 ]; then
+        (cd "$ROOT/mods" && find commentary_en -maxdepth 1 -type f \( -name '*.afs' -o -name '*.txt' \) 2>/dev/null) >> "$LIST"
+    else
+        echo "release: the English commentary bank left out (COMMENTARY_EN=1 puts it in)"
+    fi
     python3 - "$ROOT/mods" "$OUT/pkg/assets/mods" "$LIST" <<'PY'
 import hashlib, os, sys
 src, dst, lst = sys.argv[1:]
