@@ -10,6 +10,7 @@
  * scaled; nothing is taken from the game's data. Its words are in the phone's language (lang.h). */
 #include "launcher.h"
 #include "lang.h"
+#include "patch.h"
 #include "product.h"
 
 #include <math.h>
@@ -34,6 +35,8 @@ static int K = 1;          /* ...drawn K times larger (pes6_launcher_draw), so i
 #define BTN_CIRCLE 0x2000u
 #define BTN_L      0x0100u
 #define BTN_R      0x0200u
+#define BTN_TRIANGLE 0x1000u
+#define BTN_SQUARE 0x8000u
 
 /* A 5x7 font of our own, rows top to bottom, bit 4 = leftmost column. */
 static const struct { char c; uint8_t row[7]; } FONT[] = {
@@ -61,6 +64,8 @@ static const struct { char c; uint8_t row[7]; } FONT[] = {
     {'9', {14,17,17,15,1,2,12}},
     {'(', {2,4,8,8,8,4,2}},        {')', {8,4,2,2,2,4,8}},        {'-', {0,0,0,31,0,0,0}},
     {'.', {0,0,0,0,0,12,12}},      {':', {0,12,12,0,12,12,0}},    {'/', {1,1,2,4,8,16,16}},
+    {'?', {14,17,1,2,4,0,4}},      {'!', {4,4,4,4,4,0,4}},
+    {'_', {0,0,0,0,0,0,31}},       {'&', {12,18,20,8,21,18,13}},  /* patch file names, "Brackley & Brooking" */
     {'\'', {4,4,8,0,0,0,0}},       {'>', {8,4,2,1,2,4,8}},        {',', {0,0,0,0,12,4,8}},
     {';', {0,12,12,0,12,4,8}},
     {'<', {2,4,8,16,8,4,2}},       {'+', {0,4,4,31,4,4,0}},       {'=', {0,0,31,0,31,0,0}},
@@ -243,6 +248,7 @@ static const font_style TINY  = { 4.5f, 0.84f, 0.0f, 0.36f, 0.2f, 1 };  /* insid
 #define SIDE_H    26
 #define OPEN_X    (ROW_X + ROW_W - SIDE_W)
 #define OPEN_Y    (PLAY_Y + (PLAY_H - SIDE_H) / 2)
+#define PATCH_X   ROW_X      /* PARCHES, left of JUGAR (docs/38) */
 
 /* The Controls page: back and the schemes on the left, the picture and its text on the right. */
 #define BACK_X    ROW_X
@@ -373,9 +379,10 @@ static int row_choices(const pes6_launcher *l, int kind, const char **out, int *
     case ROW_ISO:      out[0] = l->iso ? l->iso : ""; *current = 0; return 1;
     case ROW_VERSION:
         if (league_switch(l)) { out[0] = L("Yes", "Si"); out[1] = "No"; *current = l->ver; return 2; }
-        for (int i = 0; i < l->n && i < 4; i++) { option_name(l->v[i].title, names[i], sizeof names[i]); out[i] = names[i]; }
-        *current = l->ver;
-        return l->n < 4 ? l->n : 4;
+        option_name(l->v[l->ver].title, names[0], sizeof names[0]);   /* any number of patches: */
+        out[0] = names[0];                                             /* row_step walks them */
+        *current = 0;
+        return 1;
     case ROW_RENDER:   out[0] = "GPU"; out[1] = "Software"; *current = !s->gpu; return 2;
     case ROW_SCREEN:   out[0] = L("Full", "Completa"); out[1] = "16:9"; *current = s->screen; return SCREEN_COUNT;
     case ROW_CAMERA:   out[0] = "Normal"; out[1] = L("Far", "Lejana"); out[2] = L("Very far", "Muy lejana"); *current = s->camera; return CAMERA_COUNT;
@@ -409,6 +416,7 @@ static void row_set(pes6_launcher *l, int kind, int choice) {
 }
 
 static void row_step(pes6_launcher *l, int kind, int d) {
+    if (kind == ROW_VERSION && !league_switch(l)) { l->ver = (l->ver + l->n + d) % l->n; return; }
     const char *names[8];
     int current = 0;
     const int n = row_choices(l, kind, names, &current);
@@ -962,10 +970,295 @@ static int controls_update(pes6_launcher *l, uint32_t buttons, uint32_t pressed,
     return -1;
 }
 
+/* ---- the Patches page (docs/38 §6) --------------------------------------------------------- */
+
+#define P_TOP_Y   10          /* Back, the title and Importar */
+#define P_LIST_Y  44
+#define P_ROW_H   22
+#define P_ROWS    6           /* rows seen at once; the list scrolls with the focus */
+#define P_BANK_Y  (P_LIST_Y + P_ROWS * P_ROW_H + 8)
+#define P_BANK_H  22
+#define P_BTN_W   62          /* Elegir and Quitar */
+#define P_PICK_X  (ROW_X + ROW_W - 2 * P_BTN_W - 6)
+#define P_DROP_X  (ROW_X + ROW_W - P_BTN_W)
+#define P_TEXT_Y  (P_BANK_Y + P_BANK_H + 8)
+#define P_DEL_Y   238
+#define P_IMPORT_X OPEN_X
+
+static pes6_patch g_pinfo[PES6_PATCH_MAX];
+static int g_npinfo;
+static char g_bank[96];
+static int g_has_bank;
+
+static void patches_read(pes6_launcher *l) {
+    g_npinfo = l->mods ? pes6_patch_list(l->mods, g_pinfo, PES6_PATCH_MAX) : 0;
+    g_has_bank = l->audio && pes6_bank_installed(l->audio, NULL, 0, NULL, 0, g_bank, sizeof g_bank) == 0;
+}
+
+static const pes6_patch *patch_info(const char *id) {
+    for (int i = 0; i < g_npinfo; i++)
+        if (!strcmp(g_pinfo[i].id, id)) return &g_pinfo[i];
+    return NULL;
+}
+
+/* The versions again (after an import or a delete), keeping the chosen one by its id. */
+static void patches_reload(pes6_launcher *l, const char *want) {
+    char keep[64];
+    snprintf(keep, sizeof keep, "%s", want && *want ? want : l->v[l->ver].id);
+    patches_read(l);
+    if (!l->vbuf) return;
+    l->n = pes6_versions_list(l->mods, l->vbuf, l->vcap);
+    l->v = l->vbuf;
+    const int i = pes6_version_find(l->v, l->n, keep);
+    l->ver = i >= 0 ? i : 0;
+    if (l->psel > l->n) l->psel = l->n;
+}
+
+void pes6_launcher_set_patches(pes6_launcher *l, const char *mods, const char *audio, pes6_version *vbuf, int cap,
+                               int can_import) {
+    l->mods = mods;
+    l->audio = audio;
+    l->vbuf = vbuf;
+    l->vcap = cap;
+    l->can_import = can_import;
+    if (mods) pes6_patch_clean(mods);
+    patches_read(l);
+}
+
+void pes6_launcher_patches_done(pes6_launcher *l, const char *msg, const char *id) {
+    if (msg) snprintf(l->pmsg, sizeof l->pmsg, "%s", msg);
+    patches_reload(l, id);
+    if (id && *id) l->psel = l->ver;
+    l->pconfirm = 0;
+}
+
+static void patches_open(pes6_launcher *l) {
+    l->page = 2;
+    l->psel = l->ver;
+    l->pconfirm = 0;
+    l->pmsg[0] = 0;
+    patches_read(l);
+}
+
+/* The first visible row: the focus stays in view. */
+static int patches_first(const pes6_launcher *l) {
+    const int focus = l->psel < l->n ? l->psel : l->n - 1;
+    int first = focus - P_ROWS + 1;
+    return first < 0 ? 0 : first;
+}
+
+static void small_button(uint32_t *px, float x, float y, float w, float h, const char *label, int focus, int on) {
+    static const font_style SMALL = { 8, 0.84f, 0.0f, 0.42f, 0.2f, 0 };
+    const float a = on ? 1.0f : 0.4f;
+    if (focus) rrect(px, x - 2, y - 2, w + 4, h + 4, 7, 0, RGB(130, 180, 255), 0.30f);
+    rrect2(px, x, y, w, h, 5, 0, focus ? RGB(60, 104, 200) : RGB(30, 52, 110), focus ? RGB(24, 50, 130) : RGB(14, 26, 64), a);
+    rrect(px, x, y, w, h, 5, 0.75f, RGB(150, 180, 240), (focus ? 0.8f : 0.4f) * a);
+    text_draw(px, x + (w - text_width(label, &SMALL)) / 2, y + (h - SMALL.cap) / 2, label, &SMALL,
+              RGB(230, 238, 255), RGB(190, 210, 245), 0);
+}
+
+/* Up to two lines of `s` from (x, y), wrapped at word ends to `room`. */
+static void wrap2(uint32_t *px, float x, float y, float room, const char *s, uint32_t c) {
+    char line[200];
+    const char *p = s;
+    for (int row = 0; row < 2 && *p; row++) {
+        size_t best = 0, n = 0;
+        while (p[n] && n + 1 < sizeof line) {
+            n++;
+            if (p[n] && p[n] != ' ') continue;
+            memcpy(line, p, n);
+            line[n] = 0;
+            if (text_width(line, &HELP) > room && best) break;
+            best = n;
+        }
+        if (!best) best = n;
+        memcpy(line, p, best);
+        line[best] = 0;
+        if (row == 1 && p[best]) snprintf(line + (best > 3 ? best - 3 : 0), 4, "...");
+        text_draw(px, x, y + row * 11.0f, line, &HELP, c, c, 0);
+        p += best;
+        while (*p == ' ') p++;
+    }
+}
+
+static void size_text(int64_t bytes, char *out, size_t cap) {
+    if (bytes >= 1000ll << 20) snprintf(out, cap, "%.1f GB", (double)bytes / (1024.0 * 1048576.0));
+    else if (bytes >= 1 << 20) snprintf(out, cap, "%d MB", (int)((bytes + (1 << 19)) >> 20));
+    else snprintf(out, cap, "%d KB", (int)((bytes + 1023) >> 10));
+}
+
+static void patches_paint(const pes6_launcher *l, uint32_t *px);
+
+/* Drawn again only when something on it changed (the text is costly at the screen's resolution). */
+static void patches_draw(const pes6_launcher *l, uint32_t *px) {
+    static uint32_t *page;
+    static int page_k;
+    static char was[640];
+    char now[640];
+    snprintf(now, sizeof now, "%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s", K, l->psel, l->ver, l->pconfirm, l->n, g_npinfo,
+             l->busy ? l->busy : "", l->pmsg, g_has_bank ? g_bank : "", l->v[l->n - 1].id, l->v[l->ver].id);
+    if (page_k != K) {
+        free(page);
+        page = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+        page_k = page ? K : 0;
+        was[0] = 0;
+    }
+    if (page && !strcmp(was, now)) {
+        memcpy(px, page, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+        return;
+    }
+    patches_paint(l, px);
+    if (page) { memcpy(page, px, sizeof(uint32_t) * (size_t)BW * (size_t)BH); snprintf(was, sizeof was, "%s", now); }
+}
+
+static void patches_paint(const pes6_launcher *l, uint32_t *px) {
+    const float cy = P_TOP_Y + BACK_H / 2.0f;
+    rrect2(px, BACK_X, P_TOP_Y, BACK_W, BACK_H, 6, 0, RGB(30, 52, 110), RGB(14, 26, 64), 1);
+    rrect(px, BACK_X, P_TOP_Y, BACK_W, BACK_H, 6, 0.75f, RGB(150, 180, 240), 0.5f);
+    chevron(px, BACK_X + 9, cy, 6, 0, RGB(236, 242, 255), 1);
+    rrect(px, BACK_X + 9, cy - 0.9f, 13, 1.8f, 0.9f, 0, RGB(236, 242, 255), 1);
+    text_draw(px, BACK_X + BACK_W + 10, cy - TITLE.cap / 2, L("Patches", "Parches"), &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
+    side_button(px, P_IMPORT_X, P_TOP_Y - 1, l->busy ? l->busy : L("Import", "Importar"), 0);
+
+    const int first = patches_first(l);
+    for (int r = 0; r < P_ROWS && first + r < l->n; r++) {
+        const int i = first + r;
+        const float y = P_LIST_Y + r * P_ROW_H, my = y + P_ROW_H / 2.0f;
+        const int focus = i == l->psel, on = i == l->ver;
+        if (focus) {
+            rrect2(px, ROW_X, y + 1, ROW_W, P_ROW_H - 2, 4, 0, RGB(52, 104, 230), RGB(24, 56, 150), 0.55f);
+            rrect(px, ROW_X, y + 1, ROW_W, P_ROW_H - 2, 4, 0.75f, RGB(150, 190, 255), 0.65f);
+        } else {
+            fill(px, ROW_X + 4, (int)(y + P_ROW_H - 1), ROW_W - 8, 1, RGB(26, 38, 70));
+        }
+        disc(px, ROW_X + 12, my, 4.5f, on ? 0 : 3.4f, on ? RGB(255, 236, 160) : RGB(120, 136, 180), 1);
+        const uint32_t lc = focus ? RGB(255, 255, 255) : on ? RGB(255, 236, 160) : RGB(190, 202, 228);
+        text_draw(px, ROW_X + 24, my - LABEL.cap / 2, l->v[i].title, &LABEL, lc, lc, 0);
+        char detail[160];
+        const pes6_patch *p = patch_info(l->v[i].id);
+        if (!strcmp(l->v[i].id, "original")) {
+            snprintf(detail, sizeof detail, "%s", L("factory game", "juego de fabrica"));
+        } else if (p) {
+            char size[24];
+            size_text(p->bytes, size, sizeof size);
+            snprintf(detail, sizeof detail, "%s%s%s%s%s", p->author, p->author[0] ? "  " : "", p->version,
+                     p->version[0] ? "  " : "", size);
+        } else {
+            detail[0] = 0;
+        }
+        if (l->pconfirm == i + 1) snprintf(detail, sizeof detail, "%s", L("Delete? Press again", "Borrar? Pulsa otra vez"));
+        const uint32_t dc = l->pconfirm == i + 1 ? RGB(255, 170, 150) : focus ? RGB(220, 230, 250) : RGB(130, 146, 186);
+        text_draw(px, ROW_X + ROW_W - 10 - text_width(detail, &HELP), my - HELP.cap / 2, detail, &HELP, dc, dc, 0);
+    }
+    if (l->n > P_ROWS) {                              /* where the list is */
+        const float h = P_ROWS * P_ROW_H, bar = h * P_ROWS / l->n;
+        rrect(px, ROW_X + ROW_W + 4, P_LIST_Y + (h - bar) * first / (l->n - P_ROWS), 3, bar, 1.5f, 0, RGB(150, 180, 240), 0.6f);
+    }
+
+    /* the player's commentary bank */
+    const int bf = l->psel == l->n;
+    if (bf) rrect2(px, ROW_X, P_BANK_Y, ROW_W, P_BANK_H, 4, 0, RGB(52, 104, 230), RGB(24, 56, 150), 0.35f);
+    rrect(px, ROW_X, P_BANK_Y, ROW_W, P_BANK_H, 4, 0.75f, RGB(90, 112, 170), 0.4f);
+    const float by = P_BANK_Y + P_BANK_H / 2.0f;
+    text_draw(px, ROW_X + 10, by - LABEL.cap / 2, L("Commentator", "Comentarista"), &LABEL, RGB(216, 226, 248), RGB(216, 226, 248), 0);
+    const char *bank = l->pconfirm == -1 ? L("Remove? Press again", "Quitar? Pulsa otra vez")
+                     : g_has_bank ? g_bank : L("none (add your e_sound.afs)", "ninguno (agrega tu e_sound.afs)");
+    const uint32_t bc = l->pconfirm == -1 ? RGB(255, 170, 150) : g_has_bank ? RGB(255, 236, 160) : RGB(130, 146, 186);
+    text_draw(px, ROW_X + 112, by - HELP.cap / 2, bank, &HELP, bc, bc, 0);
+    small_button(px, P_PICK_X, P_BANK_Y + 2, P_BTN_W, P_BANK_H - 4, L("Choose", "Elegir"), bf, 1);
+    small_button(px, P_DROP_X, P_BANK_Y + 2, P_BTN_W, P_BANK_H - 4, L("Remove", "Quitar"), 0, g_has_bank);
+
+    /* what the focused patch is about, or the last import's outcome */
+    const pes6_patch *p = l->psel < l->n ? patch_info(l->v[l->psel].id) : NULL;
+    const char *text = l->pmsg[0] ? l->pmsg
+                     : l->psel == l->n ? L("Your own PES6 PS2 commentary bank (e_sound.afs): the original game speaks with it.",
+                                           "Tu banco de comentarios del PES6 de PS2 (e_sound.afs): con el habla el juego original.")
+                     : p && p->desc[0] ? p->desc
+                     : l->psel < l->n && !strcmp(l->v[l->psel].id, "original") ? L("PES6 as it came on the disc.", "El PES6 tal como viene en el disco.")
+                     : "";
+    wrap2(px, ROW_X + 4, P_TEXT_Y, ROW_W - 8, text, l->pmsg[0] ? RGB(255, 226, 170) : RGB(150, 170, 215));
+
+    const int deletable = l->psel < l->n && strcmp(l->v[l->psel].id, "original");
+    small_button(px, OPEN_X, P_DEL_Y, SIDE_W, SIDE_H - 4, L("Delete", "Borrar"), 0, deletable);
+    const char *keys = L("\x04 Use  \x02 Import  \x01 Delete  \x03 Back", "\x04 Usar  \x02 Importar  \x01 Borrar  \x03 Volver");
+    text_draw(px, ROW_X, P_DEL_Y + 7, keys, &HELP, RGB(120, 136, 180), RGB(120, 136, 180), 0);
+}
+
+static int patches_delete(pes6_launcher *l) {
+    if (l->psel >= l->n || !strcmp(l->v[l->psel].id, "original") || !l->mods) return -1;
+    if (l->pconfirm != l->psel + 1) { l->pconfirm = l->psel + 1; return -1; }
+    char id[64], title[96];
+    snprintf(id, sizeof id, "%s", l->v[l->psel].id);
+    snprintf(title, sizeof title, "%s", l->v[l->psel].title);
+    const int rc = pes6_patch_delete(l->mods, id);
+    snprintf(l->pmsg, sizeof l->pmsg, rc == 0 ? L("Deleted: %s. Its saves are kept.", "Borrado: %s. Sus guardados se conservan.")
+                                              : L("%s could not be deleted.", "No se pudo borrar %s."), title);
+    l->pconfirm = 0;
+    patches_reload(l, l->v[l->ver].id);
+    if (l->psel >= l->n) l->psel = l->n - 1;          /* the row above the one deleted */
+    return -1;
+}
+
+static int patches_drop_bank(pes6_launcher *l) {
+    if (!g_has_bank || !l->audio) return -1;
+    if (l->pconfirm != -1) { l->pconfirm = -1; return -1; }
+    pes6_bank_delete(l->audio);
+    snprintf(l->pmsg, sizeof l->pmsg, "%s", L("Commentator removed.", "Comentarista quitado."));
+    l->pconfirm = 0;
+    patches_read(l);
+    return -1;
+}
+
+static int patches_import(pes6_launcher *l, int bank) {
+    l->pconfirm = 0;
+    if (l->busy) return -1;
+    if (!l->can_import) {
+        snprintf(l->pmsg, sizeof l->pmsg, "%s", L("On a computer: tools/pes6patch import (docs/38).", "En el computador: pes6patch import (docs/38)."));
+        return -1;
+    }
+    l->pmsg[0] = 0;
+    return bank ? PES6_LAUNCHER_PICK_BANK : PES6_LAUNCHER_IMPORT;
+}
+
+static int patches_update(pes6_launcher *l, uint32_t pressed, int tap, float x, float y) {
+    if (tap) {
+        const int was = l->pconfirm;
+        if (inside(x, y, BACK_X, P_TOP_Y, BACK_W, BACK_H, 8)) { l->page = 0; return -1; }
+        if (inside(x, y, P_IMPORT_X, P_TOP_Y, SIDE_W, SIDE_H, 6)) return patches_import(l, 0);
+        if (inside(x, y, P_PICK_X, P_BANK_Y, P_BTN_W, P_BANK_H, 3)) { l->psel = l->n; return patches_import(l, 1); }
+        if (inside(x, y, P_DROP_X, P_BANK_Y, P_BTN_W, P_BANK_H, 3)) { l->psel = l->n; return patches_drop_bank(l); }
+        if (inside(x, y, OPEN_X, P_DEL_Y, SIDE_W, SIDE_H, 4)) return patches_delete(l);
+        if (inside(x, y, ROW_X, P_BANK_Y, ROW_W, P_BANK_H, 0)) { l->psel = l->n; l->pconfirm = 0; return -1; }
+        const int first = patches_first(l);
+        for (int r = 0; r < P_ROWS && first + r < l->n; r++)
+            if (inside(x, y, ROW_X, P_LIST_Y + r * P_ROW_H, ROW_W, P_ROW_H, 0)) {
+                l->psel = l->ver = first + r;          /* a tap uses it */
+                l->pmsg[0] = 0;
+                if (was) l->pconfirm = 0;
+            }
+        return -1;
+    }
+    if (pressed & BTN_CIRCLE) { l->page = 0; return -1; }
+    if (pressed & (BTN_UP | BTN_DOWN)) {
+        l->psel = (l->psel + ((pressed & BTN_UP) ? l->n : 1)) % (l->n + 1);
+        l->pconfirm = 0;
+        l->pmsg[0] = 0;
+    }
+    if (pressed & BTN_TRIANGLE) return patches_import(l, 0);
+    if (pressed & BTN_SQUARE) return l->psel == l->n ? patches_drop_bank(l) : patches_delete(l);
+    if (pressed & BTN_CROSS) {
+        if (l->psel == l->n) return patches_import(l, 1);
+        l->ver = l->psel;
+        l->pconfirm = 0;
+    }
+    return -1;
+}
+
 void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     K = scale < 1 ? 1 : scale > PES6_LAUNCHER_MAX_SCALE ? PES6_LAUNCHER_MAX_SCALE : scale;
     const uint32_t *bg = backdrop();
     if (bg) memcpy(px, bg, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+    if (l->page == 2) { patches_draw(l, px); return; }
     if (l->page) { controls_draw(l, px); return; }
     int kind[ROW_KINDS];
     const int nrows = rows(l, kind);
@@ -1019,8 +1312,10 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     text_draw(px, PLAY_X + (PLAY_W - pw) / 2, PLAY_Y + (PLAY_H - PLAY.cap) / 2, play, &PLAY,
               RGB(255, 255, 255), RGB(210, 225, 255), 0);
 
-    /* CONTROLES: the same lozenge, smaller and quieter; focus is one step right of JUGAR. */
+    /* CONTROLES: the same lozenge, smaller and quieter; focus is one step right of JUGAR. PARCHES
+     * (docs/38) is its mirror, one step left. */
     if (l->android) side_button(px, OPEN_X, OPEN_Y, L("Controls", "Controles"), l->sel == nrows + 1);
+    if (l->mods) side_button(px, PATCH_X, OPEN_Y, L("Patches", "Parches"), l->sel == nrows + 2);
 
     /* The gamepad, if there is one, and the keys. */
     char pad[96];
@@ -1083,6 +1378,7 @@ static void controls_open(pes6_launcher *l) {
 int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, float ty) {
     uint32_t pressed = buttons & ~l->held;
     l->held = buttons;
+    if (l->page == 2) return patches_update(l, pressed, tap, tx * W, ty * H);
     if (l->page) return controls_update(l, buttons, pressed, tap, tx * W, ty * H);
     int kind[ROW_KINDS];
     const int nrows = rows(l, kind);
@@ -1098,6 +1394,11 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
             controls_open(l);
             return -1;
         }
+        if (l->mods && inside(x, y, PATCH_X, OPEN_Y, SIDE_W, SIDE_H, 8)) {
+            l->sel = nrows + 2;
+            patches_open(l);
+            return -1;
+        }
         for (int i = 0; i < nrows; i++) {
             const float y0 = row_y0(nrows) + i * dy;
             if (y < y0 || y >= y0 + dy || x < ROW_X - 10 || x >= ROW_X + ROW_W + 10) continue;
@@ -1107,11 +1408,17 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
             return -1;
         }
     }
-    if (l->sel > nrows) {                         /* CONTROLES: up and down as JUGAR, left back to it */
-        if (pressed & (BTN_UP | BTN_DOWN | BTN_LEFT)) { l->sel = nrows; pressed &= ~BTN_LEFT; }
+    if (l->sel == nrows + 1) {                    /* CONTROLES: up and down as JUGAR, left back to it */
+        if (pressed & (BTN_UP | BTN_DOWN | BTN_LEFT)) { l->sel = nrows; pressed &= ~(BTN_LEFT | BTN_UP | BTN_DOWN); }
         else if (pressed & BTN_CROSS) { controls_open(l); return -1; }
+    } else if (l->sel == nrows + 2) {             /* PARCHES: the same, to the left */
+        if (pressed & (BTN_UP | BTN_DOWN | BTN_RIGHT)) { l->sel = nrows; pressed &= ~(BTN_RIGHT | BTN_UP | BTN_DOWN); }
+        else if (pressed & BTN_CROSS) { patches_open(l); return -1; }
     } else if (l->sel == nrows && l->android && (pressed & BTN_RIGHT)) {
         l->sel = nrows + 1;
+        return -1;
+    } else if (l->sel == nrows && l->mods && (pressed & BTN_LEFT)) {
+        l->sel = nrows + 2;
         return -1;
     }
     if (pressed & BTN_UP)   l->sel = (l->sel + nrows) % (nrows + 1);

@@ -1,0 +1,95 @@
+# Hand review of the English catalogue (mods/catalogues/e_sound.txt) against build/comm_en/phrases.tsv,
+# 7/11 (docs/39). Every event line was read; these are the ones that do not fit every time the
+# engine says them. tools/commentary/audit_catalogue.py merges them with its own word checks.
+#   <event> <clips: a,b,c-d> | <kind> | <why>
+# kinds: wrong (never fits), context (fits only in a moment the engine does not check),
+#        type (fits one kind of the event: the engine cannot tell which), timing (said at the wrong moment),
+#        event (the lines are of another event than the one that fires them)
+
+own_goal 1674-1677 | context | "another own goal" / "second own goal in a row": only after an earlier one
+own_goal 1687-1691 | timing | 2.5-3.9 s reactions to Trevor ("they've benefited...", "they're distraught") said as the shout
+equalizer 1010-1014 | timing | equaliser shouts ("It's in! The equaliser!") said at the restart, after the replay, not when the ball goes in
+equalizer 150 | context | "pulled level again": only after an earlier equaliser
+goal 1028 | type | "Header! Goal!" (one of the 1018-1026 header and foot shouts) for any goal
+goal_after 327-331 | context | "how they got off the mark", "opened the scoring", "lost his clean sheet", "the first goal": the side's or the match's first goal only
+goal_after 1299,1301,1302 | type | a curled or placed shot ("curled it in", "so much swerve"): wrong for headers and tap-ins
+goal_after 1408,1424 | type | a hit with power
+goal_after 1425 | context | "Everyone knew he was going to do it": a set piece or a star's goal
+kickoff 6672,6673 | context | "no love lost between these two sides": a derby
+welcome 6319-6333 | context | afternoon: wrong in a night match
+welcome 6334-6348 | context | evening ("Good evening", "tonight"): wrong in a day match
+shot 4239,4240,4242,4244,4246,4248,4249,4251 | type | volley ("Try the volley!", "Hits it in the air!")
+shot 4252,4255,4257,4258 | type | low drive
+shot 4286,4295,4296,4300,4301,4302 | type | from long range
+shot 4303-4309 | type | lob or chip over the keeper
+save 3429-3438 | timing | "punched it out for a corner": only when the save gives a corner; said 20 vblanks after the touch, before the ball is out
+save 3419 | context | "Another shot blocked": only after an earlier save
+save 4000,4001 | context | "kept busy today", "what they have to do to beat this keeper today": after several saves
+save 3996,3997 | type | "his right foot shot" / "his left foot shot": the foot must match
+save 3368,3375 | type | an easy catch ("No need for the keeper to move")
+save 3935-3950,3370,3372,3377-3379,4010,4027-4029 | type | a catch ("held", "into the keeper's gloves"): wrong for a parry or a punch
+save 4031-4035,4040,4042,4044,4049,4050,4053,4055-4057 | type | a punch or a push away: wrong for a catch
+save 4045-4048 | type | the ball still loose after the save: wrong for a catch
+save 4036-4038,4058-4060 | type | a block with the body
+woodwork 4339,4340 | context | "denied by the woodwork again": only after an earlier one
+shot_miss 4380-4386 | type | just past the RIGHT post
+shot_miss 4388-4391,4393-4396 | type | just past the LEFT post
+shot_miss 4397-4402,4404,4406 | type | just over the bar
+shot_miss 4356,4358-4365 | type | into the side netting
+shot_miss 4428,4430,4431,4433,4437,4438,4475,4476,4478,4483,4484,987,988 | type | wide to the RIGHT
+shot_miss 4441,4446,4447,4450,4451,4485,4486,4488,4493,989,990 | type | wide to the LEFT
+shot_miss 4454-4461,4495-4504 | type | over the bar
+shot_miss 4477,4479-4482,4487,4489-4494,4505-4514 | type | a poor, way-off effort: wrong for a near miss
+shot_miss 4354,4355,4387,4392,4403,4405,4407-4422 | type | a near miss ("So close!"): wrong for a wild one
+shot_miss 960-962 | type | a mis-kick
+corner 5035,5039-5046,5050 | context | "another corner": only after an earlier one for that side
+corner 5051-5056 | type | a cross blocked or deflected by a defender
+corner 5057-5059,5061 | type | a defender clearing it out
+corner 5060 | type | sloppy goalkeeping
+corner 5076 | wrong | "their 10th corner": an ordinal the corner regex missed
+corner 5077,5078 | type | from the RIGHT
+corner 5079,5080 | type | from the LEFT
+foul 4649-4663 | type | a free kick "in a dangerous area": only near the box
+foul 4820-4839 | context | the referee whistled LATE ("late call", "brought play back for the previous foul")
+foul 4840-4860 | context | ADVANTAGE played and then brought back
+offside 3663 | type | "As the shot came in": an offside on a shot
+offside 3670 | context | "soon they're going to get it right": after earlier offsides
+throw_in 3864-3871 | context | "again" / "another throw": after an earlier one
+throw_in 3872-3881 | context | "again" and in the attacking third
+throw_in 3882-3886,3895-3901 | type | in the attacking third ("deep in opposition territory", "dangerous area")
+throw_in 3890-3894 | type | after a goalkeeper's error saved by a defender
+throw_in 3887,3888 | type | a defender clearing into touch
+through_pass 7570-7600 | type | a lofted ball over the top
+through_pass 7658-7669 | type | down the middle
+pass 7294-7320 | type | a long ball forward: the engine's pass is touch 5, a ground pass
+pass 7233-7236 | type | a first-time pass
+chatter 7725-7736 | context | the side needs a goal ("They need a goal", "bring them back into the game"): only when behind
+chatter 7696,7697 | context | early in the match ("getting a feel for things")
+chatter 3847-3849 | context | after a good part of the match ("a hard fought game")
+half_time 1920-1930 | ok | since 7/11 raised on stop cause 1 and let finish over the half-time screen (docs/39 §6)
+full_time 2322-2328 | ok | since 7/11 raised on the second stop cause 1 (wrong only when extra time follows: docs/39 §6)
+penalty 4695-4699,4741 | context | the fouled player injured and no card / a booking
+penalty 4733,4767,4768 | context | a red card with the penalty
+penalty 4770-4772 | context | a booking with the penalty
+red_card 4775-4784,4862,4863 | timing | 5-11 s; 4781-4784 second yellow, 4862-4863 after advantage
+yellow_card 4867-4878 | context | after advantage
+substitution 1728-1733 | context | the side's first change
+substitution 1734-1737 | context | the second change
+substitution 1739-1748 | context | a double or multiple change
+substitution 1749-1753 | context | the last permitted change
+substitution 1759,1760 | context | both sides change at once
+# after the 7/11 fixes (docs/39 §6): setpiece_wait split into freekick_wait / corner_wait, the corner
+# block out of cross into corner_kick / corner_short, the old tackle lines are now interception
+freekick_wait 4950-4958,4964,4965 | ok | the engine says it within ~28 m: close enough to shoot fits
+corner_kick 5136-5138,5141 | type | a low driven corner
+# word checks reviewed and found right (whisper misheard: "Keep Up" = keeper, "throw ball" = through ball)
+equalizer 154 | ok | a reaction line, fits an equaliser
+header 4196,4197 | ok | aerial duel won: fits a header
+offside 4565 | ok | "the old Lino" = linesman
+penalty 4703 | ok | the plain penalty line (the taker not injured)
+save 3373,4014,4016,4021-4025 | ok | keeper lines misheard
+save 4026 | ok | "Good decision" (to come or stay): fits a catch
+shot_miss 4357 | ok | a miss that gives a goal kick: what it is
+through_pass 7397,7670 | ok | "through ball"
+throw_in 3861-3863 | ok | generic ball out of play
+woodwork 970 | ok | "He's hit the bar!"

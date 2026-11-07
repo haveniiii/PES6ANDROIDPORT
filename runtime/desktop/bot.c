@@ -7,7 +7,8 @@
  *   - his team has it: runs ahead of the ball, towards the rival goal;
  *   - defending: runs at the ball holding x (pressure), with team-mate pressure (square), now and
  *     then a sliding tackle, and changes player (L) when the ball is far away;
- *   - stoppages (kick-off, throw-in, goal kick, corner, free kick) and cut scenes: x now and then.
+ *   - stoppages (kick-off, throw-in, goal kick, corner, free kick) and cut scenes: x now and then;
+ *     the stoppage's scene and replay (phase 12): START now and then.
  * It reads the match through pes6_game.h and gives the game a pad like the window's.
  *   PES6_BOT_LOG=1   one line a second: the player, the ball, what it does and the stick
  *   PES6_BOT_AXES=sx,sz   the stick's sign for field x and z (1,1 by default; measured below) */
@@ -96,7 +97,8 @@ static uint32_t stick(float dx, float dz) {
 uint32_t pes6_bot_step(uint32_t *analog) {
     const uint32_t scene = pes6_scene();
     if (scene != PES6_SCENE_MATCH && scene != PES6_SCENE_TRAINING && scene != PES6_SCENE_WIRELESS) return 0;
-    if (!pes6_game_ovl_loaded() || pes6_paused()) return 0;
+    /* the pause menu is left alone; half time's menu (a pause in phase 12) is answered below */
+    if (!pes6_game_ovl_loaded() || (pes6_paused() && pes6_phase(1) != 12)) return 0;
     uint32_t b = 0;
     if (g_press_left > 0) { g_press_left--; b |= g_press; }
     if (g_next > 0) g_next--;
@@ -104,6 +106,18 @@ uint32_t pes6_bot_step(uint32_t *analog) {
     const int i = controlled();
     const uint32_t ballp = psp_read32(PES6_BALL_PTR);
     const char *mode = "wait";
+    if (pes6_phase(0) == 4 && pes6_phase(1) == 12) {   /* a stoppage's scene or replay: START now and then */
+        /* x here could open the replay viewer ("X View  START End") after a goal, where the match then
+         * waited for good (docs/39 §6.4); START ends the viewer and skips the replay */
+        if (!g_next) { press(pes6_paused() ? B_X : 0x0008, 4); g_next = range(90, 150); }   /* half time's menu: x */
+        return b;
+    }
+    static int in14;                                    /* frames the restart has been waiting (phase 14) */
+    in14 = pes6_phase(0) == 4 && pes6_phase(1) == 14 ? in14 + 1 : 0;
+    if (in14 > 150 && !g_next) {                        /* a restart left waiting for its taker: x */
+        press(B_X, 4);
+        g_next = range(60, 120);
+    }
     if (pes6_phase(0) != 4 || i < 0 || !ballp) {        /* cut scenes, waits: x now and then */
         if (!g_next) { press(B_X, 4); g_next = range(60, 120); }
         if (g_log && !(psp_read32(PES6_SCENE_FRAME) % 60)) fprintf(stderr, "[bot] %s\n", mode);

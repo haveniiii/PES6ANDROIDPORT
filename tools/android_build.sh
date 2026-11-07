@@ -7,12 +7,13 @@
 #   tools/android_build.sh install    build, install on the connected device and push the game data
 #                                     (several devices: ANDROID_SERIAL=<id> tools/android_build.sh install)
 #   tools/android_build.sh mods [install]
-#                                     the APK carries the product's game version, mods/$PRODUCT
-#                                     (runtime/common/product.h, docs/29), the replacement music in
-#                                     mods/music (docs/11 §8) and the menu background, never the
-#                                     game data (pushed as above): the APK that can be shared
-#                                     PRODUCT= (empty): the multi-version port, every mods/<id> and
-#                                     the general commentary in mods/commentary (docs/24)
+#                                     the APK carries the preinstalled patches, mods/<id> for each
+#                                     id in $PATCHES (default pech2026; docs/38 §7), the commentary
+#                                     catalogues (mods/catalogues: clip numbers only, for the bank the
+#                                     player adds), the replacement music in mods/music (docs/11 §8)
+#                                     and the menu background, never the game data (pushed as above)
+#                                     nor a PS2 commentary bank: the APK that can be shared.
+#                                     PRODUCT=<id>: the app plays only that patch (the old docs/29)
 #   tools/android_build.sh bundle [install]
 #                                     the same, but the APK carries the game data (assets/EBOOT.elf,
 #                                     assets/pes6.iso stored uncompressed, ~1.3 GB) and the game
@@ -50,7 +51,8 @@ OUT="$ROOT/build/android"
 PKG=com.pes6port
 APK=pes6port.apk
 [ "$ISO" = 1 ] && { PKG=com.pes6port.iso; APK=pes6port-iso.apk; }
-PRODUCT=${PRODUCT-pech2026}       # the one version the app plays (product.h); empty for all
+PRODUCT=${PRODUCT-}               # a patch the app plays alone (product.h); empty: every patch (docs/38)
+PATCHES=${PATCHES-pech2026}       # the patches the APK brings preinstalled (docs/38 §7)
 [ -d "$NDK" ] || { echo "Android NDK not found (set ANDROID_NDK_HOME)"; exit 1; }
 echo "NDK: $NDK"; echo "build-tools: $BT"; echo "platform: $PLATFORM"
 # The EBOOT the generated code comes from: a decrypted ISO must give exactly it (docs/35).
@@ -106,31 +108,24 @@ if [ "$MODS" = 1 ]; then
     # assets/mods/index.txt ("<path> <size> <sha1>"), from which the app copies them into its
     # files directory on start.
     LIST="$OUT/mods_list.txt"; : > "$LIST"
-    # Game versions (docs/17): every mods/<id>/ with a version.txt (only the product's, unless
-    # PRODUCT is empty) -- its title, textures/, afs/, faces/, commentary/ and save/ (not the
-    # .orig pristine copies, the .base copy of tools/roster_update.py, nor source images).
-    for v in "$ROOT"/mods/*/version.txt; do
-        [ -f "$v" ] || continue
-        [ -z "$PRODUCT" ] || [ "$v" = "$ROOT/mods/$PRODUCT/version.txt" ] || continue
-        id=$(basename "$(dirname "$v")")
-        (cd "$ROOT/mods" && find "$id/version.txt" "$id/textures" "$id/afs" "$id/faces" "$id/commentary" "$id/save" -type f ! -name '*.orig' ! -name '*.base' 2>/dev/null) >> "$LIST"
+    # Preinstalled patches (docs/38 §7): mods/<id>/ for each id in PATCHES (and PRODUCT) -- mod.json or
+    # version.txt, textures/, afs/, faces/, commentary/ and save/ (not the .orig pristine copies, the
+    # .base copy of tools/roster_update.py, nor source images). The player can delete them.
+    for id in $PATCHES $PRODUCT; do
+        [ -f "$ROOT/mods/$id/mod.json" ] || [ -f "$ROOT/mods/$id/version.txt" ] || { echo "no patch mods/$id"; exit 1; }
+        (cd "$ROOT/mods" && find "$id/mod.json" "$id/version.txt" "$id/textures" "$id/afs" "$id/faces" "$id/commentary" "$id/save" -type f ! -name '*.orig' ! -name '*.base' 2>/dev/null) >> "$LIST"
     done
+    sort -u -o "$LIST" "$LIST"
     # Textures for every version (mods/common/textures: the menu background, tools/menu_background.py).
     (cd "$ROOT/mods" && find common/textures -type f -name '*.pam' 2>/dev/null) >> "$LIST"
     # Replacement music (tools/music_replace.py, docs/11 §8): mods/music/track*.pcm, for every version.
     (cd "$ROOT/mods" && find music -maxdepth 1 -type f -name 'track*.pcm' 2>/dev/null) >> "$LIST"
-    # Commentary (docs/24): mods/commentary/ = a voice bank and its catalogue (s_sound.afs +
-    # s_sound.txt, cut down with tools/commentary/trim_bank.py). The product has its own
-    # (mods/$PRODUCT/commentary).
-    [ -z "$PRODUCT" ] && (cd "$ROOT/mods" && find commentary -maxdepth 1 -type f \( -name '*.afs' -o -name '*.txt' \) 2>/dev/null) >> "$LIST"
-    # The original game's commentary (decision of the user, 6/11): the English PS2 bank
-    # (Brackley and Brooking) in mods/commentary_en/ (e_sound.afs, cut down, + e_sound.txt); the
-    # patch keeps Palma's. The bank is disc audio: a release build leaves it out unless
-    # COMMENTARY_EN=1 (how the public APK gets it is still open).
-    if [ "$RELEASE" = 0 ] || [ "${COMMENTARY_EN:-0}" = 1 ]; then
-        (cd "$ROOT/mods" && find commentary_en -maxdepth 1 -type f \( -name '*.afs' -o -name '*.txt' \) 2>/dev/null) >> "$LIST"
-    else
-        echo "release: the English commentary bank left out (COMMENTARY_EN=1 puts it in)"
+    # Commentary (docs/24, docs/38 §5): only the catalogues, mods/catalogues/<bank>.txt (clip numbers,
+    # from tools/commentary/build_catalogue.py). The PS2 bank itself is the player's: imported in the
+    # menu's Patches page. No APK carries one (7/11, decision of the user).
+    (cd "$ROOT/mods" && find catalogues -maxdepth 1 -type f -name '*.txt' 2>/dev/null) >> "$LIST"
+    if grep -E '\.afs$' "$LIST" | grep -vE '^[^/]+/(commentary|afs)/' | grep -q .; then
+        echo "a PS2 commentary bank outside a patch would go into the APK:"; grep -E '\.afs$' "$LIST" | grep -vE '^[^/]+/(commentary|afs)/'; exit 1
     fi
     python3 - "$ROOT/mods" "$OUT/pkg/assets/mods" "$LIST" <<'PY'
 import hashlib, os, sys

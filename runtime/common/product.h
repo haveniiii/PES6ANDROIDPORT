@@ -1,21 +1,19 @@
-/* PES6PORT — what the port ships as (docs/29): its name and the one version it plays.
+/* PES6PORT — what the port ships as: its name, and optionally the one patch it plays.
  *
- * The app (named "PES6") plays one game version only: the Chilean patch,
- * mods/<PES6_PRODUCT_VERSION>/ (docs/28). The launcher lists nothing else, so the factory game cannot be reached
- * from the interface. For development the other versions stay one variable away:
+ * Since 7/11 (docs/38) the app is PES6 "plus": the launcher lists the original and every patch
+ * installed in mods/ (patch.h), so PES6_PRODUCT_VERSION is empty. Set to a mods/<id> (CMake
+ * -DPES6_PRODUCT_VERSION=<id>) it is the old product of docs/29: that patch first, the original
+ * as the menu's "Chilean league: No", nothing else. For development, either way:
  *
  *   PES6_VERSION=original   the factory game (what tools/regress.sh and the
- *                           perf/demo scripts run), or any other mods/<id>
- *
- * A build configured with -DPES6_PRODUCT_VERSION= (empty) is the old multi-version
- * port: the original first and every mod with a version.txt (docs/17). */
+ *                           perf/demo scripts run), or any other mods/<id> */
 #ifndef PES6_PRODUCT_H
 #define PES6_PRODUCT_H
 
 #define PES6_PRODUCT_NAME "PES6"
 
 #ifndef PES6_PRODUCT_VERSION
-#define PES6_PRODUCT_VERSION "pech2026"
+#define PES6_PRODUCT_VERSION ""
 #endif
 
 #endif

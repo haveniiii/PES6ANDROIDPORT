@@ -38,7 +38,7 @@ add_library(pes6 SHARED
     "${PES6_ROOT}/runtime/desktop/input.c"
     "${PES6_ROOT}/runtime/desktop/bot.c"
     "${COMMON}/ge.c" "${COMMON}/mpeg.c" "${COMMON}/atrac.c" "${COMMON}/h264.c"
-    "${COMMON}/version.c" "${COMMON}/afs_mods.c" "${COMMON}/launcher.c"
+    "${COMMON}/version.c" "${COMMON}/afs_mods.c" "${COMMON}/patch.c" "${COMMON}/pcof.c" "${COMMON}/launcher.c"
     "${COMMON}/at3.c" "${COMMON}/audio.c" "${COMMON}/commentary.c" "${COMMON}/widescreen.c" "${COMMON}/net.c" "${COMMON}/osk.c" "${COMMON}/settings.c" "${COMMON}/lang.c"
     "${COMMON}/tuning.c" "${COMMON}/rules.c" "${COMMON}/flow.c" "${COMMON}/faces.c" "${COMMON}/iso_eboot.c"
     # the EBOOT of the player's ISO decrypted on the phone (docs/35): pspdecrypt, GPL-3
@@ -70,9 +70,9 @@ set_source_files_properties("${COMMON}/iso_eboot.c" PROPERTIES COMPILE_DEFINITIO
 set_source_files_properties("${PES6_ROOT}/third_party/pspdecrypt/PrxDecrypter.cpp"
     "${PES6_ROOT}/third_party/pspdecrypt/pspdecrypt_shim.cpp" PROPERTIES COMPILE_OPTIONS "-std=c++17;-O2")
 
-# The product (runtime/common/product.h, docs/29): the one game version the app plays.
-# Empty = the multi-version port of docs/17 (the original plus every mod).
-set(PES6_PRODUCT_VERSION "pech2026" CACHE STRING "mods/<id> the app plays; empty for every version")
+# The product (runtime/common/product.h): empty since 7/11 (docs/38), the original plus every patch;
+# a mods/<id> here makes the app play only that one (the old "only the Chilean patch", docs/29).
+set(PES6_PRODUCT_VERSION "" CACHE STRING "mods/<id> the app plays alone; empty for every patch")
 # Only the files that read it: the generated code does not recompile when it changes.
 set_source_files_properties(main.c "${COMMON}/version.c" "${COMMON}/launcher.c"
     PROPERTIES COMPILE_DEFINITIONS "PES6_PRODUCT_VERSION=\"${PES6_PRODUCT_VERSION}\"")
@@ -97,6 +97,6 @@ set_source_files_properties(
     "${COMMON}/ge.c" "${COMMON}/audio.c" "${COMMON}/commentary.c" "${PSPRECOMP}/src/vfpu.c" "${PSPRECOMP}/src/mem.c"
     "${PSPRECOMP}/src/dispatch.c" "${PSPRECOMP}/src/hle/sascore.c"
     PROPERTIES COMPILE_OPTIONS "-O2;-g")   # -g: line numbers for simpleperf; stripped from the APK
-target_link_libraries(pes6 PRIVATE android log EGL GLESv3 aaudio m)
+target_link_libraries(pes6 PRIVATE android log EGL GLESv3 aaudio m z)
 # NativeActivity looks this symbol up; nothing in the library references it.
 target_link_options(pes6 PRIVATE -u ANativeActivity_onCreate)

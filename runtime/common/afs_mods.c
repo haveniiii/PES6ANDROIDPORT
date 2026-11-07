@@ -105,3 +105,40 @@ int pes6_afs_mods_load(const char *mods_dir, const char *id) {
     if (n) fprintf(stderr, "[afs] %s: %d archive member(s) replaced\n", id, n);
     return n;
 }
+
+/* ---- the PSP's goal shout, silenced at run time (tools/goal_voice_off.py did it into a mod) ---- */
+
+int pes6_afs_goal_voice_off(void) {
+    static const uint32_t banks[] = { 8941, 8943, 8945, 8947, 8949 };   /* en, fr, de, it, es */
+    int64_t afs_off, afs_size;
+    if (psp_io_disc_extent("PSP_GAME/USRDIR/0_text.afs", &afs_off, &afs_size) != 0) return -1;
+    const char *img = getenv("PES6_DISC_ISO");
+    FILE *iso = fopen(img && *img ? img : "data/pes6.iso", "rb");
+    if (!iso) return -1;
+    int n = 0;
+    for (size_t b = 0; b < sizeof banks / sizeof banks[0]; b++) {
+        uint8_t e[8];
+        if (fseek(iso, (long)(afs_off + 8 * (int64_t)banks[b]), SEEK_SET) != 0 || fread(e, 1, 8, iso) != 8) continue;
+        const uint32_t start = e[0] | e[1] << 8 | e[2] << 16 | (uint32_t)e[3] << 24;
+        const uint32_t sectors = e[4] | e[5] << 8 | e[6] << 16 | (uint32_t)e[7] << 24;
+        const int64_t len = (int64_t)sectors * AFS_SECTOR;
+        if (!sectors || len > (8 << 20) || (int64_t)start * AFS_SECTOR + len > afs_size) continue;
+        uint8_t *vag = malloc((size_t)len);
+        int ok = vag && fseek(iso, (long)(afs_off + (int64_t)start * AFS_SECTOR), SEEK_SET) == 0 &&
+                 fread(vag, 1, (size_t)len, iso) == (size_t)len;
+        for (int i = 0; ok && i < 16; i++) ok = vag[i] == 0;   /* a VAG bank starts with a zero block */
+        if (ok) {
+            for (int64_t i = 0; i + 16 <= len; i += 16) {      /* predictor/shift and nibbles; flags (+1) stay */
+                vag[i] = 0;
+                memset(vag + i + 2, 0, 14);
+            }
+            ok = psp_io_disc_patch(afs_off + (int64_t)start * AFS_SECTOR, vag, (uint32_t)len) == 0;
+        }
+        if (ok) n++;
+        else fprintf(stderr, "[afs] goal shout bank %u: not a VAG bank, left as it is\n", banks[b]);
+        free(vag);
+    }
+    fclose(iso);
+    fprintf(stderr, "[afs] the PSP's goal shout silenced (%d of 5 banks)\n", n);
+    return n;
+}

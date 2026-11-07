@@ -72,15 +72,27 @@ yellow_card   4867-4878 max=12 ^(?!.*(red|second yellow|sent off)).*yellow
 throw_in      3851-3901 *
 goal_kick     5019-5029 *
 corner        5030-5097 ^(?!.*(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|today's)).*corner
-# before a free kick (not the direct / indirect, wall and target counts, nor the score-state lines)
-setpiece_wait 4907-4927 *
-setpiece_wait 4937-4969 ^(?!.*injury)
-setpiece_wait 5102-5124 *
+# before a free kick or a corner (docs/39 §4): apart since 7/11 -- setpiece_wait fired for both and
+# said corner lines at free kicks and free-kick lines at corners. Free kicks: the engine says it only
+# within ~28 m, so "close enough to shoot" fits; left out: 4939 "in the remaining time", 4941-4945 a
+# taker famous for free kicks, 4967-4969 "a long way out", and the direct / indirect, wall and
+# score-state counts (4928-4936, 4970+)
+freekick_wait 4907-4927 *
+freekick_wait 4937-4938 *
+freekick_wait 4940-4940 *
+freekick_wait 4946-4966 ^(?!.*injury)
+corner_wait   5102-5124 *
 
 # open play
 cross         76-87     *
 cross         755-806   cross|swing|ball in|in comes|post|middle|deliver|whip|float|box|centre|center
-cross         5125-5190 *
+# a corner's delivery (corner_kick, judged in the air) or played short (corner_short): the bank's
+# corner-taking block, until 7/11 said of open-play crosses. Left out: near / far post (5151-5160,
+# 5168-5177: where it lands is not known when it is struck) and "another chance" (5187-5190)
+corner_kick   5125-5141 *
+corner_kick   5161-5167 *
+corner_kick   5178-5186 *
+corner_short  5142-5150 *
 through_pass  7370-7402 *
 through_pass  7570-7600 *
 through_pass  7658-7685 *
@@ -88,10 +100,25 @@ back_pass     7214-7220 *
 pass          7230-7238 *
 pass          7250-7256 *
 pass          7294-7320 *
-tackle        7535-7546 *
-tackle        7801-7826 *
-tackle        7843-7847 *
-tackle        7873-7917 *
+# interceptions: a pass taken by the other side (the engine, docs/39 §4); these were the "tackle"
+# lines until 7/11. Left out: "in his own box" (7906, 7907, 7913, 7917)
+interception  7535-7546 *
+interception  7801-7826 *
+interception  7843-7847 *
+interception  7873-7905 *
+interception  7908-7912 *
+interception  7914-7916 *
+# a tackle that wins the ball (touch 10): "wins the ball back", "went in and won the ball"
+tackle        3804-3807 *
+tackle        3809-3814 *
+tackle        3818-3818 *
+tackle        3824-3824 *
+tackle        3826-3826 *
+tackle        8083-8095 *
+tackle        8097-8109 *
+tackle        8112-8112 *
+tackle        8114-8114 *
+tackle        8120-8122 *
 dribble       7939-7955 *
 dribble       7990-7999 *
 dribble       6316-6318 *

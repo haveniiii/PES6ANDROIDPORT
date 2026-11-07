@@ -56,6 +56,8 @@
 #include "launcher.h"
 #include "product.h"
 #include "version.h"
+#include "afs_mods.h"
+#include "patch.h"
 
 #include <jni.h>
 #include <math.h>
@@ -1445,38 +1447,49 @@ static int egl_init(void) {
  * <files>/mods/commentary/ (from an APK built with tools/android_build.sh mods). */
 static void commentary_task(void) { pes6_commentary_frame(); }
 
+/* Our commentator speaks: the PSP's own goal shout goes quiet, or it says "It's in!" over the
+ * commentator (docs/39 §2.1). env.txt PES6_GOAL_SHOUT=1 keeps it. */
+static void goal_shout_off(void) {
+    const char *gs = getenv("PES6_GOAL_SHOUT");
+    if (!(gs && *gs == '1')) pes6_afs_goal_voice_off();
+}
+
 static void setup_commentary(const char *dir, const char *mods) {
     static const char *const banks[] = { "s_sound.afs", "e_sound.afs" };
     const char *id = getenv("PES6_MOD");
-    char own[600];
-    /* the original game (version.c): the English PS2 bank in <files>/mods/commentary_en only; a
-     * version (the patch): its own bank (Palma's), then the general ones */
-    snprintf(own, sizeof own, "%s/%s", mods, id && *id ? id : "");
-    const char *const roots[] = { id && *id ? own : dir, dir, mods };
-    if (id && !*id) {
-        char path[900];
-        snprintf(path, sizeof path, "%s/commentary_en/e_sound.afs", mods);
-        if (pes6_commentary_open(path, NULL) != 0) return;
-        pes6_commentary_set_enabled(pes6_settings_current.commentary);
-        psp_add_vblank_task(commentary_task);
-        LOGI("commentary from %s", path);
-        return;
-    }
-    char path[900];
-    for (int r = 0; r < 3; r++)
-        for (int b = 0; b < 2; b++) {
-            snprintf(path, sizeof path, "%s/commentary/%s", roots[r], banks[b]);
-            FILE *t = fopen(path, "rb");
-            if (!t) continue;
-            fclose(t);
-            if (pes6_commentary_open(path, NULL) != 0) continue;
-            snprintf(path, sizeof path, "%s/commentary/names.afs", roots[r]);
-            pes6_commentary_open_names(path);
-            pes6_commentary_set_enabled(pes6_settings_current.commentary);
-            psp_add_vblank_task(commentary_task);
-            LOGI("commentary from %s/commentary", roots[r]);
+    const int voice = pes6_patch_voice(mods, id);
+    /* the original game, or a patch that asks for it (docs/38 §5): the player's own PS2 bank,
+     * imported in the Patches page into <files>/audio, with the app's catalogue for it */
+    if (voice == PATCH_VOICE_BASE) {
+        char afs[900], cat[900], audio[900];
+        snprintf(audio, sizeof audio, "%s/audio", dir);
+        if (pes6_bank_paths(audio, mods, afs, sizeof afs, cat, sizeof cat) != 0) {
+            LOGI("commentary: no bank of the player's (Patches > Commentator)");
             return;
         }
+        if (pes6_commentary_open(afs, cat) != 0) return;
+        goal_shout_off();
+        pes6_commentary_set_enabled(pes6_settings_current.commentary);
+        psp_add_vblank_task(commentary_task);
+        LOGI("commentary from %s", afs);
+        return;
+    }
+    if (voice != PATCH_VOICE_OWN) return;
+    char path[900];
+    for (int b = 0; b < 2; b++) {                    /* the patch's own (PECH: Palma's) */
+        snprintf(path, sizeof path, "%s/%s/commentary/%s", mods, id, banks[b]);
+        FILE *t = fopen(path, "rb");
+        if (!t) continue;
+        fclose(t);
+        if (pes6_commentary_open(path, NULL) != 0) continue;
+        goal_shout_off();
+        snprintf(path, sizeof path, "%s/%s/commentary/names.afs", mods, id);
+        pes6_commentary_open_names(path);
+        pes6_commentary_set_enabled(pes6_settings_current.commentary);
+        psp_add_vblank_task(commentary_task);
+        LOGI("commentary from %s/%s/commentary", mods, id);
+        return;
+    }
 }
 
 /* One picture on its way to the screen: on the GE thread, behind the lists of its frame. */
@@ -1991,6 +2004,74 @@ static void iso_step(pes6_launcher *l, int want_pick) {
     pes6_launcher_set_iso(l, I.value, help, I.state == ISO_READY || (I.state == ISO_FAILED && I.have));
 }
 
+/* ---- patches, imported in the menu's Patches page (docs/38) --------------------------------
+ * The page asks for a file (a patch, or the player's commentary bank); the same picker as the ISO
+ * (IsoPicker.java) hands over a descriptor, and patch.c checks and installs it in a thread while
+ * the page shows the progress. The disc it compares PSP archives with is the game's ISO. */
+static char g_iso_path[768];             /* the ISO the game reads: <files>/pes6.iso or the APK's */
+static struct {
+    int state;                           /* 0 idle, 1 the picker is open, 2 importing */
+    int bank;                            /* the Commentator row asked */
+    pes6_patch_job job;
+    char busy[48];
+} P;
+
+static void patch_step(pes6_launcher *l, int want, const char *dir, const char *mods) {
+    JNIEnv *env = main_env();
+    if ((want == PES6_LAUNCHER_IMPORT || want == PES6_LAUNCHER_PICK_BANK) && P.state == 0 && I.state != ISO_PICKING &&
+        I.state != ISO_COPYING && iso_class(env)) {
+        (*env)->CallStaticVoidMethod(env, I.cls,
+            (*env)->GetStaticMethodID(env, I.cls, "pick", "(Landroid/app/Activity;)V"), g_app->activity->clazz);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        else { P.state = 1; P.bank = want == PES6_LAUNCHER_PICK_BANK; }
+    }
+    if (P.state == 1) {
+        const int s = (*env)->CallStaticIntMethod(env, I.cls, (*env)->GetStaticMethodID(env, I.cls, "state", "()I"));
+        if (s == 3) P.state = 0;
+        if (s == 2) {
+            char name[256] = "";
+            jstring js = (jstring)(*env)->CallStaticObjectMethod(env, I.cls,
+                (*env)->GetStaticMethodID(env, I.cls, "name", "()Ljava/lang/String;"));
+            if (js) {
+                const char *c = (*env)->GetStringUTFChars(env, js, NULL);
+                if (c) { snprintf(name, sizeof name, "%s", c); (*env)->ReleaseStringUTFChars(env, js, c); }
+            }
+            const int fd = (*env)->CallStaticIntMethod(env, I.cls,
+                (*env)->GetStaticMethodID(env, I.cls, "openFd", "(Landroid/app/Activity;)I"), g_app->activity->clazz);
+            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+            char audio[900];
+            snprintf(audio, sizeof audio, "%s/audio", dir);
+            const char *off = getenv("PES6_DISC_ISO_OFFSET");
+            const int have_disc = I.on ? I.have : access(g_iso_path, R_OK) == 0;
+            char save[900];                          /* the original's system save: a PC option file goes over it */
+            snprintf(save, sizeof save, "%s/SAVEDATA/ULES004760013000", dir);
+            const pes6_disc disc = { have_disc ? g_iso_path : NULL, off && !I.on ? atoll(off) : 0, save };
+            fprintf(stderr, "[patch] chosen: %s (%s)\n", name, P.bank ? "commentary bank" : "patch");
+            const int rc = fd < 0 ? -1
+                         : P.bank ? pes6_bank_import_start(&P.job, fd, name, audio)
+                                  : pes6_patch_import_start(&P.job, fd, name, mods, &disc, audio);
+            if (rc != 0) {
+                if (fd >= 0) close(fd);
+                pes6_launcher_patches_done(l, L("The file could not be read.", "No se pudo leer el archivo."), NULL);
+                P.state = 0;
+            } else {
+                P.state = 2;
+            }
+        }
+    }
+    if (P.state == 2) {
+        if (P.job.done) {
+            l->busy = NULL;
+            pes6_launcher_patches_done(l, P.job.msg, P.job.done > 0 ? P.job.id : NULL);
+            P.state = 0;
+        } else {
+            const int64_t t = P.job.total;
+            snprintf(P.busy, sizeof P.busy, L("%d%%", "%d%%"), t > 0 ? (int)(P.job.at * 100 / t) : 0);
+            l->busy = P.busy;
+        }
+    }
+}
+
 /* The pre-game menu (launcher.c, docs/19): play, game version and settings,
  * drawn with the GPU presenter and driven by touch, a gamepad or the touch
  * controls. Skipped by a scripted run (PES6_INPUT) or PES6_MENU=0, which keep
@@ -2053,12 +2134,12 @@ static void menu_preview(pes6_launcher *l, const pes6_settings *s) {
     pes6_launcher_set_preview(l, p, n);
 }
 
-static pes6_version g_versions[8];
+static pes6_version g_versions[PES6_PATCH_MAX + 1];
 
 static const pes6_version *choose_version(const char *io_root, const char *mods) {
     pes6_version *v = g_versions;
     static pes6_settings settings;
-    const int n = pes6_versions_list(mods, v, 8);
+    int n = pes6_versions_list(mods, v, PES6_PATCH_MAX + 1);
     if (n == 0) {                                    /* product.h: its version is the game */
         LOGE(PES6_PRODUCT_NAME ": %s/%s is missing", mods, PES6_PRODUCT_VERSION);
         return NULL;
@@ -2073,6 +2154,9 @@ static const pes6_version *choose_version(const char *io_root, const char *mods)
         if (!px) return NULL;
         pes6_launcher l;
         pes6_launcher_init(&l, v, n, i >= 0 ? i : pes6_version_last(io_root, v, n), &settings, 1);
+        char audio[900];
+        snprintf(audio, sizeof audio, "%s/audio", io_root);
+        pes6_launcher_set_patches(&l, mods, audio, v, PES6_PATCH_MAX + 1, 1);
         g_tap = g_back = 0;
         if (I.on) iso_step(&l, 0);
         for (i = -1; i < 0; ) {
@@ -2103,7 +2187,10 @@ static const pes6_version *choose_version(const char *io_root, const char *mods)
                 continue;
             }
             if (I.on) iso_step(&l, i == PES6_LAUNCHER_PICK_ISO);
-            if (i == PES6_LAUNCHER_PICK_ISO) i = -1;
+            patch_step(&l, i, io_root, mods);
+            if (i == PES6_LAUNCHER_PICK_ISO || i == PES6_LAUNCHER_IMPORT || i == PES6_LAUNCHER_PICK_BANK) i = -1;
+            if (i >= 0 && P.state) i = -1;                   /* Play waits for an import to end */
+            n = l.n;
             if (g_surf == EGL_NO_SURFACE) continue;            /* paused: nothing to draw on */
             const int k = pes6_launcher_scale_for(g_w, g_h);
             pes6_launcher_draw(&l, px, k);
@@ -2500,6 +2587,7 @@ void android_main(struct android_app *app) {
     char mods[800];
     snprintf(mods, sizeof mods, "%s/mods", dir);
     extract_mods(app->activity->assetManager, mods);
+    snprintf(g_iso_path, sizeof g_iso_path, "%s", iso);
     const pes6_version *version = choose_version(dir, mods);
     if (!version) return;
     if (I.on) snprintf(elf, sizeof elf, "%s", I.elf);

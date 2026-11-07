@@ -2,6 +2,7 @@
 #include "version.h"
 
 #include "afs_mods.h"
+#include "patch.h"
 #include "product.h"
 
 #include <dirent.h>
@@ -21,23 +22,13 @@ int pes6_versions_list(const char *mods_dir, pes6_version *out, int max) {
     snprintf(out[n].id, sizeof out[n].id, "original");
     snprintf(out[n].title, sizeof out[n].title, "Original");
     n++;
-    DIR *d = opendir(mods_dir);
-    if (!d) return n;
-    struct dirent *e;
-    while (n < max && (e = readdir(d))) {
-        if (e->d_name[0] == '.') continue;
-        char path[1024], line[96] = "";
-        snprintf(path, sizeof path, "%s/%s/version.txt", mods_dir, e->d_name);
-        FILE *f = fopen(path, "r");
-        if (!f) continue;                         /* a mod directory, but not a version */
-        if (!fgets(line, sizeof line, f)) line[0] = 0;
-        fclose(f);
-        line[strcspn(line, "\r\n")] = 0;
-        snprintf(out[n].id, sizeof out[n].id, "%s", e->d_name);
-        snprintf(out[n].title, sizeof out[n].title, "%s", line[0] ? line : e->d_name);
-        n++;
+    /* every patch (patch.h, docs/38): mods/<id>/ with mod.json, or version.txt from before */
+    static pes6_patch p[PES6_PATCH_MAX];
+    const int np = pes6_patch_list(mods_dir, p, PES6_PATCH_MAX);
+    for (int i = 0; i < np && n < max; i++, n++) {
+        snprintf(out[n].id, sizeof out[n].id, "%s", p[i].id);
+        snprintf(out[n].title, sizeof out[n].title, "%s", p[i].name);
     }
-    closedir(d);
     qsort(out + 1, (size_t)(n - 1), sizeof *out, cmp_id);
     if (!PES6_PRODUCT_VERSION[0]) return n;
     /* The product (product.h): its version first, then the original (the menu's

@@ -33,6 +33,8 @@
 #include "window.h"
 #include "product.h"
 #include "version.h"
+#include "afs_mods.h"
+#include "patch.h"
 
 #include <signal.h>
 #include <stdint.h>
@@ -330,23 +332,40 @@ static void setup_commentary(void) {
     const char *afs = getenv("PES6_COMMENTARY");
     char found[1024], dir[900], own[900];
     snprintf(dir, sizeof dir, "%s/commentary", psp_io_root());
-    if (!afs || !*afs) {                       /* default: <version>/commentary, <io root>/commentary */
+    const char *catalogue = getenv("PES6_COMMENTARY_CATALOGUE");
+    static char cat[1024];
+    if (!afs || !*afs) {                       /* default: what the version plays (docs/38 §5) */
         static const char *const names[] = { "s_sound.afs", "e_sound.afs" };
         const char *mods = getenv("PES6_MODS"), *id = getenv("PES6_MOD");
-        /* the original game (version.c): the English PS2 bank, mods/commentary_en/e_sound.afs */
-        snprintf(own, sizeof own, "%s/%s", mods && *mods ? mods : "mods", id && *id ? id : "commentary_en");
-        if (id && !*id) snprintf(dir, sizeof dir, "%s", own);
-        else strncat(own, "/commentary", sizeof own - strlen(own) - 1);
-        const char *const dirs[] = { id && *id ? own : NULL, dir };
+        if (!mods || !*mods) mods = "mods";
+        const int voice = pes6_patch_voice(mods, id);
+        char audio[900];
+        snprintf(audio, sizeof audio, "%s/audio", psp_io_root());
         afs = NULL;
-        for (int d = 0; d < 2 && !afs; d++)
-            for (int i = 0; i < 2 && dirs[d] && !afs; i++) {
-                snprintf(found, sizeof found, "%s/%s", dirs[d], names[i]);
+        if (voice == PATCH_VOICE_BASE && pes6_bank_paths(audio, mods, found, sizeof found, cat, sizeof cat) == 0) {
+            afs = found;                       /* the player's bank (pes6patch bank <io root>/audio ...) */
+            if (!catalogue || !*catalogue) catalogue = cat;
+            snprintf(dir, sizeof dir, "%s", audio);
+        } else if (voice == PATCH_VOICE_BASE) {
+            /* development: a bank kept by hand in mods/commentary_en (never in the repo or an APK) */
+            snprintf(own, sizeof own, "%s/commentary_en", mods);
+            snprintf(found, sizeof found, "%s/e_sound.afs", own);
+            FILE *t = fopen(found, "rb");
+            if (t) { fclose(t); afs = found; snprintf(dir, sizeof dir, "%s", own); }
+        } else if (voice == PATCH_VOICE_OWN) {
+            snprintf(own, sizeof own, "%s/%s/commentary", mods, id);
+            for (int i = 0; i < 2 && !afs; i++) {
+                snprintf(found, sizeof found, "%s/%s", own, names[i]);
                 FILE *t = fopen(found, "rb");
-                if (t) { fclose(t); afs = found; if (d == 0) snprintf(dir, sizeof dir, "%s", own); }
+                if (t) { fclose(t); afs = found; snprintf(dir, sizeof dir, "%s", own); }
             }
+        }
     }
-    if (!afs || pes6_commentary_open(afs, getenv("PES6_COMMENTARY_CATALOGUE")) != 0) return;
+    if (!afs || pes6_commentary_open(afs, catalogue && *catalogue ? catalogue : NULL) != 0) return;
+    /* our commentator speaks: the PSP's own goal shout goes quiet, or it says "It's in!" over Brackley
+     * (docs/39 §2.1; PES6_GOAL_SHOUT=1 keeps it) */
+    const char *gs = getenv("PES6_GOAL_SHOUT");
+    if (!(gs && *gs == '1')) pes6_afs_goal_voice_off();
     pes6_commentary_set_enabled(pes6_settings_current.commentary);
     /* player names: PES6_COMMENTARY_NAMES, default names.afs (a PS2 s_sound.afs) next to the bank */
     const char *names = getenv("PES6_COMMENTARY_NAMES");
@@ -514,8 +533,8 @@ int main(int argc, char **argv) {
     {
         const char *mods = getenv("PES6_MODS");
         if (!mods || !*mods) mods = "mods";
-        pes6_version v[8];
-        const int n = pes6_versions_list(mods, v, 8);
+        static pes6_version v[PES6_PATCH_MAX + 1];
+        int n = pes6_versions_list(mods, v, PES6_PATCH_MAX + 1);
         if (n == 0) {                                 /* product.h: its version is the game */
             fprintf(stderr, PES6_PRODUCT_NAME ": %s/%s is missing\n", mods, PES6_PRODUCT_VERSION);
             return 1;
@@ -524,7 +543,9 @@ int main(int argc, char **argv) {
         int i = pes6_version_find(v, n, want);
         if (i < 0 && want && *want) { fprintf(stderr, "unknown version '%s'\n", want); return 1; }
         if (i < 0 && menu) {
-            i = pes6_window_launcher(v, n, pes6_version_last(psp_io_root(), v, n), &settings);
+            char audio[900];
+            snprintf(audio, sizeof audio, "%s/audio", psp_io_root());
+            i = pes6_window_launcher(v, &n, PES6_PATCH_MAX + 1, pes6_version_last(psp_io_root(), v, n), &settings, mods, audio);
             if (i < 0) return 0;                      /* window closed in the menu */
             snprintf(settings.version, sizeof settings.version, "%s", v[i].id);
             pes6_settings_save(&settings, psp_io_root());

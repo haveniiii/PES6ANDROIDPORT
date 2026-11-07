@@ -13,9 +13,11 @@
  * Catalogue (text, "#" comments): one line per event,
  *     goal 120 121 122
  *     score_2_1 340 341      (said after a goal when the real score is 2-1 or 1-2)
- * Events: kickoff goal shot shot_saved woodwork header lofted_pass through_pass
- *         foul offside throw_in out corner goal_kick free_kick save half_time
- *         full_time chatter
+ * Events: k_event below (catalogue names). Since 7/11 (docs/39): half_time / full_time on the
+ *         end-of-period whistle (stop cause 1), interception (a pass taken by the other side) apart
+ *         from tackle (touch 10), freekick_wait / corner_wait in place of setpiece_wait, and
+ *         corner_kick / corner_short for a corner's delivery (no longer said as a cross). A catalogue
+ *         without the newer events keeps the older ones (ev_or).
  * PES6_COMMENTARY_LOG=1 prints every event and the clip chosen.
  */
 #include "commentary.h"
@@ -113,16 +115,17 @@ enum { EV_KICKOFF, EV_GOAL, EV_GOAL_AFTER, EV_OWN_GOAL, EV_EQUALIZER, EV_SHOT, E
        EV_WOODWORK, EV_SAVE, EV_HEADER, EV_CROSS, EV_THROUGH, EV_PASS, EV_TACKLE, EV_DRIBBLE,
        EV_FOUL, EV_OFFSIDE, EV_THROW_IN, EV_CORNER, EV_SETPIECE_WAIT, EV_CHATTER, EV_HALF_TIME,
        EV_FULL_TIME, EV_WELCOME, EV_SECOND_HALF, EV_GOAL_KICK, EV_BACK_PASS, EV_SHOT_NEAR, EV_SHOT_CHANCE,
-       EV_SHOT_WILD, EV_COUNT };
+       EV_SHOT_WILD, EV_INTERCEPTION, EV_FREEKICK_WAIT, EV_CORNER_WAIT, EV_CORNER_KICK, EV_CORNER_SHORT,
+       EV_COUNT };
 static const char *const k_event[EV_COUNT] = {
     "kickoff", "goal", "goal_after", "own_goal", "equalizer", "shot", "shot_miss",
     "woodwork", "save", "header", "cross", "through_pass", "pass", "tackle", "dribble",
     "foul", "offside", "throw_in", "corner", "setpiece_wait", "chatter", "half_time",
     "full_time", "welcome", "second_half", "goal_kick", "back_pass", "shot_near", "shot_chance",
-    "shot_wild" };
+    "shot_wild", "interception", "freekick_wait", "corner_wait", "corner_kick", "corner_short" };
 /* higher interrupts lower; equal or lower waits its turn (or is dropped) */
 static const int k_prio[EV_COUNT] = { 5, 9, 6, 9, 7, 6, 7, 7, 7, 4, 3, 3, 1, 3, 2, 5, 5, 3, 4, 2, 1, 8, 8, 5, 5, 3, 1,
-                                      7, 7, 7 };
+                                      7, 7, 7, 3, 2, 2, 4, 3 };
 /* names some catalogues use for the same event */
 static const struct { const char *alias; int ev; } k_alias[] = {
     { "lofted_pass", EV_CROSS }, { "shot_saved", EV_SAVE }, { "out", EV_SHOT_MISS } };
@@ -361,6 +364,9 @@ static void event(int e) {
                        ok ? "" : pes6_audio_sink_active() ? " (busy)" : " (no audio device)");
 }
 
+/* An event a catalogue may not split out yet (docs/39 §4): its own lines, else the older event's. */
+static int ev_or(int e, int older) { return g_nclips[e] ? e : older; }
+
 static int g_score_pending;           /* a goal went in: say the score when play is restarting */
 
 /* The score after a goal by team `scorer` (0/1; -1 unknown): a line said of the side ahead or
@@ -408,6 +414,11 @@ static struct {
     uint8_t shooter;
     int16_t kick_touch;
     int kick_team;                    /* team of the player who kicked it */
+    int period_ends;                  /* end-of-period whistles (stop cause 1): 1 half time, 2 full time... */
+    uint32_t period_end_at;           /* vblank of the last one, 0 none: the line it brought may outlast the pause */
+    uint32_t pass_at;                 /* vblank of the last pass (touch 1, 3, 5), 0 none */
+    int pass_team;                    /* ... and the team that played it: the other one taking it is an interception */
+    uint32_t corner_at;               /* vblank a corner was taken, 0 none: its delivery is no open-play cross */
 } W;
 
 /* A hard kick (touch code 4, the shot button) is a shot only if the ball then heads for a goal
@@ -547,8 +558,12 @@ void pes6_commentary_frame(void) {
     if (!running || pes6_paused()) {
         if (W.in_match && !atomic_load(&g_drop)) {
             g_nseq = 0;
-            atomic_store(&g_fade, 1);
-            if (g_log) fprintf(stderr, "[commentary] v%u %s: quiet\n", g_vblank, running ? "paused" : "match over");
+            /* the half-time screen (a pause) or the end of the match come ~3.5 s after the whistle: the
+             * line about it ends on its own instead of being cut (docs/39 §2.4) */
+            const int ending = W.period_end_at && g_vblank - W.period_end_at < 60u * 15;
+            if (!ending) atomic_store(&g_fade, 1);
+            if (g_log) fprintf(stderr, "[commentary] v%u %s: quiet%s\n", g_vblank, running ? "paused" : "match over",
+                               ending ? " (the end-of-period line plays on)" : "");
         }
         atomic_store(&g_drop, 1);
         if (!running) W.in_match = 0;
@@ -620,8 +635,9 @@ void pes6_commentary_frame(void) {
              * goal line at 13 465): "se mueven todos en el área" was said of free kicks at midfield
              * and of an offside one by the defenders' own box -- an offside free kick never is a
              * chance. Who takes it could not be told reliably (31/10). */
-            if (r == 3 || (r > 3 && pes6_stop_cause() == 4 && ball && fabsf(ball->pos.x) > 7000.0f))
-                event(EV_SETPIECE_WAIT);
+            if (r == 3) event(ev_or(EV_CORNER_WAIT, EV_SETPIECE_WAIT));
+            else if (r > 3 && pes6_stop_cause() == 4 && ball && fabsf(ball->pos.x) > 7000.0f)
+                event(ev_or(EV_FREEKICK_WAIT, EV_SETPIECE_WAIT));
             W.setpiece_said = 1;
         }
         if (p1 == 1 && W.phase1 == 14) {
@@ -632,14 +648,33 @@ void pes6_commentary_frame(void) {
                 const int e = W.kickoffs == 1 ? EV_KICKOFF : EV_SECOND_HALF;
                 if (W.kickoffs <= 2 && !g_nseq && g_nclips[e]) event(e);
             }
+            /* a corner taken: its delivery (judged a few vblanks on) is said as such, not as a cross */
+            if (pes6_restart_type() == 3 && (g_nclips[EV_CORNER_KICK] || g_nclips[EV_CORNER_SHORT])) W.corner_at = g_vblank;
             W.after_goal = 0; W.dead = 0;
             W.live_since = g_vblank;
+            W.period_end_at = 0;
+            W.pass_at = 0;
         }
+        if (W.corner_at && g_vblank - W.corner_at == 8) {
+            /* in the air or rising: a ball into the box; along the ground: played short */
+            const int air = ball && (-ball->pos.y > 60.0f || ball->prev_pos.y - ball->pos.y > 2.0f * pes6_step_30());
+            event(air ? ev_or(EV_CORNER_KICK, EV_CORNER_SHORT) : ev_or(EV_CORNER_SHORT, EV_CORNER_KICK));
+            if (g_log && ball) fprintf(stderr, "[commentary] v%u corner taken: %s (height %.0f)\n", g_vblank, air ? "in the air" : "short",
+                                       -ball->pos.y);
+        }
+        if (W.corner_at && g_vblank - W.corner_at > 60) W.corner_at = 0;
         if (p1 == 1 && W.phase1 != 1) W.dead = 0;       /* play goes on again, whatever the restart */
         /* the whistle (docs/21 §0b) */
         if (p1 == 10 && W.phase1 != 10 && !goal) {
             const uint8_t cause = pes6_stop_cause(), r = pes6_restart_type();
-            if (cause == 4) event(EV_FOUL);
+            if (cause == 1) {
+                /* the end of a period (docs/39 §2.4): half time, full time; after extra time's first
+                 * half (3) nothing, its end (4) full time again */
+                W.period_ends++;
+                W.period_end_at = g_vblank;
+                if (W.period_ends == 1) event(EV_HALF_TIME);
+                else if (W.period_ends != 3) event(EV_FULL_TIME);
+            } else if (cause == 4) event(EV_FOUL);
             else if (cause == 5) event(EV_OFFSIDE);
             else if (cause == 3 && (W.last_shot || W.wild_shot))
                 event(miss_event(ball, W.wild_shot, W.shot_x, W.shot_z));
@@ -679,6 +714,10 @@ void pes6_commentary_frame(void) {
             W.last_shot = W.wild_shot = 0;
             W.kick_at = 0;
             const float bx = ball ? fabsf(ball->pos.x) : 0.0f;
+            if (touch == 1 || touch == 3 || touch == 5) {   /* a pass: the other side taking it next is an interception */
+                W.pass_at = g_vblank;
+                W.pass_team = kicker_team(holder, W.last_toucher);
+            }
             switch (touch) {
             case 4:   W.kick_at = g_vblank; W.kick_touch = 4; W.kick_team = kicker_team(holder, W.last_toucher); break;
             case 8:   if (bx > 9000.0f) { W.kick_at = g_vblank; W.kick_touch = 8; W.kick_team = kicker_team(holder, W.last_toucher); }
@@ -686,9 +725,9 @@ void pes6_commentary_frame(void) {
                       break;
             case 1: { /* a lofted ball near the goal the kicker attacks, not out of his own box (31/10); the
                        * game's last touch is already 0 with the ball in the air: the kicker is the last
-                       * player seen on it */
+                       * player seen on it. A corner's delivery is not judged as a cross. */
                       const uint8_t k = holder && holder < 23 ? holder : W.last_toucher;
-                      if (bx > CROSS_RANGE_X && k && k < 23 && ball &&
+                      if (!W.corner_at && bx > CROSS_RANGE_X && k && k < 23 && ball &&
                           ball->pos.x * (float)attack_dir(pes6_chara_at(k)->team) > 0.0f) {
                           W.kick_at = g_vblank; W.kick_touch = 1;
                       }
@@ -696,13 +735,24 @@ void pes6_commentary_frame(void) {
                   }
             case 3:   event(EV_THROUGH); break;
             case 0xD: if (fabsf(ball ? ball->pos.z : 0.0f) < 1500.0f) event(EV_WOODWORK); break;   /* not the corner flag */
-            case 10:  event(EV_TACKLE); break;
+            case 10:  W.pass_at = 0; event(EV_TACKLE); break;   /* a tackle that reached the ball */
             case 5:   if (g_vblank - W.live_since > 90 && holder && holder < 23) {   /* not the kick-off tap */
                           W.kick_at = g_vblank; W.kick_touch = 5; W.kick_team = pes6_chara_at(holder)->team;
                       }
                       break;
             }
         }
+        /* An interception: a pass (touch 1, 3, 5) taken by the other side within 2 s -- not by a keeper
+         * (records 1 and 12: a catch, said as a save), not a tackle (touch 10, said above). The game has
+         * no such event: ours, from who touches the ball next (docs/39 §4). */
+        if (p1 == 1 && W.pass_at && holder && holder < 23 && holder != W.last_toucher) {
+            const int t = pes6_chara_at(holder)->team;
+            if (t != W.pass_team && g_vblank - W.pass_at < 120 && holder != 1 && holder != 12 && touch != 10 && !W.corner_at &&
+                g_nclips[EV_INTERCEPTION] && rand() % 2 == 0)
+                event(EV_INTERCEPTION);
+            W.pass_at = 0;
+        }
+        if (p1 == 1 && W.pass_at && g_vblank - W.pass_at >= 120) W.pass_at = 0;
         if (p1 == 1 && hstate == 0x19 && W.dribbler_state != 0x19 && rand() % 3 == 0) event(EV_DRIBBLE);
         /* play by play: the name of a new player on the ball, now and then */
         if (p1 == 1 && holder && holder < 23 && holder != W.last_toucher && !atomic_load(&g_speaking) &&

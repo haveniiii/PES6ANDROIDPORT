@@ -275,13 +275,16 @@ static void write_ppm(const char *path, const uint32_t *px) {
     fclose(f);
 }
 
-int pes6_window_launcher(const pes6_version *versions, int n, int sel, pes6_settings *settings) {
+int pes6_window_launcher(pes6_version *versions, int *n, int vcap, int sel, pes6_settings *settings, const char *mods,
+                         const char *audio) {
     static const struct { const char *name; uint32_t mask; } KEYS[] = {
         { "up", 0x0010 }, { "down", 0x0040 }, { "left", 0x0080 }, { "right", 0x0020 }, { "cross", 0x4000 },
-        { "circle", 0x2000 }, { "start", 0x0008 }, { "l", 0x0100 }, { "r", 0x0200 },
+        { "circle", 0x2000 }, { "start", 0x0008 }, { "l", 0x0100 }, { "r", 0x0200 }, { "triangle", 0x1000 },
+        { "square", 0x8000 },
     };
     pes6_launcher l;
-    pes6_launcher_init(&l, versions, n, sel, settings, getenv("PES6_LAUNCHER_TOUCH") != NULL);   /* the phone's rows (tests) */
+    pes6_launcher_init(&l, versions, *n, sel, settings, getenv("PES6_LAUNCHER_TOUCH") != NULL);   /* the phone's rows (tests) */
+    pes6_launcher_set_patches(&l, mods, audio, versions, vcap, 0);   /* no file picker: pes6patch (docs/38) */
     char script[256] = "";
     const char *ks = getenv("PES6_LAUNCHER_KEYS"), *cap = getenv("PES6_LAUNCHER_CAPTURE");
     if (ks) snprintf(script, sizeof script, "%s", ks);
@@ -353,7 +356,7 @@ int pes6_window_launcher(const pes6_version *versions, int n, int sel, pes6_sett
                 }
                 pes6_ge_gl_present_image(menu, 480 * k, 272 * k, w, h);
                 SDL_GL_SwapWindow(g_window);
-                if (chosen >= 0) return chosen;
+                if (chosen >= 0) { *n = l.n; return chosen; }
                 SDL_Delay(16);
                 continue;
             }
@@ -361,7 +364,7 @@ int pes6_window_launcher(const pes6_version *versions, int n, int sel, pes6_sett
 #endif
         pes6_launcher_draw(&l, g_pixels, 1);
         present_pixels();
-        if (chosen >= 0) return chosen;
+        if (chosen >= 0) { *n = l.n; return chosen; }
         SDL_Delay(16);
     }
 }

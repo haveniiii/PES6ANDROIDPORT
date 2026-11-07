@@ -34,11 +34,20 @@ typedef struct {
     int sel;            /* highlighted row */
     uint32_t held;      /* buttons down at the last update: act on presses only */
     /* The Controls screen (Android, docs/19 §9), a page of this same menu. */
-    int page;           /* 0 the settings, 1 Controls */
+    int page;           /* 0 the settings, 1 Controls, 2 Patches */
     int ctl_sel;        /* its pad focus: a scheme, or CTRL_COUNT for Editar */
     float scroll;       /* its text, in 480x272 units from the top */
     pes6_preview_control preview[PES6_PREVIEW_MAX];   /* the scheme's picture, from the host */
     int npreview;       /* 0: a generic one */
+    /* The Patches page (docs/38 §6), page 2: pes6_launcher_set_patches turns it on. */
+    const char *mods, *audio;   /* where the patches and the player's commentary bank live */
+    pes6_version *vbuf; /* the host's versions array (l->v), rebuilt when patches change */
+    int vcap;
+    int can_import;     /* the host has a file picker */
+    int psel;           /* its focus: a version, or n for the Commentator row */
+    int pconfirm;       /* a delete waiting for its second press: 1 + version, -1 the bank; 0 none */
+    const char *busy;   /* "Importing 40%" while the host imports, else NULL */
+    char pmsg[200];     /* the last import's outcome, or what the page has to say */
 } pes6_launcher;
 
 void pes6_launcher_init(pes6_launcher *l, const pes6_version *v, int n, int ver, pes6_settings *s, int android);
@@ -59,7 +68,20 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *rgba, int scale);
 /* ...or PES6_LAUNCHER_EDIT_CONTROLS when the player asks to move the touch controls (the
  * Editar button of the Controls screen). */
 #define PES6_LAUNCHER_EDIT_CONTROLS (-3)
+/* ...or, from the Patches page, PES6_LAUNCHER_IMPORT to pick a patch to import, PES6_LAUNCHER_PICK_BANK
+ * to pick the player's commentary bank (an .afs). The host runs the import (patch.h) and then calls
+ * pes6_launcher_patches_done. */
+#define PES6_LAUNCHER_IMPORT (-4)
+#define PES6_LAUNCHER_PICK_BANK (-5)
 int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, float ty);
+
+/* Turn on the Patches page: the patches in `mods` (versions rebuilt into vbuf[cap], which must be
+ * the array given to init) and the bank in `audio`. can_import: the host can pick files. */
+void pes6_launcher_set_patches(pes6_launcher *l, const char *mods, const char *audio, pes6_version *vbuf, int cap,
+                               int can_import);
+/* An import or a pick ended: msg says how (NULL keeps the page's), the list is read again and the
+ * version installed (`id`, may be NULL) becomes the chosen one. */
+void pes6_launcher_patches_done(pes6_launcher *l, const char *msg, const char *id);
 
 /* The Controls screen: scroll its text by d units of the 480x272 picture (a finger or a wheel),
  * and give it the scheme's controls (n 0: a generic picture). */

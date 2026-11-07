@@ -82,18 +82,26 @@ add_executable(pes6
     ../common/lang.c
     ../common/version.c
     ../common/afs_mods.c
+    ../common/patch.c
+    ../common/pcof.c
     ../common/launcher.c
     "${GEN_OVL}/overlays_registry.c"
     $<TARGET_OBJECTS:pes6_gen>
 )
 target_include_directories(pes6 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../common")
-target_link_libraries(pes6 PRIVATE psprecomp)
+target_link_libraries(pes6 PRIVATE psprecomp z)
+
+# The patches' importer on its own (docs/38 §9): pes6patch list|import|bank|delete.
+add_executable(pes6patch patch_tool.c ../common/patch.c ../common/pcof.c ../common/lang.c)
+target_include_directories(pes6patch PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../common")
+target_compile_options(pes6patch PRIVATE -O1 -Wall -Wextra)
+target_link_libraries(pes6patch PRIVATE z)
 
 # Movie decoding through FFmpeg's libavcodec. Without it the intro stays black.
-# The product (runtime/common/product.h, docs/29): the one game version the app plays.
-# Empty = the multi-version port of docs/17 (the original plus every mod).
-set(PES6_PRODUCT_VERSION "pech2026" CACHE STRING "mods/<id> the app plays; empty for every version")
+# The product (runtime/common/product.h): empty since 7/11 (docs/38), the original plus every patch;
+# a mods/<id> here makes the app play only that one (the old "only the Chilean patch", docs/29).
+set(PES6_PRODUCT_VERSION "" CACHE STRING "mods/<id> the app plays alone; empty for every patch")
 target_compile_definitions(pes6 PRIVATE PES6_PRODUCT_VERSION="${PES6_PRODUCT_VERSION}")
 
 find_path(AVCODEC_INCLUDE libavcodec/avcodec.h HINTS /opt/homebrew/include /usr/local/include)

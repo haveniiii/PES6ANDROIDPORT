@@ -24,7 +24,9 @@ void pes6_window_report(FILE *out);
  * For unattended checks, PES6_LAUNCHER_KEYS="down,cross" plays those keys
  * (one every 20 frames) and PES6_LAUNCHER_CAPTURE=prefix writes prefix_<n>.ppm
  * of what is shown before each of them. */
-int pes6_window_launcher(const pes6_version *versions, int n, int sel, pes6_settings *settings);
+/* versions[cap] is rebuilt when the Patches page deletes one (mods, audio: docs/38); *n follows. */
+int pes6_window_launcher(pes6_version *versions, int *n, int cap, int sel, pes6_settings *settings, const char *mods,
+                         const char *audio);
 void pes6_window_ge_thread(void);
 void pes6_window_apply(const pes6_settings *settings);   /* after the menu */
 
@@ -34,7 +36,7 @@ void pes6_window_apply(const pes6_settings *settings);   /* after the menu */
 #define pes6_window_buttons() 0u
 #define pes6_window_analog() 0x8080u
 #define pes6_window_report(out) ((void)(out))
-#define pes6_window_launcher(v, n, sel) (-1)
+#define pes6_window_launcher(v, n, cap, sel, s, mods, audio) (-1)
 #endif
 
 #endif

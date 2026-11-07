@@ -1,5 +1,11 @@
 # 29 — El producto: solo el parche chileno (2026-10-20)
 
+> **OBSOLETO desde el 7/11/2026 (decisión del usuario):** la app ya no es «solo el parche chileno». Es un PES6
+> «plus» con un sistema de parches: el menú lista el original y todos los parches instalados, que se importan y
+> borran en la pantalla Parches (`docs/38`). `PES6_PRODUCT_VERSION` quedó vacío por defecto; con un id sigue
+> funcionando como aquí se describe. Lo de abajo queda como historia (estabilidad, Liga, red y WIRELESS siguen
+> valiendo para cualquier parche).
+
 > Decisión del usuario (2026-10-20): lanzar una versión estable y completa (el proyecto «PES6CHILE27»;
 > la app se llama **PES6**, como siempre) en la
 > que **solo se juega el parche chileno** (`mods/pech2026`, `docs/28`). Se quita del menú la opción

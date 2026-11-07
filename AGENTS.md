@@ -93,6 +93,9 @@ orden de lanzadores espera **△** para salir. El GE entrega ya los callbacks FI
   `~/Library/Android/sdk/platform-tools/`, no en el PATH; serie `f75f9fb3`; también hay un
   emulador `emulator-5554`, así que hace falta `ANDROID_SERIAL`).
 
+> **OBSOLETO (7/11):** el producto ya no es «solo el parche»; ver **«7/11 — PES6 plus con parches»** más abajo y
+> `docs/38`. Lo que sigue queda como historia; lo de la ISO y la `bundle` del usuario sigue valiendo.
+>
 > **OBJETIVO DEL PRODUCTO (decisión del usuario, 2026-10-20): «PES6CHILE27»** (nombre del proyecto; la
 > app se sigue llamando PES6). El parche chileno
 > **ya no es una función oculta: es el producto.** Objetivo: **lanzar una versión estable y completa
@@ -106,7 +109,7 @@ orden de lanzadores espera **△** para salir. El GE entrega ya los callbacks FI
 > juego: para eso, `tools/android_build.sh mods` (sin datos) y cada uno pone su copia. Herramientas del
 > primer intento en el repo: `tools/chile_*`, `tools/pes6_of.py`, `tools/data/`.
 
-**Producto, paso 1 (2026-10-20, `docs/29`) — RETOMAR AQUÍ:** la app juega solo el parche.
+**Producto, paso 1 (2026-10-20, `docs/29`; obsoleto desde el 7/11, `docs/38`):** la app juega solo el parche.
 `runtime/common/product.h` (`PES6_PRODUCT_VERSION=pech2026`, CMake): `pes6_versions_list` devuelve
 solo esa versión, así que el menú previo no tiene fila de versión y todo (ventana, APK, sin
 ventana) arranca en el parche. **Vía interna:** `PES6_VERSION=original` (lo usan regress, perf y
@@ -408,6 +411,54 @@ parche sigue con Palma (decisión del usuario). Banco en `mods/commentary_en/`. 
 (`d553e8d07c007076`, sin instalar). Falta decidir cómo lo recibe la APK pública: `release` lo deja fuera salvo
 `COMMENTARY_EN=1`. Las pruebas de red pendientes siguen en `docs/15` §17c. Beta publicada: GitHub Release `v1.2.2-beta` (fix12).
 
+**7/11 — PES6 plus con parches (`docs/38`, sin commit) — RETOMAR AQUÍ:** decisión del usuario: la base deja de ser
+«solo el parche chileno»; es un PES6 «plus» con un sistema de parches para que cada uno arme los suyos. **Nada de
+Konami en el APK ni en el repo:** el importador solo mueve lo que el usuario ya tiene.
+- **Formato:** `mods/<id>/mod.json` (`format`, `id`, `name`, `author`, `version`, `description`, `base` = ULES00476,
+  `replaces`, `commentary` own/base/none) sobre el layout de siempre; reglas de validación en `docs/38` §2.2.
+  `version.txt` sigue valiendo.
+- **Código:** `runtime/common/patch.c|h` (lista, importador de zip con o sin `mod.json` y de `.afs`, banco de
+  comentarios del usuario), pantalla **Parches** en el menú previo (`launcher.c`, botón a la izquierda de Jugar: lista
+  con autor, versión, tamaño y activo; Importar; Borrar con doble pulsación; fila Comentarista con Elegir/Quitar),
+  Android con el selector de `IsoPicker` y el import en un hilo; `PES6_PRODUCT_VERSION` vacío por defecto (sin
+  interruptor «Liga chilena»). `runtime/desktop/build/pes6patch` = el mismo importador en el Mac.
+- **Comentarista:** el original habla con el banco del usuario (`<files>/audio`, importado en Parches; huella del
+  `e_sound.afs` PAL) y el catálogo del APK (`mods/catalogues/`). **Ningún APK lleva ya un banco de PS2**
+  (`android_build.sh` lo impide); `pech2026` sigue con Palma. `PATCHES=` elige los parches preinstalados
+  (por defecto `pech2026`).
+- **Problemas de fondo (`docs/38` §0):** las `.afs` de PC/PS2 (cabecera `AFS\0`) no sirven en la PSP y se rechazan;
+  de un parche de PC solo valen las piezas con conversor (option file, escudos, caras; hoy en Python). Kitserver no se
+  puede importar sin un gancho de equipaciones por equipo (los hashes dependen del option file). No se agrandan
+  miembros de `.afs`. Guardados cifrados de PSP: rechazados. PECH 2026 dentro del APK: lo decide el usuario.
+- **Verificado:** `tools/patch_test.sh` 30/30; en el juego, una `.afs` importada se aplica y el original habla con el
+  banco importado; regresión PASS 9/9; Android compila (`-fsyntax-only`), **sin APK ni prueba en el teléfono**.
+- En el Mac quedó `build/audio` → `build/patchtest/audio` (el banco importado en la prueba) y `mods/catalogues/`.
+- **Option file de PC en la app (7/11, `docs/38` §8, `runtime/common/pcof.c`):** el importador convierte
+  `KONAMI-WIN32PES6OPT` (suelto, en un zip a lo bruto o en `save/` de un zip con `mod.json`) sobre el guardado del
+  Original del jugador. Sus sumas de control se validan. La salida es idéntica byte a byte a `tools/pcof_to_psp.py`
+  (`tools/patch_test.sh` 45/45, con un option file armado por `pes6_pcof.py`: no hay uno real en el Mac). Al actualizar
+  un parche se conserva el historial de plantillas.
+
+**7/11 — auditoría del comentarista (`docs/39`, sin commit):**
+- 783 de 1 527 clips de eventos dudosos, casi todos por situación (lado del tiro, «otro», atajada o despeje), no
+  por la transcripción;
+- `tackle` son intercepciones; `setpiece_wait` y `cross` mezclan córner y tiro libre;
+- la **causa 1 es el fin de periodo**, y `half_time` / `full_time` nunca se disparan;
+- en el Original suena aún el grito de gol de la PSP;
+- arreglos por impacto en §4.
+
+Herramienta: `tools/commentary/audit_catalogue.py`.
+
+**Arreglos hechos el 7/11 (`docs/39` §6, sin commit):**
+- el silbato de fin de periodo (causa 1) dice `half_time` / `full_time`, y la frase sigue sonando sobre la pantalla;
+- `interception` aparte de `tackle`, que ahora tiene frases de entrada;
+- `freekick_wait` / `corner_wait`;
+- `corner_kick` / `corner_short`: el saque de córner ya no es un `cross`;
+- el grito de gol de la PSP se silencia en tiempo de ejecución cuando habla nuestro comentarista
+  (`pes6_afs_goal_voice_off`; `PES6_GOAL_SHOUT=1` lo deja).
+
+Verificado en escritorio con un partido entero del bot (que ahora pasa repeticiones y el descanso). Falta el teléfono.
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.
@@ -510,7 +561,7 @@ rendimiento, vídeo de la intro**),
 `jalr` que dejaba viva la pantalla de formación),
 `13-gpu-renderer.md` (iteración 18: rasterizado por GPU),
 `14-android.md` (**iteración 19: APK, primer arranque en un teléfono real**),
-`15-multiplayer-plan.md` (multijugador WiFi), `16-liga-chilena.md` (liga chilena, primer intento: iteraciones 32–33), `17-versiones.md` (menú de versión, mods y guardados por versión), `18-rendimiento.md` (optimización del código generado), `19-menu-ajustes.md` (menú previo, ajustes, mandos), `20-mantenimiento.md` (regresión, direcciones, nombres, toolkit), `21-partido-estructuras.md` (jugadores, tablas y globales del partido, vistos en RAM), `22-arquitectura.md` (**mapa del juego**: arranque, escenas, overlays, partido), `23-liga-datos.md` (bloque de datos de Liga/ML, punto de partida), `24-comentarios.md` (**comentarista**: banco de voz de PS2, motor), `25-manipulacion.md` (**dónde tocar para cambiar el juego**: parámetros, reglas, mapa Y→Z), `26-capas.md` (**las capas del port** y qué se puede tocar), `27-rollback.md` (netcode por entradas: investigación), `28-parches-pech.md` (parches PECH a versiones), `29-pes6chile27.md` (**el producto**: solo el parche, nombre, APK), `30-aspecto-jugadores.md` (pelo, piel y barba de los jugadores), `31-pantalla-ancha.md` (el partido a lo ancho del teléfono), `33-plantillas.md` (plantillas al día desde Wikipedia), `34-progreso-plantillas-28-10.md` (progreso de la sesión del 28/10: Primera B, Argentina y estado de las plantillas), `35-apk-iso.md` (APK que pide la ISO en el menú y descifra el EBOOT), `36-controles.md` (**catálogo de controles** desde la Command List del juego: 89 acciones clasificadas y borrador de esquema nuevo), `37-esquema-flow.md` (esquema táctil Flow, implementado; §8: mediciones y pendientes). Pantalla Controles del menú previo: `docs/19` §9.
+`15-multiplayer-plan.md` (multijugador WiFi), `16-liga-chilena.md` (liga chilena, primer intento: iteraciones 32–33), `17-versiones.md` (menú de versión, mods y guardados por versión), `18-rendimiento.md` (optimización del código generado), `19-menu-ajustes.md` (menú previo, ajustes, mandos), `20-mantenimiento.md` (regresión, direcciones, nombres, toolkit), `21-partido-estructuras.md` (jugadores, tablas y globales del partido, vistos en RAM), `22-arquitectura.md` (**mapa del juego**: arranque, escenas, overlays, partido), `23-liga-datos.md` (bloque de datos de Liga/ML, punto de partida), `24-comentarios.md` (**comentarista**: banco de voz de PS2, motor), `25-manipulacion.md` (**dónde tocar para cambiar el juego**: parámetros, reglas, mapa Y→Z), `26-capas.md` (**las capas del port** y qué se puede tocar), `27-rollback.md` (netcode por entradas: investigación), `28-parches-pech.md` (parches PECH a versiones), `29-pes6chile27.md` (**el producto**: solo el parche, nombre, APK), `30-aspecto-jugadores.md` (pelo, piel y barba de los jugadores), `31-pantalla-ancha.md` (el partido a lo ancho del teléfono), `33-plantillas.md` (plantillas al día desde Wikipedia), `34-progreso-plantillas-28-10.md` (progreso de la sesión del 28/10: Primera B, Argentina y estado de las plantillas), `35-apk-iso.md` (APK que pide la ISO en el menú y descifra el EBOOT), `36-controles.md` (**catálogo de controles** desde la Command List del juego: 89 acciones clasificadas y borrador de esquema nuevo), `37-esquema-flow.md` (esquema táctil Flow, implementado; §8: mediciones y pendientes), `38-parches.md` (**parches**: `mod.json`, importador, pantalla Parches, comentarista del usuario), `39-auditoria-comentarista.md` (**auditoría del comentarista inglés**: catálogo clip por clip, motor, comparación con PC y arreglos). Pantalla Controles del menú previo: `docs/19` §9.
 
 **Mantenimiento (iteración 38, `docs/20-mantenimiento.md`):** `tools/regress.sh` = batería de
 regresión (capturas deterministas por MD5 contra `tools/regress/expected.txt`; pasarla tras tocar
