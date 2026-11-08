@@ -130,6 +130,11 @@ Opciones baratas, todas con Debian/Ubuntu y un puerto UDP abierto:
 - **Un VPS de 4–6 USD al mes** (Vultr, que tiene Santiago y São Paulo; DigitalOcean y Hetzner no tienen región en
   Sudamérica): sobra. Con el reenvío en Chile, el ping de un partido reenviado es menor; para las salas solas da igual.
 
+**El servidor de verdad (8/11):** un VPS de Vultr (~5 USD al mes) con el nombre **`pes6chileandroid.duckdns.org`**
+(DuckDNS, gratis), que es lo que lleva la APK desde la 1.3.0. Así, si se cambia de servidor, basta con apuntar el nombre al
+nuevo (`DUCKDNS_DOMAIN=… DUCKDNS_TOKEN=… server/deploy.sh`) y las APK ya publicadas lo siguen encontrando. SSH solo
+por llave, `ufw` con 22/tcp y 27700/udp, `systemd-analyze security p6lobby` = 1,3 (`server/README.md`, «Security»).
+
 Instalación: `server/deploy.sh root@<ip>` desde el Mac (instala, arranca y lo prueba con `server/probe.py`), o a mano
 según `server/README.md`. Después, recompilar la APK con `PES6_LOBBY_SERVER=<host>:27700`.
 

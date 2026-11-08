@@ -28,6 +28,15 @@ server/deploy.sh root@<ip>            # installs or updates, starts it, then run
 python3 server/probe.py <ip>:27700    # checks it from anywhere: WELCOME and the room list
 ```
 
+**A name instead of the IP.** The APK holds the server's address, so give it a name: then a new server only needs
+the name pointed at it, and the APKs already out keep working. With a free DuckDNS name (duckdns.org), `deploy.sh`
+points it at the server now and keeps it there every 15 minutes. The token stays on the server
+(`/etc/p6lobby/duckdns`, root only), never in the repo:
+
+```sh
+DUCKDNS_DOMAIN=<name> DUCKDNS_TOKEN=<token> server/deploy.sh root@<ip>
+```
+
 The same by hand, on the VPS:
 
 ```sh

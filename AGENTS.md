@@ -491,7 +491,7 @@ para las salas y partidos P2P, cambio de anfitrión en el segundo tiempo; el usu
 - **Cambio de anfitrión: lo hace el juego solo** (`docs/41` §3, hallado en el código el 8/11). Manda el estado la consola
   con `0x08A8167C` = 1: en el primer tiempo la del equipo local, en el segundo la del visitante (netlib elige un master
   nuevo al terminar el periodo 0, comando `0x12/1`). Visto con dos bots (`[net] master:` en el log) y en un partido real Mac (WiFi) contra Redmi (4G compartido), directo.
-  `swap_task` (otro bit, estaba mal) se quitó. Servidor real: Vultr `155.138.175.40` (`server/deploy.sh`); APK `PES6-1.2.2-online2.apk`.
+  `swap_task` (otro bit, estaba mal) se quitó. Servidor real: Vultr, nombre `pes6chileandroid.duckdns.org` (`server/deploy.sh`, `server/README.md`); APK `PES6-1.3.0.apk` (release, sin publicar).
 - Probado en el Mac: dos instancias se encuentran por el servidor y juegan, directo y por reenvío (`NET_LOBBY=127.0.0.1:27700
   [NET_RELAY=1] NET_BOT=1 tools/net_pair.sh`, con las pulsaciones de `net_bench.sh`); regresión PASS. Falta: un partido por reenvío
   entre redes reales (dos 4G).
