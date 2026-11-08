@@ -76,6 +76,10 @@ int pes6_patch_import_start(pes6_patch_job *job, int fd, const char *name, const
 int pes6_bank_import(pes6_patch_job *job, int fd, const char *name, const char *audio_dir);
 int pes6_bank_import_start(pes6_patch_job *job, int fd, const char *name, const char *audio_dir);
 
+/* Where the English catalogue and its clip lengths are (<mods>/catalogues): a bank in another language,
+ * or another edition, is placed against them by its clip lengths and gets its catalogue at import (docs/40). */
+void pes6_bank_set_reference(const char *catalogues);
+
 /* The player's bank in audio_dir: its path into `afs`, its catalogue's name into `catalogue`
  * ("e_sound.txt") and who speaks into `label`. 0, or -1 if there is none. */
 int pes6_bank_installed(const char *audio_dir, char *afs, int afs_cap, char *catalogue, int cat_cap,

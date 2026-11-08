@@ -28,6 +28,8 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 /* ---- the bank ------------------------------------------------------------- */
 typedef struct { FILE *f; uint32_t count; uint32_t *tab; } bank;   /* tab: offset, size per clip */
@@ -116,16 +118,17 @@ enum { EV_KICKOFF, EV_GOAL, EV_GOAL_AFTER, EV_OWN_GOAL, EV_EQUALIZER, EV_SHOT, E
        EV_FOUL, EV_OFFSIDE, EV_THROW_IN, EV_CORNER, EV_SETPIECE_WAIT, EV_CHATTER, EV_HALF_TIME,
        EV_FULL_TIME, EV_WELCOME, EV_SECOND_HALF, EV_GOAL_KICK, EV_BACK_PASS, EV_SHOT_NEAR, EV_SHOT_CHANCE,
        EV_SHOT_WILD, EV_INTERCEPTION, EV_FREEKICK_WAIT, EV_CORNER_WAIT, EV_CORNER_KICK, EV_CORNER_SHORT,
-       EV_COUNT };
+       EV_SAVE_CORNER, EV_COUNT };
 static const char *const k_event[EV_COUNT] = {
     "kickoff", "goal", "goal_after", "own_goal", "equalizer", "shot", "shot_miss",
     "woodwork", "save", "header", "cross", "through_pass", "pass", "tackle", "dribble",
     "foul", "offside", "throw_in", "corner", "setpiece_wait", "chatter", "half_time",
     "full_time", "welcome", "second_half", "goal_kick", "back_pass", "shot_near", "shot_chance",
-    "shot_wild", "interception", "freekick_wait", "corner_wait", "corner_kick", "corner_short" };
+    "shot_wild", "interception", "freekick_wait", "corner_wait", "corner_kick", "corner_short",
+    "save_corner" };
 /* higher interrupts lower; equal or lower waits its turn (or is dropped) */
 static const int k_prio[EV_COUNT] = { 5, 9, 6, 9, 7, 6, 7, 7, 7, 4, 3, 3, 1, 3, 2, 5, 5, 3, 4, 2, 1, 8, 8, 5, 5, 3, 1,
-                                      7, 7, 7, 3, 2, 2, 4, 3 };
+                                      7, 7, 7, 3, 2, 2, 4, 3, 6 };
 /* names some catalogues use for the same event */
 static const struct { const char *alias; int ev; } k_alias[] = {
     { "lofted_pass", EV_CROSS }, { "shot_saved", EV_SAVE }, { "out", EV_SHOT_MISS } };
@@ -296,11 +299,34 @@ static uint32_t g_vblank;
 static uint32_t g_event_at[EV_COUNT];
 
 /* The last lines said, so that the same one is not heard twice in a row of a few. */
+/* The commentator's own generator (splitmix64): the C library's rand() gives nearly the same first
+ * numbers for nearby seeds on macOS (12 bot seeds, 12 welcomes from one half of the set). */
+static uint64_t g_rng = 0x9E3779B97F4A7C15ull;
+static int crand(void) {
+    uint64_t z = (g_rng += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return (int)((z ^ (z >> 31)) >> 33);
+}
 #define RECENT 24
 static int g_recent[RECENT], g_nrecent;
 static int said_lately(int clip) {
     for (int i = 0; i < RECENT && i < g_nrecent; i++) if (g_recent[i] == clip) return 1;
     return 0;
+}
+/* Times each clip was said this match: an event's line is one of its least said (7/11: with "the next
+ * one after a recent one" a clip that followed a run of recent ones took their turns -- "Place the ball
+ * forward" was 1 pass line in 5, 3 times in one half). */
+#define MAX_CLIP 16384
+static uint8_t g_times[MAX_CLIP];
+static uint32_t g_said_at[MAX_CLIP];  /* vblank each clip was last said, 0 never */
+/* A line of colour (priority 3 or less: a pass, a dribble, a throw-in...) is never said again this soon:
+ * with a small set (Palma has 8 pass lines) it is better quiet than the same words twice a half. */
+#define FILLER_REPEAT (60u * 240)
+static void mark_said(int clip) {
+    if (clip < 0 || clip >= MAX_CLIP) return;
+    if (g_times[clip] < 255) g_times[clip]++;
+    g_said_at[clip] = g_vblank ? g_vblank : 1;
 }
 
 static int queue_from(const bank *bk, int clip, int prio) {
@@ -313,7 +339,10 @@ static int queue_from(const bank *bk, int clip, int prio) {
     g_next = (voice){ pcm, frames, rate, prio };
     atomic_store(&g_next_ready, 1);
     g_said++;
-    if (bk == &g_banks[0]) g_recent[g_nrecent++ % RECENT] = clip;
+    if (bk == &g_banks[0]) {
+        g_recent[g_nrecent++ % RECENT] = clip;
+        mark_said(clip);
+    }
     g_quiet_until = g_vblank + (uint32_t)(frames * 60ull / rate) + 30;   /* the line plus half a second */
     return 1;
 }
@@ -355,10 +384,28 @@ static void event(int e) {
         if (g_log) fprintf(stderr, "[commentary] %s too soon\n", k_event[e]);
         return;
     }
-    int k = rand() % g_nclips[e];
-    for (int tries = 0; tries < g_nclips[e] && said_lately(g_clips[e][k]); tries++) k = (k + 1) % g_nclips[e];
+    /* one of the event's least said clips this match, not said lately, each as likely */
+    int k = 0, best = 1 << 30, ties = 0;
+    for (int i = 0; i < g_nclips[e]; i++) {
+        const int c = g_clips[e][i];
+        const int w = (c >= 0 && c < MAX_CLIP ? g_times[c] : 0) * 2 + said_lately(c) * 1000;
+        if (w < best) { best = w; k = i; ties = 1; }
+        else if (w == best && crand() % ++ties == 0) k = i;
+    }
+    {
+        const int c = g_clips[e][k];
+        if (k_prio[e] <= 3 && c >= 0 && c < MAX_CLIP && g_said_at[c] && g_vblank - g_said_at[c] < FILLER_REPEAT) {
+            if (g_log) fprintf(stderr, "[commentary] %s: every line said lately\n", k_event[e]);
+            return;
+        }
+    }
     g_last[e] = g_clips[e][k];
     const int ok = queue_clip(g_clips[e][k], k_prio[e]);
+    if (!ok && !pes6_audio_sink_active()) {               /* headless (bot tests): as if it had been said */
+        const int c = g_clips[e][k];
+        g_recent[g_nrecent++ % RECENT] = c;
+        mark_said(c);
+    }
     if (ok) { g_nseq = 0; g_event_at[e] = g_vblank; }    /* what was still to come is stale now */
     if (g_log) fprintf(stderr, "[commentary] v%u f%u %s -> clip %d%s\n", g_vblank, pes6_scene_frame(), k_event[e], g_clips[e][k],
                        ok ? "" : pes6_audio_sink_active() ? " (busy)" : " (no audio device)");
@@ -378,10 +425,10 @@ static void say_score(int scorer) {
     const int side = scorer < 0 || a == b ? -1 : (scorer ? g1 > g0 : g0 > g1) ? 0 : 1;
     int clip;
     if (side >= 0 && a < MAX_SCORE && g_nscore_side[side][a][b])
-        clip = g_score_side[side][a][b][rand() % g_nscore_side[side][a][b]];
-    else if (a < MAX_SCORE && g_nscore[a][b]) clip = g_score[a][b][rand() % g_nscore[a][b]];   /* a whole line */
+        clip = g_score_side[side][a][b][crand() % g_nscore_side[side][a][b]];
+    else if (a < MAX_SCORE && g_nscore[a][b]) clip = g_score[a][b][crand() % g_nscore[a][b]];   /* a whole line */
     else if (g_nscore_tables && a <= SCORE_TABLE_MAX)                                         /* "dos uno" */
-        clip = g_score_table[rand() % g_nscore_tables] + a * a + (a == b ? 2 * a : 2 * b + (g1 > g0));
+        clip = g_score_table[crand() % g_nscore_tables] + a * a + (a == b ? 2 * a : 2 * b + (g1 > g0));
     else {
         if (g_log) fprintf(stderr, "[commentary] score %d-%d (no clips)\n", g0, g1);
         return;
@@ -545,7 +592,7 @@ static void say_teams(void) {
 
 static void say_goal_score(void) {
     const int g0 = pes6_team_goals(0), g1 = pes6_team_goals(1);
-    if (g0 >= 0 && g0 == g1 && g_nclips[EV_EQUALIZER] && (rand() & 1)) event(EV_EQUALIZER);
+    if (g0 >= 0 && g0 == g1 && g_nclips[EV_EQUALIZER] && (crand() & 1)) event(EV_EQUALIZER);
     else say_score(W.scorer_team);
 }
 
@@ -582,6 +629,8 @@ void pes6_commentary_frame(void) {
     const uint8_t hstate = holder && holder < 23 ? pes6_chara_at(holder)->state : 0;
     if (!W.in_match) {
         memset(&W, 0, sizeof W);
+        memset(g_times, 0, sizeof g_times);            /* a new match: every line fresh again */
+        memset(g_said_at, 0, sizeof g_said_at);
         W.in_match = 1;
         g_score_pending = 0;
         W.phase0 = p0; W.phase1 = p1; W.touch = touch; W.goal_flag = goal;
@@ -676,11 +725,17 @@ void pes6_commentary_frame(void) {
                 else if (W.period_ends != 3) event(EV_FULL_TIME);
             } else if (cause == 4) event(EV_FOUL);
             else if (cause == 5) event(EV_OFFSIDE);
-            else if (cause == 3 && (W.last_shot || W.wild_shot))
+            else if (cause == 3 && (W.last_shot || W.wild_shot) && !W.save_at)
                 event(miss_event(ball, W.wild_shot, W.shot_x, W.shot_z));
             else if (cause == 3 && r == 1) event(EV_THROW_IN);
             else if (cause == 3 && r == 2) event(g_nclips[EV_GOAL_KICK] ? EV_GOAL_KICK : EV_SHOT_MISS);
-            else if (cause == 3 && r == 3) event(EV_CORNER);   /* 3 corner: inferred (2 seen after a shot wide) */
+            else if (cause == 3 && r == 3) {                 /* 3 corner: inferred (2 seen after a shot wide) */
+                /* the keeper the last to touch it: he punched or pushed it out ("punched it clear, it's a
+                 * corner"); those lines are no generic corner's, nor any save's (7/11, heard on the phone) */
+                const int keeper = W.last_toucher == 1 || W.last_toucher == 12;
+                event(keeper ? ev_or(EV_SAVE_CORNER, EV_CORNER) : EV_CORNER);
+                if (keeper && g_nclips[EV_SAVE_CORNER]) W.save_at = W.shot_at = 0;   /* that line is the save's */
+            }
             if (g_log && ball) fprintf(stderr, "[commentary] v%u ball out at %.0f,%.0f height %.0f, last shot %d wild %d from %.0f,%.0f\n",
                                        g_vblank, ball->pos.x, ball->pos.z, -ball->pos.y, W.last_shot, W.wild_shot, W.shot_x, W.shot_z);
             if (g_log) fprintf(stderr, "[commentary] v%u f%u whistle cause %u restart %u\n", g_vblank, pes6_scene_frame(), cause, r);
@@ -701,8 +756,8 @@ void pes6_commentary_frame(void) {
             if (W.last_shot) { event(EV_SHOT); W.shot_at = g_vblank; W.save_at = 0; W.shooter = holder; }
             else if (cross) event(EV_CROSS);
             else if (W.kick_touch == 8) event(EV_HEADER);
-            else if (back) { if (rand() % 3 == 0) event(EV_BACK_PASS); }
-            else if (W.kick_touch == 5) { if (rand() % 6 == 0) event(EV_PASS); }
+            else if (back) { if (crand() % 3 == 0) event(EV_BACK_PASS); }
+            else if (W.kick_touch == 5) { if (crand() % 6 == 0) event(EV_PASS); }
             if (g_log && ball && W.kick_touch != 5)
                 fprintf(stderr, "[commentary] v%u %s %s: ball %.0f,%.0f height %.0f step %.0f,%.0f\n", g_vblank,
                         W.kick_touch == 1 ? "lofted" : "kick",
@@ -748,17 +803,17 @@ void pes6_commentary_frame(void) {
         if (p1 == 1 && W.pass_at && holder && holder < 23 && holder != W.last_toucher) {
             const int t = pes6_chara_at(holder)->team;
             if (t != W.pass_team && g_vblank - W.pass_at < 120 && holder != 1 && holder != 12 && touch != 10 && !W.corner_at &&
-                g_nclips[EV_INTERCEPTION] && rand() % 2 == 0)
+                g_nclips[EV_INTERCEPTION] && crand() % 2 == 0)
                 event(EV_INTERCEPTION);
             W.pass_at = 0;
         }
         if (p1 == 1 && W.pass_at && g_vblank - W.pass_at >= 120) W.pass_at = 0;
-        if (p1 == 1 && hstate == 0x19 && W.dribbler_state != 0x19 && rand() % 3 == 0) event(EV_DRIBBLE);
+        if (p1 == 1 && hstate == 0x19 && W.dribbler_state != 0x19 && crand() % 3 == 0) event(EV_DRIBBLE);
         /* play by play: the name of a new player on the ball, now and then */
         if (p1 == 1 && holder && holder < 23 && holder != W.last_toucher && !atomic_load(&g_speaking) &&
-            g_vblank - g_last_name > 90 && g_vblank - g_name_at[holder] > NAME_GAP && rand() % 2 == 0)
+            g_vblank - g_last_name > 90 && g_vblank - g_name_at[holder] > NAME_GAP && crand() % 2 == 0)
             say_name(holder, 2, g_vblank - g_last_name < 240 ? NV_AND :       /* a passing move: "y X" */
-                                rand() % 3 == 0 ? NV_THERE : -1);
+                                crand() % 3 == 0 ? NV_THERE : -1);
     }
     /* A save: a keeper (record 1 or 12) touches the ball within 2 s of a shot -- a catch or a parry,
      * even out for a corner -- and no goal follows within 20 vblanks. Not by last_shot (the keeper's
@@ -788,6 +843,11 @@ int pes6_commentary_open(const char *afs, const char *catalogue) {
     pes6_commentary_close();
     const char *lg = getenv("PES6_COMMENTARY_LOG");
     g_log = lg && *lg && *lg != '0';
+    /* never seeded before 7/11: every launch said the same lines in the same order (the welcome
+     * always clip 6344 on the phone). PES6_COMMENTARY_SEED, or the bot's seed, keeps a test repeatable. */
+    const char *sd = getenv("PES6_COMMENTARY_SEED");
+    if (!(sd && *sd)) sd = getenv("PES6_BOT");
+    g_rng = sd && *sd ? (uint64_t)strtoull(sd, NULL, 0) : ((uint64_t)time(NULL) << 20) ^ (uint64_t)getpid();
     if (bank_open(&g_banks[0], afs) != 0) return -1;
     const uint32_t n = g_banks[0].count;
     char path[1024];

@@ -48,6 +48,12 @@ typedef struct {
     int pconfirm;       /* a delete waiting for its second press: 1 + version, -1 the bank; 0 none */
     const char *busy;   /* "Importing 40%" while the host imports, else NULL */
     char pmsg[200];     /* the last import's outcome, or what the page has to say */
+    /* The Online page (docs/41), page 3: the lobby server's rooms (online.h). */
+    int online;         /* the host offers it (pes6_launcher_set_online) */
+    int osel;           /* its focus */
+    int ofirst;         /* the first room in view */
+    int text_want;      /* the text the page waits for (PES6_LAUNCHER_TEXT): 1 the name, 2 a room's name, 3 a password */
+    char text_title[96], text_initial[32], text_room[96];
 } pes6_launcher;
 
 void pes6_launcher_init(pes6_launcher *l, const pes6_version *v, int n, int ver, pes6_settings *s, int android);
@@ -73,7 +79,16 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *rgba, int scale);
  * pes6_launcher_patches_done. */
 #define PES6_LAUNCHER_IMPORT (-4)
 #define PES6_LAUNCHER_PICK_BANK (-5)
+/* ...or, from the Online page, PES6_LAUNCHER_TEXT when it needs a line of text from the player (the
+ * name, a room's): the host asks with l->text_title, starting from l->text_initial, and answers
+ * with pes6_launcher_text_done. */
+#define PES6_LAUNCHER_TEXT (-6)
 int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, float ty);
+
+/* Offer the Online page (an Online button on the first page): the lobby starts when it opens. */
+void pes6_launcher_set_online(pes6_launcher *l);
+/* The player's answer to PES6_LAUNCHER_TEXT; ok 0 cancelled. */
+void pes6_launcher_text_done(pes6_launcher *l, int ok, const char *text);
 
 /* Turn on the Patches page: the patches in `mods` (versions rebuilt into vbuf[cap], which must be
  * the array given to init) and the bank in `audio`. can_import: the host can pick files. */

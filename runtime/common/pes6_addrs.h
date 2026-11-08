@@ -73,6 +73,15 @@ enum {
  * first one does. It changes during a match (the phase of play). From these two: */
 #define PES6_NET_ROLE_A       0x089EA360u  /* u32 */
 #define PES6_NET_ROLE_B       0x089EA364u  /* u32 */
+/* Who sends the match state (docs/41 §3): the eboot's flag (set by netlib FUN_08c37bf0 / FUN_08c3a940):
+ * 1 on the console whose slot (NETLIB_SELF) is the session's master (NETLIB_MASTER); the receiver of the
+ * state (FUN_08c4ca68) only applies it where this is 0. NETLIB_PERIOD counts the periods (-1 before the
+ * kick-off); at the end of period 0 or 2, result_step4_part_08C58EE8 asks for a new master (command 0x12/1):
+ * FUN_08c3c738 picks the console on the other side. */
+#define PES6_NET_MASTER_FLAG      0x08A8167Cu  /* u32, 1: this console sends the state */
+#define PES6_NETLIB_SELF          0x08C85580u  /* s16, this console's slot in the session */
+#define PES6_NETLIB_MASTER        0x08C865B4u  /* s16, the master's slot */
+#define PES6_NETLIB_PERIOD        0x08C85B95u  /* s8 */
 
 /* ---- the movie player (docs/10) -------------------------------------------
  * Its audio and video timestamp rings, read for PES6_MPEG_SYNC diagnosis. */

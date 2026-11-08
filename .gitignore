@@ -58,3 +58,6 @@ __pycache__/
 
 # === Per-variant build trees (e.g. runtime/desktop/build-trace) ===
 build-*/
+
+# The player's own PS2 game files (banks, texts): never in the repo
+PS2DAT/

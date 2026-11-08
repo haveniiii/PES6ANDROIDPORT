@@ -30,20 +30,28 @@ save          3960-4060  port|porc|fort|bort|puerto de|tapad|atrap|manotazo|puñ
 drop save     3461 3479 3978 3979 3983 3984 4052 3961 3965 3969
 
 cross         780-805    centro|cintro|área|aire|ojo|cuidado
-cross         5164-5176  centro|aire
+# 5125-5190 is the corner's delivery block (docs/39 §6): said when a corner is taken, no open-play cross
+corner_kick   5164-5180  centro|aire|oya|área
 through_pass  6222-6232  líneas|lineas|filtrado|profund|entrelin
 through_pass  7369-7377  filtrado|profund
 through_pass  7679-7689  profund
 pick pass     6228 6231 6232 7224 7225 7227 7228 7229
 pick back_pass 7209 7210 7211 7213 7214 7220 7233 7234 7235 7237 7238 7239 7241 7243
 pick dribble  6248 6250 6253 7351 7352 7382 7397 7398 7402 7405 7411 7412 7418 7419 7426 7431 7433 7437 7439
-tackle        7801-7911  muy bien|madrug|metido|cerró|cierra|cruce|anticipa|conectado|enchufado|atento
+# 7801-7911 is the interception block (as in e_sound, docs/39 §6): "la madrugaron", "se equivocó la entrega",
+# "el cruce oportunísimo". A tackle (touch 10) takes only the lines about winning it: never "la entrega"
+# (a bad pass) nor "lo mató con el envío" (an overhit pass).
+interception  7801-7911  muy bien|madrug|metido|cerró|cierra|cruce|anticipa|conectado|enchufado|atento|equivoc|entreg|envío|largo|desmedido
+drop interception 7800 7810 7877
+tackle        7801-7911  madrug|metido|cerró|cierra|cruce|anticipa|conectado|enchufado|atento
 drop tackle   7800 7810 7877
 
 corner        5030-5095  c[oó]r+[en]+r|corner|esquina
 drop corner   5077 5078
 goal_kick     5022-5029  arco
 pick throw_in 4080 4082 4083 4084
+# the players in the box and the nerves before a set piece: fits a corner and a free kick alike
+# (the engine says setpiece_wait for both when there is no corner_wait / freekick_wait)
 setpiece_wait 4980-4996  *
 offside       3660-3679  adelant|asistente|il[ií]cita|irísita|sorprend|talo
 offside       4560-4571  adelant|asistente

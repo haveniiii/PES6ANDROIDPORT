@@ -455,3 +455,67 @@ queda como única voz, igual que antes. `PES6_GOAL_SHOUT=1` lo deja sonar.
   bots salen pocas (1 en un tiempo): hay que oírlo jugando.
 - **Córner a primer o segundo palo** (5151–5160, 5168–5177) fuera: el motor no sabe dónde cae el balón al sacarlo.
 - **Arreglos 4–10 del catálogo y 2–9 del motor de §4:** sin hacer.
+
+### 6.6 Tras el primer partido en el teléfono (7/11 noche)
+
+El usuario jugó un partido de 10 minutos en el Redmi (`PES6-1.2.2-plus1.apk`) y oyó una frase fuera de lugar en dos
+momentos: «el arquero no la atrapó y la mandó al córner» después de una atajada limpia, y otra en un córner que el
+arquero no tocó. Según el registro del teléfono, eran tres clips de la misma familia:
+
+- en dos atajadas, los clips 3431 y 3436 (*«punched it to safety and out for a corner»*);
+- en un córner, el clip 5060 (*«Sloppy goalkeeping there… only a corner»*).
+
+**Arreglos:**
+- **Evento nuevo `save_corner`** (3429–3438 y 3442, que ya no están en `save`). Se dice en el silbato de un córner
+  (causa 3, saque 3) cuando el último en tocar el balón fue un arquero (registro 1 o 12). Si no hay clips para ese
+  evento, se dice `corner`. Con esa frase el córner cubre también la atajada pendiente. Si el arquero desvía el
+  tiro y el balón sale antes de que se dijera la atajada, ya no se anuncia como tiro desviado (`!W.save_at`).
+- **El clip 5060 queda fuera:** nada distingue el error de un arquero de una buena atajada.
+- **El generador aleatorio nunca se sembraba.** Por eso cada vez que se abría la app sonaban las mismas frases en el
+  mismo orden: la bienvenida era siempre el clip 6344 en el teléfono. Ahora se siembra en `pes6_commentary_open` con
+  la hora y el pid. `PES6_COMMENTARY_SEED`, o la semilla de `PES6_BOT`, deja una prueba repetible.
+- **La elección estaba sesgada.** Antes, si el clip al azar se había dicho hacía poco, se tomaba el siguiente de la
+  lista. Así, un clip que venía después de varios recientes se quedaba con sus turnos: *«Place the ball forward»*
+  salía en 20 de 100 pases, y algunas frases se repetían 2 o 3 veces en un tiempo. Ahora se elige al azar, con la
+  misma probabilidad, entre los clips del evento menos dichos en el partido (`g_times`, que se reinicia con cada
+  partido) y no dichos hace poco.
+- **Sin dispositivo de audio** (pruebas sin ventana), un clip cuenta como dicho. Antes no contaba, y las pruebas
+  repetían más que el teléfono.
+
+**Prueba de variedad (`PES6_GE_NODRAW=1`, nuevo en `ge.c`):** las listas del GE se procesan igual, pero no se dibuja
+ningún triángulo. El partido es idéntico (mismos eventos, clips y vblanks que dibujando, con `PES6_BOT=7`) y un
+tiempo tarda segundos en vez de minutos. Se jugaron 12 primeros tiempos en paralelo, con las semillas 11 a 211 y
+`PES6_STOP_AT=30000`, en 55 s.
+
+| | antes | después |
+|---|---|---|
+| clips repetidos en un mismo tiempo | 2–6 por tiempo | 0 |
+| bienvenida / saque inicial distintos en 12 partidos | 1 / 1 | 8 / 11 |
+| pases: clips distintos usados (de 43) | 20 (uno el 20 %) | 41 (el más dicho, 7 de 124) |
+| `chatter`: distintos (de 65) | 52 | 62 |
+
+`save_corner` salió una vez (semilla 23). Fue un tiro en v21381; el arquero lo tocó en v21419 y el balón salió por la
+línea de fondo en v21439. Se dijo el clip 3437, *«that shot comes off the keeper's gloves… It's a corner»*. Antes, en
+ese momento se decía el de un tiro desviado.
+
+La regresión pasó (9 de 9) y la auditoría bajó a 527 dudosos. `tools/android_build.sh`: un parche sin `mod.json`
+(PECH) cortaba la APK sin avisar, y un `.DS_Store` del Finder hacía fallar la limpieza final. Las dos cosas están
+arregladas.
+
+### 6.7 Lo mismo en el parche chileno (PECH, Palma) y en cualquier idioma
+
+- **Motor:** el chileno usa el mismo `commentary.c`, así que también se siembra el generador aleatorio, se elige
+  entre los clips menos dichos y existe `save_corner`. Palma no tiene frases de «la mandó al córner», así que en ese
+  caso se dice `corner`.
+- **El generador del comentarista es propio** (splitmix64) en vez de `rand()`: en macOS, semillas cercanas dan casi
+  los mismos primeros números, y las 12 bienvenidas de la prueba salían de la mitad del conjunto. Con 60 semillas,
+  las 11 frases de saque inicial de PECH salen parejas (de 4 a 9 cada una).
+- **Una frase de relleno** (prioridad ≤ 3: pase, conducción, banda, relleno) no se repite antes de 4 minutos. Si
+  todas las del evento se dijeron hace poco, calla. Palma tiene solo 8 frases de pase.
+- **Catálogo PECH** (`blocks_pech.txt`):
+  - 7801–7911 es el bloque de intercepciones («la madrugaron», «se equivocó la entrega»): ahora es `interception`
+    (86), y `tackle` (43) solo las de ganar el balón;
+  - los centros de córner de Palma (5164–5180) pasan de `cross` a `corner_kick`.
+- **Prueba:** 12 primeros tiempos de cada uno, con `PES6_GE_NODRAW=1`. Ni el chileno ni el inglés repiten un clip
+  dentro de un tiempo.
+- **Cualquier idioma de PS2:** `docs/40`. El catálogo español original se rehízo así.

@@ -14,6 +14,9 @@
  *     type 2 PDP     dst-mac(6) stream(4) count(1)
  *                    count x { seq(4) sport(2) dport(2) len(2) sent-ms(4) payload }
  *     type 3 TIMING  count(1) count x trow     the sender's PES6_NET_TIMING rows (see timing_task)
+ *     type 4 REPORT  dst-mac(6) span fresh mean most (u16 each)   see send_reports
+ *     type 5/6 PUNCH/PONG                      the online lobby's (online.c), never seen here
+ *     type 7 CAPS    caps(4)                   what this build does, a bit each (none defined yet; with every HELLO)
  *
  * A PDP datagram carries the newest message to that peer and, while it stays
  * small, the previous ones too (oldest first). The receiver drops the sequence
@@ -124,6 +127,7 @@ typedef struct {
     uint64_t rep_sent;
     /* Its reports to us: the repeats we send it now (adaptive), and when that last changed. */
     int red; uint64_t red_changed, loss_seen, congested_until, reports;
+    uint32_t caps;                    /* its type 7 CAPS; 0 for an older build */
 } peer;
 typedef struct { uint8_t mac[6]; uint16_t sport; uint16_t len; uint8_t data[MAX_PACKET]; } pdp_packet;
 typedef struct { int used; uint16_t port; pdp_packet *q; int head, count; } pdp_socket;
@@ -251,7 +255,23 @@ static uint32_t device_id(void) {
     return id;
 }
 
+static pthread_mutex_t open_mu = PTHREAD_MUTEX_INITIALIZER;
+static int net_open_locked(void);
 static int net_open(void) {
+    pthread_mutex_lock(&open_mu);
+    const int r = net_open_locked();
+    pthread_mutex_unlock(&open_mu);
+    return r;
+}
+int pes6_net_open(void) { return net_open(); }
+const uint8_t *pes6_net_mac(void) { return N.mac; }
+static int g_port;
+int pes6_net_port(void) { return g_port; }
+void pes6_net_send_raw(const struct sockaddr_in *to, const void *b, size_t n) {
+    if (N.sock >= 0) sendto(N.sock, b, n, 0, (const struct sockaddr *)to, sizeof *to);
+}
+
+static int net_open_locked(void) {
     if (N.sock >= 0) return 0;
     const char *port_env = getenv("PES6_NET_PORT");
     const int port = port_env && *port_env ? atoi(port_env) : 27600;
@@ -277,6 +297,7 @@ static int net_open(void) {
     fcntl(N.sock, F_SETFL, fcntl(N.sock, F_GETFL, 0) | O_NONBLOCK);
     struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)port),
                              .sin_addr.s_addr = htonl(INADDR_ANY) };
+    g_port = port;
     if (bind(N.sock, (struct sockaddr *)&a, sizeof a) != 0) {
         fprintf(stderr, "[net] cannot bind UDP port %d: %s\n", port, strerror(errno));
         close(N.sock);
@@ -330,6 +351,23 @@ void pes6_net_set_status(const char *line) {
     pthread_mutex_unlock(&g_status_mu);
 }
 
+/* Online (pes6_net_set_online): the room's addresses, set from the lobby's thread. */
+static pthread_mutex_t online_mu = PTHREAD_MUTEX_INITIALIZER;
+static struct sockaddr_in online_to[2 * MAX_PEERS];
+static int online_n, g_online;
+
+void pes6_net_set_online(int on, const struct sockaddr_in *to, int n) {
+    if (n > 2 * MAX_PEERS) n = 2 * MAX_PEERS;
+    pthread_mutex_lock(&online_mu);
+    if (on != g_online) nlog("online %s", on ? "on: only the room's members, no local network" : "off");
+    g_online = on;
+    online_n = on ? n : 0;
+    if (online_n) memcpy(online_to, to, (size_t)online_n * sizeof *to);
+    pthread_mutex_unlock(&online_mu);
+}
+
+static uint32_t g_caps;              /* what this build does (CAPS, type 7): no bits defined yet */
+
 static void send_hello(void) {
     uint8_t b[32 + STATUS_LEN];
     size_t n = header(b, 1);
@@ -341,9 +379,13 @@ static void send_hello(void) {
     memcpy(b + n, g_status, sl);
     pthread_mutex_unlock(&g_status_mu);
     n += sl;
+    pthread_mutex_lock(&online_mu);
+    const int online = g_online;
+    for (int i = 0; i < online_n; i++) sendto(N.sock, b, n, 0, (struct sockaddr *)&online_to[i], sizeof online_to[i]);
+    pthread_mutex_unlock(&online_mu);
     struct sockaddr_in bc = { .sin_family = AF_INET, .sin_port = htons(27600),
                               .sin_addr.s_addr = htonl(INADDR_BROADCAST) };
-    sendto(N.sock, b, n, 0, (struct sockaddr *)&bc, sizeof bc);
+    if (!online) sendto(N.sock, b, n, 0, (struct sockaddr *)&bc, sizeof bc);
     /* Directed broadcast per interface, and the /24 one address at a time
      * every few seconds while no peer is known. */
     int known = 0;
@@ -352,7 +394,7 @@ static void send_hello(void) {
     const int sweep = !known && now - N.last_sweep >= SWEEP_USEC;
     if (sweep) N.last_sweep = now;
     struct ifaddrs *ifs = NULL;
-    if (getifaddrs(&ifs) == 0) {
+    if (!online && getifaddrs(&ifs) == 0) {
         for (const struct ifaddrs *f = ifs; f; f = f->ifa_next) {
             if (!f->ifa_addr || f->ifa_addr->sa_family != AF_INET || (f->ifa_flags & IFF_LOOPBACK) ||
                 !(f->ifa_flags & IFF_UP))
@@ -374,9 +416,16 @@ static void send_hello(void) {
         freeifaddrs(ifs);
     }
     for (int i = 0; i < N.nextra; i++) sendto(N.sock, b, n, 0, (struct sockaddr *)&N.extra[i], sizeof N.extra[i]);
-    /* Peers already known get it directly too: broadcast may not reach them. */
+    /* Peers already known get it directly too: broadcast may not reach them. And CAPS, to them. */
+    uint8_t c[16];
+    size_t cn = header(c, 7);
+    for (int k = 0; k < 4; k++) c[cn + k] = (uint8_t)(g_caps >> (8 * k));
+    cn += 4;
     for (int i = 0; i < MAX_PEERS; i++)
-        if (N.peers[i].seen) sendto(N.sock, b, n, 0, (struct sockaddr *)&N.peers[i].addr, sizeof N.peers[i].addr);
+        if (N.peers[i].seen) {
+            sendto(N.sock, b, n, 0, (struct sockaddr *)&N.peers[i].addr, sizeof N.peers[i].addr);
+            sendto(N.sock, c, cn, 0, (struct sockaddr *)&N.peers[i].addr, sizeof N.peers[i].addr);
+        }
 }
 
 static peer *find_peer(const uint8_t *mac) {
@@ -687,8 +736,30 @@ static void recv_report(peer *p, const uint8_t *b, size_t n, uint64_t now) {
 }
 
 static void recv_timing(const uint8_t *b, size_t n);
+int (*pes6_net_tap)(const uint8_t *b, size_t n, const struct sockaddr_in *from);
+static _Atomic uint64_t g_pumped;             /* when net_pump last read the socket */
+static pthread_mutex_t rx_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* The lobby's thread, while the game does not read the socket (the pre-game menu, a paused app):
+ * the lobby's datagrams to it, the rest dropped (there is no game to take them). */
+void pes6_net_idle_read(void) {
+    if (N.sock < 0 || wall_usec() - atomic_load(&g_pumped) < 1000000u) return;
+    if (pthread_mutex_trylock(&rx_mu)) return;
+    for (;;) {
+        uint8_t b[MAX_PACKET + 64];
+        struct sockaddr_in from;
+        socklen_t fl = sizeof from;
+        const ssize_t n = recvfrom(N.sock, b, sizeof b, 0, (struct sockaddr *)&from, &fl);
+        if (n < 0) break;
+        if (pes6_net_tap) pes6_net_tap(b, (size_t)n, &from);
+    }
+    pthread_mutex_unlock(&rx_mu);
+}
+
 static void net_pump(void) {
     if (N.sock < 0) return;
+    atomic_store(&g_pumped, wall_usec());
+    pthread_mutex_lock(&rx_mu);
     if (hint_ip[0]) take_hint();
     const uint64_t now = wall_usec();
     if (N.connected && now - N.last_hello >= HELLO_USEC) { N.last_hello = now; send_hello(); }
@@ -710,7 +781,9 @@ static void net_pump(void) {
         struct msghdr mh = { .msg_name = &from, .msg_namelen = sizeof from, .msg_iov = &iov, .msg_iovlen = 1,
                              .msg_control = &ctl, .msg_controllen = sizeof ctl };
         const ssize_t n = recvmsg(N.sock, &mh, 0);
-        if (n < 11) break;
+        if (n < 0) break;
+        if (pes6_net_tap && pes6_net_tap(b, (size_t)n, &from)) continue;
+        if (n < 11) continue;
         /* When it arrived, on our monotonic clock: now minus how long ago the kernel stamped it. */
         uint64_t arr = now;
         for (struct cmsghdr *c = CMSG_FIRSTHDR(&mh); c; c = CMSG_NXTHDR(&mh, c))
@@ -771,6 +844,10 @@ static void net_pump(void) {
             recv_timing(b, (size_t)n);
         } else if (b[4] == 4) {
             recv_report(p, b, (size_t)n, now);
+        } else if (b[4] == 7 && n >= 15) {
+            const uint32_t caps = (uint32_t)b[11] | (uint32_t)b[12] << 8 | (uint32_t)b[13] << 16 | (uint32_t)b[14] << 24;
+            if (caps != p->caps) nlog("peer %02X:%02X:%02X caps 0x%08X", p->mac[3], p->mac[4], p->mac[5], (unsigned)caps);
+            p->caps = caps;
         } else if (b[4] == 2 && n >= 22) {
             if (memcmp(b + 11, N.mac, 6)) continue;
             const uint32_t stream = (uint32_t)b[17] | (uint32_t)b[18] << 8 | (uint32_t)b[19] << 16 | (uint32_t)b[20] << 24;
@@ -790,6 +867,7 @@ static void net_pump(void) {
             }
         }
     }
+    pthread_mutex_unlock(&rx_mu);
     hold_release(wall_usec());
     send_reports(now);
     for (int i = 0; i < MAX_PEERS; i++)          /* a peer silent for 5 s is gone */
@@ -1250,8 +1328,11 @@ static void recv_timing(const uint8_t *b, size_t n) {
 }
 
 static int slow_ms, slow_every = 1;
+static _Atomic int g_state;
+int pes6_net_state(void) { return atomic_load(&g_state); }
 static void timing_task(void) {
     const uint32_t scene = psp_read32(PES6_SCENE_STACK);
+    atomic_store(&g_state, !N.connected ? 0 : scene == PES6_SCENE_WIRELESS && pes6_game_ovl_loaded() ? 2 : 1);
     if (!pes6_game_ovl_loaded()) return;
     const int wireless = scene == PES6_SCENE_WIRELESS;
     /* A match against the CPU too, into the file only: how much the players jump with no
@@ -1300,6 +1381,23 @@ static void timing_task(void) {
     if (!wireless || N.sock < 0 || !N.connected || (!N.timing && !N.log) || !send_rows) return;
     trows[ntrows++] = r;
     if (ntrows == TROWS) { send_timing(); ntrows = 0; }
+}
+
+/* Logs every change of who sends the match state (docs/41 §3): the game swaps it at half time by
+ * itself. In WIRELESS only (netlib loaded). */
+static void master_watch_task(void) {
+    static int32_t last_flag = -2, last_master = -2, last_period = -2, last_self = -2;
+    if (psp_read32(PES6_SCENE_STACK) != PES6_SCENE_WIRELESS || !N.connected) {
+        last_flag = last_master = last_period = last_self = -2;
+        return;
+    }
+    const int32_t flag = (int32_t)psp_read32(PES6_NET_MASTER_FLAG);
+    const int32_t master = (int16_t)psp_read16(PES6_NETLIB_MASTER), self = (int16_t)psp_read16(PES6_NETLIB_SELF);
+    const int32_t period = (int8_t)psp_read8(PES6_NETLIB_PERIOD);
+    if (flag == last_flag && master == last_master && period == last_period && self == last_self) return;
+    fprintf(stderr, "[net] master: %s (flag %d), master slot %d, this slot %d, period %d\n",
+            flag ? "this console sends the state" : "this console follows", flag, master, self, period);
+    last_flag = flag; last_master = master; last_period = period; last_self = self;
 }
 
 void pes6_net_init(void) {
@@ -1351,6 +1449,7 @@ void pes6_net_init(void) {
     if (slow_every < 1) slow_every = 1;
     t_start = wall_usec();
     psp_add_vblank_task(timing_task);    /* always: its rows also go to the other side */
+    psp_add_vblank_task(master_watch_task);
     /* The player-file name the on-screen keyboard "types" (it has no UI yet):
      * different per device, so two players can tell each other apart. */
     const char *osk = getenv("PES6_OSK_TEXT");

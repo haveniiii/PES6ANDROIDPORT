@@ -285,6 +285,7 @@ int pes6_window_launcher(pes6_version *versions, int *n, int vcap, int sel, pes6
     pes6_launcher l;
     pes6_launcher_init(&l, versions, *n, sel, settings, getenv("PES6_LAUNCHER_TOUCH") != NULL);   /* the phone's rows (tests) */
     pes6_launcher_set_patches(&l, mods, audio, versions, vcap, 0);   /* no file picker: pes6patch (docs/38) */
+    pes6_launcher_set_online(&l);                                   /* the lobby (docs/41) */
     char script[256] = "";
     const char *ks = getenv("PES6_LAUNCHER_KEYS"), *cap = getenv("PES6_LAUNCHER_CAPTURE");
     if (ks) snprintf(script, sizeof script, "%s", ks);
@@ -330,7 +331,13 @@ int pes6_window_launcher(pes6_version *versions, int *n, int vcap, int sel, pes6
             for (size_t i = 0; tok && i < sizeof KEYS / sizeof KEYS[0]; i++)
                 if (!strcmp(tok, KEYS[i].name)) b |= KEYS[i].mask;
         }
-        const int chosen = pes6_launcher_update(&l, b, tap, tx, ty);
+        int chosen = pes6_launcher_update(&l, b, tap, tx, ty);
+        if (chosen == PES6_LAUNCHER_TEXT) {             /* no keyboard dialog here: PES6_LAUNCHER_TEXT, or the login */
+            const char *t = getenv("PES6_LAUNCHER_TEXT");
+            if (!t || !*t) t = l.text_initial[0] ? l.text_initial : getenv("USER");
+            pes6_launcher_text_done(&l, t && *t, t ? t : "");
+            chosen = -1;
+        }
 #ifdef PES6_HAVE_GL
         if (g_gpu) {                                    /* drawn at the window's resolution: sharp */
             static uint32_t *menu;

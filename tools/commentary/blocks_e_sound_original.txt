@@ -53,7 +53,13 @@ shot_miss     960-962   *
 shot_miss     987-990   *
 save          3368-3379 *
 save          3392-3393 *
-save          3415-3445 keeper|save|stop|block|punch|react
+save          3415-3428 keeper|save|stop|block|punch|react
+save          3439-3441 keeper|save|stop|block|punch|react
+save          3443-3445 keeper|save|stop|block|punch|react
+# the keeper punched or pushed it out for a corner: said at the corner's whistle when the keeper
+# was the last to touch it (7/11, heard on the phone after a clean catch and at a corner he never touched)
+save_corner   3429-3438 *
+save_corner   3442-3442 *
 save          3935-3950 *
 save          3995-4060 *
 
@@ -71,7 +77,9 @@ yellow_card   4867-4878 max=12 ^(?!.*(red|second yellow|sent off)).*yellow
 # restarts; the corners leave out "the first / eighth corner of the game"
 throw_in      3851-3901 *
 goal_kick     5019-5029 *
-corner        5030-5097 ^(?!.*(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|today's)).*corner
+# 5060 "sloppy goalkeeping, only a corner": a keeper's error, nothing tells it (7/11, heard at a corner he never touched)
+corner        5030-5059 ^(?!.*(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|today's)).*corner
+corner        5061-5097 ^(?!.*(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|today's)).*corner
 # before a free kick or a corner (docs/39 §4): apart since 7/11 -- setpiece_wait fired for both and
 # said corner lines at free kicks and free-kick lines at corners. Free kicks: the engine says it only
 # within ~28 m, so "close enough to shoot" fits; left out: 4939 "in the remaining time", 4941-4945 a

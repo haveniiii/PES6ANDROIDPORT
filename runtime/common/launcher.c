@@ -11,6 +11,7 @@
 #include "launcher.h"
 #include "lang.h"
 #include "patch.h"
+#include "online.h"
 #include "product.h"
 
 #include <math.h>
@@ -37,6 +38,7 @@ static int K = 1;          /* ...drawn K times larger (pes6_launcher_draw), so i
 #define BTN_R      0x0200u
 #define BTN_TRIANGLE 0x1000u
 #define BTN_SQUARE 0x8000u
+#define BTN_START  0x0008u
 
 /* A 5x7 font of our own, rows top to bottom, bit 4 = leftmost column. */
 static const struct { char c; uint8_t row[7]; } FONT[] = {
@@ -1254,10 +1256,277 @@ static int patches_update(pes6_launcher *l, uint32_t pressed, int tap, float x, 
     return -1;
 }
 
+/* ---- the Online page (docs/41) ------------------------------------------------------------ *
+ * The lobby server's rooms; in a room, its members and how this phone reaches each. The match
+ * itself is the game's WIRELESS mode: after Play, MATCH > WIRELESS shows the room's members. */
+
+#define O_TOP_Y   10
+#define O_STAT_Y  40
+#define O_LIST_Y  54
+#define O_ROW_H   21
+#define O_ROWS    6
+#define O_BTN_Y   (O_LIST_Y + O_ROWS * O_ROW_H + 6)
+#define O_BTN_W   96
+#define O_BTN_H   20
+#define O_TEXT_Y  (O_BTN_Y + O_BTN_H + 6)
+#define O_KEYS_Y  254.5f
+#define ONLINE_Y  8          /* the Online button of the first page, top right */
+#define ONLINE_H  22
+
+static pes6_online_view g_ov;                   /* refreshed every update */
+
+void pes6_launcher_set_online(pes6_launcher *l) { l->online = 1; }
+
+static void online_identity(const pes6_launcher *l) {
+    pes6_online_set_identity(l->s->net_name, l->s->rate == MATCH_60, l->v[l->ver].id);
+}
+
+static int online_ask(pes6_launcher *l, int want) {
+    l->text_want = want;
+    if (want == 1) {
+        snprintf(l->text_title, sizeof l->text_title, "%s", L("Your name in the lobby", "Tu nombre en las salas"));
+        snprintf(l->text_initial, sizeof l->text_initial, "%s", l->s->net_name);
+    } else if (want == 2) {
+        snprintf(l->text_title, sizeof l->text_title, "%s", L("Name of the new room", "Nombre de la sala nueva"));
+        snprintf(l->text_initial, sizeof l->text_initial, "%s", l->s->net_name);
+    } else {
+        snprintf(l->text_title, sizeof l->text_title, "%s", L("The room's password", "La clave de la sala"));
+        l->text_initial[0] = 0;
+    }
+    return PES6_LAUNCHER_TEXT;
+}
+
+void pes6_launcher_text_done(pes6_launcher *l, int ok, const char *text) {
+    const int want = l->text_want;
+    l->text_want = 0;
+    if (!ok || !text) return;
+    char t[32];
+    size_t n = 0;
+    for (const char *p = text; *p && n + 1 < sizeof t; p++)       /* what the server keeps of a name */
+        if ((unsigned char)*p >= ' ' && *p != '|' && *p != '=') t[n++] = *p;
+    t[n] = 0;
+    if (want == 1 && n) {
+        snprintf(l->s->net_name, sizeof l->s->net_name, "%s", t);
+        if (pes6_online_active()) online_identity(l);
+        else pes6_online_start(l->s->lobby, l->s->net_name, l->s->rate == MATCH_60, l->v[l->ver].id);
+    } else if (want == 2 && n) {
+        pes6_online_create(t, "");
+    } else if (want == 3) {
+        pes6_online_join(l->text_room, t);
+    }
+}
+
+static int online_open(pes6_launcher *l) {
+    l->page = 3;
+    l->osel = 0;
+    l->ofirst = 0;
+    if (!l->s->net_name[0]) return online_ask(l, 1);            /* a name first */
+    if (!pes6_online_active()) pes6_online_start(l->s->lobby, l->s->net_name, l->s->rate == MATCH_60, l->v[l->ver].id);
+    else { online_identity(l); pes6_online_refresh(); }
+    return -1;
+}
+
+/* Rows of the list: rooms outside a room, members inside one. Then the buttons. */
+static int online_rows(void) { return g_ov.room_id[0] ? g_ov.nmembers : g_ov.nrooms; }
+static int online_buttons(void) { return g_ov.room_id[0] ? 2 : 3; }   /* the last one is Play */
+#define O_PLAY_X  (ROW_X + ROW_W - O_BTN_W)
+
+/* Play from the Online page: the same as the first page's Play (the room is kept). */
+static int online_play(pes6_launcher *l) {
+    if (pes6_online_active()) online_identity(l);
+    return l->iso && !l->iso_ready ? PES6_LAUNCHER_PICK_ISO : l->ver;
+}
+
+/* Play, at the right of the buttons' row: brighter than the others, as on the first page. */
+static void play_button(uint32_t *px, float x, float y, float w, float h, const char *label, int focus) {
+    static const font_style SMALL = { 8, 0.88f, 0.0f, 0.42f, 0.4f, 1 };
+    if (focus) rrect(px, x - 3, y - 3, w + 6, h + 6, 8, 0, RGB(130, 180, 255), 0.35f);
+    rrect2(px, x, y, w, h, 5, 0, focus ? RGB(78, 140, 255) : RGB(44, 84, 180), focus ? RGB(30, 70, 190) : RGB(20, 44, 120), 1);
+    rrect(px, x, y, w, h, 5, 0.75f, RGB(190, 215, 255), focus ? 0.9f : 0.5f);
+    text_draw(px, x + (w - text_width(label, &SMALL)) / 2, y + (h - SMALL.cap) / 2, label, &SMALL,
+              RGB(255, 255, 255), RGB(210, 225, 255), 0);
+}
+
+static const char *member_state(const pes6_online_member *m) {
+    return m->busy == 2 ? L("playing", "jugando") : m->busy == 1 ? L("in WIRELESS", "en WIRELESS") : L("in the menu", "en el menu");
+}
+
+static void online_paint(const pes6_launcher *l, uint32_t *px) {
+    const float cy = O_TOP_Y + BACK_H / 2.0f;
+    rrect2(px, BACK_X, O_TOP_Y, BACK_W, BACK_H, 6, 0, RGB(30, 52, 110), RGB(14, 26, 64), 1);
+    rrect(px, BACK_X, O_TOP_Y, BACK_W, BACK_H, 6, 0.75f, RGB(150, 180, 240), 0.5f);
+    chevron(px, BACK_X + 9, cy, 6, 0, RGB(236, 242, 255), 1);
+    rrect(px, BACK_X + 9, cy - 0.9f, 13, 1.8f, 0.9f, 0, RGB(236, 242, 255), 1);
+    text_draw(px, BACK_X + BACK_W + 10, cy - TITLE.cap / 2, "Online", &TITLE, RGB(236, 242, 255), RGB(180, 200, 240), 0);
+    char name[64];
+    snprintf(name, sizeof name, "%s", l->s->net_name[0] ? l->s->net_name : L("Name", "Nombre"));
+    side_button(px, OPEN_X, O_TOP_Y - 1, name, 0);
+
+    /* the server */
+    char st[200];
+    uint32_t sc;
+    if (g_ov.state == ONLINE_READY) {
+        snprintf(st, sizeof st, L("Connected to the lobby (%d ms)%s%s", "Conectado a las salas (%d ms)%s%s"), g_ov.server_ping_ms,
+                 g_ov.motd[0] ? "  -  " : "", g_ov.motd);
+        sc = RGB(150, 230, 170);
+    } else if (g_ov.state == ONLINE_CONNECTING) {
+        snprintf(st, sizeof st, "%s %s", L("Connecting to", "Conectando con"), g_ov.server[0] ? g_ov.server : "...");
+        sc = RGB(255, 226, 170);
+    } else {
+        snprintf(st, sizeof st, "%s", g_ov.error[0] ? g_ov.error : L("Not connected.", "Sin conexion."));
+        sc = RGB(255, 170, 150);
+    }
+    disc(px, ROW_X + 4, O_STAT_Y + 3.5f, 2.5f, 0, sc, 1);
+    text_draw(px, ROW_X + 12, O_STAT_Y, st, &HELP, sc, sc, 0);
+
+    const int in_room = g_ov.room_id[0] != 0, rows_n = online_rows();
+    if (in_room) {
+        char head[96];
+        snprintf(head, sizeof head, "%s: %s", L("Room", "Sala"), g_ov.room_name);
+        text_draw(px, ROW_X + ROW_W - text_width(head, &HELP), O_STAT_Y, head, &HELP, RGB(255, 236, 160), RGB(255, 236, 160), 0);
+    }
+    for (int r = 0; r < O_ROWS && l->ofirst + r < rows_n; r++) {
+        const int i = l->ofirst + r;
+        const float y = O_LIST_Y + r * O_ROW_H, my = y + O_ROW_H / 2.0f;
+        const int focus = i == l->osel;
+        if (focus) {
+            rrect2(px, ROW_X, y + 1, ROW_W, O_ROW_H - 2, 4, 0, RGB(52, 104, 230), RGB(24, 56, 150), 0.55f);
+            rrect(px, ROW_X, y + 1, ROW_W, O_ROW_H - 2, 4, 0.75f, RGB(150, 190, 255), 0.65f);
+        } else {
+            fill(px, ROW_X + 4, (int)(y + O_ROW_H - 1), ROW_W - 8, 1, RGB(26, 38, 70));
+        }
+        char left[96], right[96];
+        uint32_t rc = focus ? RGB(220, 230, 250) : RGB(130, 146, 186);
+        if (in_room) {
+            const pes6_online_member *m = &g_ov.members[i];
+            snprintf(left, sizeof left, "%s%s", m->name, m->you ? L(" (you)", " (tu)") : "");
+            if (m->you) snprintf(right, sizeof right, "%s", member_state(m));
+            else {
+                char ping[24] = "";
+                if (m->ping_ms >= 0 && m->route == ROUTE_DIRECT) snprintf(ping, sizeof ping, " %d ms", m->ping_ms);
+                snprintf(right, sizeof right, "%s   %s%s", member_state(m),
+                         m->route == ROUTE_DIRECT ? L("direct", "directo") : m->route == ROUTE_RELAY ? L("via the server", "por el servidor")
+                                                                                         : L("connecting...", "conectando..."), ping);
+                if (m->route == ROUTE_TRYING) rc = RGB(255, 226, 170);
+            }
+            disc(px, ROW_X + 12, my, 4.5f, m->you ? 0 : 3.4f, m->busy == 2 ? RGB(255, 170, 120) : RGB(150, 230, 170), 1);
+        } else {
+            const pes6_online_room *ro = &g_ov.rooms[i];
+            snprintf(left, sizeof left, "%s", ro->name);
+            snprintf(right, sizeof right, "%s%d/%d", ro->locked ? L("password  ", "con clave  ") : "", ro->members, ro->max);
+            disc(px, ROW_X + 12, my, 4.5f, ro->members ? 0 : 3.4f, RGB(120, 160, 230), 1);
+        }
+        const uint32_t lc = focus ? RGB(255, 255, 255) : RGB(190, 202, 228);
+        text_draw(px, ROW_X + 24, my - LABEL.cap / 2, left, &LABEL, lc, lc, 0);
+        text_draw(px, ROW_X + ROW_W - 10 - text_width(right, &HELP), my - HELP.cap / 2, right, &HELP, rc, rc, 0);
+    }
+    if (!rows_n && g_ov.state == ONLINE_READY)
+        text_draw(px, ROW_X + 14, O_LIST_Y + 8, in_room ? "" : L("No rooms yet: create one.", "Aun no hay salas: crea una."), &HELP,
+                  RGB(150, 170, 215), RGB(150, 170, 215), 0);
+
+    const int b0 = rows_n;
+    if (in_room) {
+        small_button(px, ROW_X, O_BTN_Y, O_BTN_W, O_BTN_H, L("Leave room", "Salir de la sala"), l->osel == b0, 1);
+    } else {
+        small_button(px, ROW_X, O_BTN_Y, O_BTN_W, O_BTN_H, L("Create room", "Crear sala"), l->osel == b0, g_ov.state == ONLINE_READY);
+        small_button(px, ROW_X + O_BTN_W + 8, O_BTN_Y, O_BTN_W, O_BTN_H, L("Refresh", "Actualizar"), l->osel == b0 + 1, 1);
+    }
+    play_button(px, O_PLAY_X, O_BTN_Y, O_BTN_W, O_BTN_H, L("Play", "Jugar"), l->osel == b0 + online_buttons() - 1);
+    const char *text = g_ov.error[0] && g_ov.state == ONLINE_READY ? g_ov.error
+                     : in_room ? L("Press Play, then MATCH > WIRELESS: the players of your room show up there to challenge. "
+                                   "The second half swaps who hosts.",
+                                   "Pulsa Jugar y entra en PARTIDO > WIRELESS: ahi aparecen los de tu sala para desafiarlos. "
+                                   "En el segundo tiempo se cambia el anfitrion.")
+                               : L("Join a room: its players see each other in the game's WIRELESS mode. Same game version and "
+                                   "match rate (30/60 fps) as yours.",
+                                   "Entra en una sala: sus jugadores se ven en el modo WIRELESS del juego. Misma version del juego "
+                                   "y velocidad de partido (30/60 fps) que la tuya.");
+    wrap2(px, ROW_X + 4, O_TEXT_Y, ROW_W - 8, text, g_ov.error[0] && g_ov.state == ONLINE_READY ? RGB(255, 226, 170) : RGB(150, 170, 215));
+    const char *keys = in_room ? L("\x01 Leave  \x02 Name  \x03 Back", "\x01 Salir  \x02 Nombre  \x03 Volver")
+                               : L("\x04 Join  \x01 Create  \x02 Name  \x03 Back", "\x04 Entrar  \x01 Crear  \x02 Nombre  \x03 Volver");
+    text_draw(px, ROW_X, O_KEYS_Y, keys, &HELP, RGB(120, 136, 180), RGB(120, 136, 180), 0);
+}
+
+static void online_draw(const pes6_launcher *l, uint32_t *px) {
+    static uint32_t *page;
+    static int page_k;
+    static char was[160];
+    char now[160];
+    snprintf(now, sizeof now, "%d|%d|%d|%u|%s|%d", K, l->osel, l->ofirst, g_ov.serial, l->s->net_name, g_ov.state);
+    if (page_k != K) {
+        free(page);
+        page = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+        page_k = page ? K : 0;
+        was[0] = 0;
+    }
+    if (page && !strcmp(was, now)) {
+        memcpy(px, page, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+        return;
+    }
+    online_paint(l, px);
+    if (page) { memcpy(page, px, sizeof(uint32_t) * (size_t)BW * (size_t)BH); snprintf(was, sizeof was, "%s", now); }
+}
+
+static int online_act(pes6_launcher *l, int i) {
+    const int rows_n = online_rows();
+    if (i == rows_n + online_buttons() - 1) return online_play(l);
+    if (g_ov.room_id[0]) {
+        if (i == rows_n) pes6_online_leave();
+        return -1;
+    }
+    if (i < rows_n) {
+        const pes6_online_room *r = &g_ov.rooms[i];
+        if (r->locked) { snprintf(l->text_room, sizeof l->text_room, "%s", r->id); return online_ask(l, 3); }
+        pes6_online_join(r->id, "");
+    } else if (i == rows_n && g_ov.state == ONLINE_READY) {
+        return online_ask(l, 2);
+    } else if (i == rows_n + 1) {
+        pes6_online_refresh();
+    }
+    return -1;
+}
+
+static int online_update(pes6_launcher *l, uint32_t pressed, int tap, float x, float y) {
+    pes6_online_get(&g_ov);
+    const int rows_n = online_rows(), total = rows_n + online_buttons();
+    if (l->osel >= total) l->osel = total - 1;
+    if (l->osel < 0) l->osel = 0;
+    if (tap) {
+        if (inside(x, y, BACK_X, O_TOP_Y, BACK_W, BACK_H, 8)) { l->page = 0; return -1; }
+        if (inside(x, y, OPEN_X, O_TOP_Y, SIDE_W, SIDE_H, 6)) return online_ask(l, 1);
+        if (inside(x, y, O_PLAY_X, O_BTN_Y, O_BTN_W, O_BTN_H, 4)) return online_play(l);
+        if (inside(x, y, ROW_X, O_BTN_Y, O_BTN_W, O_BTN_H, 4)) { l->osel = rows_n; return online_act(l, rows_n); }
+        if (!g_ov.room_id[0] && inside(x, y, ROW_X + O_BTN_W + 8, O_BTN_Y, O_BTN_W, O_BTN_H, 4)) {
+            l->osel = rows_n + 1;
+            return online_act(l, rows_n + 1);
+        }
+        for (int r = 0; r < O_ROWS && l->ofirst + r < rows_n; r++)
+            if (inside(x, y, ROW_X, O_LIST_Y + r * O_ROW_H, ROW_W, O_ROW_H, 0)) {
+                l->osel = l->ofirst + r;
+                return online_act(l, l->osel);
+            }
+        return -1;
+    }
+    if (pressed & BTN_CIRCLE) { l->page = 0; return -1; }
+    if (pressed & BTN_TRIANGLE) return online_ask(l, 1);
+    if (pressed & BTN_START) return online_play(l);
+    if (pressed & BTN_SQUARE) return online_act(l, rows_n);        /* create, or leave */
+    if (pressed & BTN_UP) l->osel = (l->osel + total - 1) % total;
+    if (pressed & BTN_DOWN) l->osel = (l->osel + 1) % total;
+    if (l->osel < rows_n) {                                          /* the focus stays in view */
+        if (l->osel < l->ofirst) l->ofirst = l->osel;
+        if (l->osel >= l->ofirst + O_ROWS) l->ofirst = l->osel - O_ROWS + 1;
+    }
+    if (l->ofirst > (rows_n > O_ROWS ? rows_n - O_ROWS : 0)) l->ofirst = rows_n > O_ROWS ? rows_n - O_ROWS : 0;
+    if (pressed & BTN_CROSS) return online_act(l, l->osel);
+    return -1;
+}
+
 void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
     K = scale < 1 ? 1 : scale > PES6_LAUNCHER_MAX_SCALE ? PES6_LAUNCHER_MAX_SCALE : scale;
     const uint32_t *bg = backdrop();
     if (bg) memcpy(px, bg, sizeof(uint32_t) * (size_t)BW * (size_t)BH);
+    if (l->page == 3) { online_draw(l, px); return; }
     if (l->page == 2) { patches_draw(l, px); return; }
     if (l->page) { controls_draw(l, px); return; }
     int kind[ROW_KINDS];
@@ -1316,6 +1585,7 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
      * (docs/38) is its mirror, one step left. */
     if (l->android) side_button(px, OPEN_X, OPEN_Y, L("Controls", "Controles"), l->sel == nrows + 1);
     if (l->mods) side_button(px, PATCH_X, OPEN_Y, L("Patches", "Parches"), l->sel == nrows + 2);
+    if (l->online) side_button(px, OPEN_X, ONLINE_Y, "Online", l->sel == nrows + 3);
 
     /* The gamepad, if there is one, and the keys. */
     char pad[96];
@@ -1325,9 +1595,9 @@ void pes6_launcher_draw(const pes6_launcher *l, uint32_t *px, int scale) {
         text_draw(px, ROW_X + 12, 254.5f, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
     } else if (l->pad_name[0]) {              /* Android: the pad goes top right */
         snprintf(pad, sizeof pad, L("Controller: %s", "Mando: %s"), l->pad_name);
-        const float w = text_width(pad, &HELP);
-        disc(px, ROW_X + ROW_W - w - 8, 23.5f, 2.5f, 0, RGB(90, 230, 130), 1);
-        text_draw(px, ROW_X + ROW_W - w, 20, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
+        const float w = text_width(pad, &HELP), right = l->online ? OPEN_X - 10 : ROW_X + ROW_W;
+        disc(px, right - w - 8, 23.5f, 2.5f, 0, RGB(90, 230, 130), 1);
+        text_draw(px, right - w, 20, pad, &HELP, RGB(170, 230, 190), RGB(170, 230, 190), 0);
     }
     const char *keys = L("\x04 Accept   < > Change", "\x04 Aceptar   < > Cambiar");
     text_draw(px, ROW_X + ROW_W - text_width(keys, &HELP), 254.5f, keys, &HELP, RGB(120, 136, 180), RGB(120, 136, 180), 0);
@@ -1378,6 +1648,7 @@ static void controls_open(pes6_launcher *l) {
 int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, float ty) {
     uint32_t pressed = buttons & ~l->held;
     l->held = buttons;
+    if (l->page == 3) return online_update(l, pressed, tap, tx * W, ty * H);
     if (l->page == 2) return patches_update(l, pressed, tap, tx * W, ty * H);
     if (l->page) return controls_update(l, buttons, pressed, tap, tx * W, ty * H);
     int kind[ROW_KINDS];
@@ -1387,6 +1658,7 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
         const float x = tx * W, y = ty * H;
         if (x >= PLAY_X - 10 && x < PLAY_X + PLAY_W + 10 && y >= PLAY_Y - 8 && y < PLAY_Y + PLAY_H + 8) {
             l->sel = nrows;
+            if (pes6_online_active()) online_identity(l);
             return l->iso && !l->iso_ready ? PES6_LAUNCHER_PICK_ISO : l->ver;
         }
         if (l->android && inside(x, y, OPEN_X, OPEN_Y, SIDE_W, SIDE_H, 8)) {
@@ -1398,6 +1670,10 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
             l->sel = nrows + 2;
             patches_open(l);
             return -1;
+        }
+        if (l->online && inside(x, y, OPEN_X, ONLINE_Y, SIDE_W, ONLINE_H, 6)) {
+            l->sel = nrows + 3;
+            return online_open(l);
         }
         for (int i = 0; i < nrows; i++) {
             const float y0 = row_y0(nrows) + i * dy;
@@ -1414,6 +1690,14 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
     } else if (l->sel == nrows + 2) {             /* PARCHES: the same, to the left */
         if (pressed & (BTN_UP | BTN_DOWN | BTN_RIGHT)) { l->sel = nrows; pressed &= ~(BTN_RIGHT | BTN_UP | BTN_DOWN); }
         else if (pressed & BTN_CROSS) { patches_open(l); return -1; }
+    } else if (l->sel == nrows + 3) {             /* ONLINE, top right: down to the first row */
+        if (pressed & BTN_DOWN) { l->sel = 0; return -1; }
+        if (pressed & BTN_UP) { l->sel = nrows; return -1; }
+        if (pressed & BTN_CROSS) return online_open(l);
+        return -1;
+    } else if (l->sel == 0 && l->online && (pressed & BTN_UP)) {
+        l->sel = nrows + 3;
+        return -1;
     } else if (l->sel == nrows && l->android && (pressed & BTN_RIGHT)) {
         l->sel = nrows + 1;
         return -1;
@@ -1428,6 +1712,7 @@ int pes6_launcher_update(pes6_launcher *l, uint32_t buttons, int tap, float tx, 
     } else if (l->sel < nrows && (pressed & (BTN_LEFT | BTN_RIGHT | BTN_CROSS))) {
         row_step(l, kind[l->sel], (pressed & BTN_LEFT) ? -1 : 1);
     } else if (l->sel == nrows && (pressed & BTN_CROSS)) {
+        if (pes6_online_active()) online_identity(l);
         return l->iso && !l->iso_ready ? PES6_LAUNCHER_PICK_ISO : l->ver;
     }
     return -1;

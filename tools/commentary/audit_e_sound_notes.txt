@@ -22,7 +22,6 @@ shot 4239,4240,4242,4244,4246,4248,4249,4251 | type | volley ("Try the volley!",
 shot 4252,4255,4257,4258 | type | low drive
 shot 4286,4295,4296,4300,4301,4302 | type | from long range
 shot 4303-4309 | type | lob or chip over the keeper
-save 3429-3438 | timing | "punched it out for a corner": only when the save gives a corner; said 20 vblanks after the touch, before the ball is out
 save 3419 | context | "Another shot blocked": only after an earlier save
 save 4000,4001 | context | "kept busy today", "what they have to do to beat this keeper today": after several saves
 save 3996,3997 | type | "his right foot shot" / "his left foot shot": the foot must match
@@ -45,7 +44,6 @@ shot_miss 960-962 | type | a mis-kick
 corner 5035,5039-5046,5050 | context | "another corner": only after an earlier one for that side
 corner 5051-5056 | type | a cross blocked or deflected by a defender
 corner 5057-5059,5061 | type | a defender clearing it out
-corner 5060 | type | sloppy goalkeeping
 corner 5076 | wrong | "their 10th corner": an ordinal the corner regex missed
 corner 5077,5078 | type | from the RIGHT
 corner 5079,5080 | type | from the LEFT
@@ -93,3 +91,6 @@ shot_miss 4357 | ok | a miss that gives a goal kick: what it is
 through_pass 7397,7670 | ok | "through ball"
 throw_in 3861-3863 | ok | generic ball out of play
 woodwork 970 | ok | "He's hit the bar!"
+# 7/11, heard on the phone: the "punched it out for a corner" lines (3429-3438, 3442) are save_corner, said
+# at a corner's whistle when the keeper touched it last; 5060 "sloppy goalkeeping" left out
+save_corner 3429-3438,3442 | ok | said only at a corner the keeper gave away

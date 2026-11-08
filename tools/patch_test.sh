@@ -166,7 +166,7 @@ check REFUSED  "agrandar"           import "$M" "$ISO" "$I/grown/e_text.afs"
 check REFUSED  "otra version"       import "$M" "$ISO" "$I/other_count/e_text.afs"
 check REFUSED  "igual al del disco" import "$M" "$ISO" "$I/same/e_text.afs"
 check REFUSED  "Instala primero"    import "$M" -      "$I/e_text.afs"
-check REFUSED  "desconocido"        import "$M" "$ISO" "$I/x_sound.afs"
+check REFUSED  "no calzan"          import "$M" "$ISO" "$I/x_sound.afs"
 check REFUSED  "no es un parche"    import "$M" "$ISO" "$I/notes.pdf"
 # the option file converter: C against Python, byte for byte
 check ACCEPTED "encrypted"          pcof "$I/KONAMI-WIN32PES6OPT" "$T/base/DATA.BIN" "$I/c.bin"

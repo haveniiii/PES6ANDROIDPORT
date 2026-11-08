@@ -32,6 +32,8 @@ typedef struct {
     int camera;         /* CAMERA_*: the match camera as the game has it, or farther back */
     int rate;           /* MATCH_*: the match at the PSP's 30 Hz or at 60 (both sides of a WIRELESS match alike) */
     char version[64];   /* game version id (docs/17), "" = the last one */
+    char net_name[24];  /* the name in the online lobby (docs/41); "" until the player picks one */
+    char lobby[80];     /* the lobby server host:port; "" the one built in (online.h) */
 } pes6_settings;
 
 /* Defaults, then whatever <io_root>/settings.txt says. */

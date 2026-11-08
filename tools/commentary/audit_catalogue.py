@@ -54,6 +54,7 @@ OK = {
     'corner_kick': {'corner'},
     'corner_short': {'corner'},
     'corner': {'corner'},
+    'save_corner': {'corner', 'save'},
     'offside': {'offside', 'free_kick'},
     'throw_in': {'throw_in'},
     'goal_kick': {'goal_kick'},

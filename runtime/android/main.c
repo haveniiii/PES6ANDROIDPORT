@@ -48,6 +48,7 @@
 #include "mpeg.h"
 #include "net.h"
 #include "osk.h"
+#include "online.h"
 #include "pes6_addrs.h"
 #include "iso_eboot.h"
 #include "flow.h"
@@ -2047,6 +2048,9 @@ static void patch_step(pes6_launcher *l, int want, const char *dir, const char *
             snprintf(save, sizeof save, "%s/SAVEDATA/ULES004760013000", dir);
             const pes6_disc disc = { have_disc ? g_iso_path : NULL, off && !I.on ? atoll(off) : 0, save };
             fprintf(stderr, "[patch] chosen: %s (%s)\n", name, P.bank ? "commentary bank" : "patch");
+            char ref[900];                           /* a bank in another language is placed against the English one */
+            snprintf(ref, sizeof ref, "%s/catalogues", mods);
+            pes6_bank_set_reference(ref);
             const int rc = fd < 0 ? -1
                          : P.bank ? pes6_bank_import_start(&P.job, fd, name, audio)
                                   : pes6_patch_import_start(&P.job, fd, name, mods, &disc, audio);
@@ -2136,6 +2140,13 @@ static void menu_preview(pes6_launcher *l, const pes6_settings *s) {
 
 static pes6_version g_versions[PES6_PATCH_MAX + 1];
 
+/* The menu's own text prompts (the Online page's name and rooms, docs/41): the same keyboard
+ * dialog as the game's (osk_prompt below), its answer kept here for the menu's loop. */
+static void launcher_prompt(const pes6_launcher *l);
+static _Atomic int g_ltext_state;                /* 0 none, 1 asked, 2 answered */
+static int g_ltext_ok;
+static char g_ltext[96];
+
 static const pes6_version *choose_version(const char *io_root, const char *mods) {
     pes6_version *v = g_versions;
     static pes6_settings settings;
@@ -2157,6 +2168,7 @@ static const pes6_version *choose_version(const char *io_root, const char *mods)
         char audio[900];
         snprintf(audio, sizeof audio, "%s/audio", io_root);
         pes6_launcher_set_patches(&l, mods, audio, v, PES6_PATCH_MAX + 1, 1);
+        pes6_launcher_set_online(&l);
         g_tap = g_back = 0;
         if (I.on) iso_step(&l, 0);
         for (i = -1; i < 0; ) {
@@ -2185,6 +2197,13 @@ static const pes6_version *choose_version(const char *io_root, const char *mods)
                 g_tap = 0;
                 i = -1;
                 continue;
+            }
+            if (i == PES6_LAUNCHER_TEXT && !atomic_load(&g_ltext_state)) launcher_prompt(&l);
+            if (i == PES6_LAUNCHER_TEXT) i = -1;
+            if (atomic_load(&g_ltext_state) == 2) {
+                atomic_store(&g_ltext_state, 0);
+                pes6_launcher_text_done(&l, g_ltext_ok, g_ltext);
+                pes6_settings_save(&settings, io_root);      /* the name, at once */
             }
             if (I.on) iso_step(&l, i == PES6_LAUNCHER_PICK_ISO);
             patch_step(&l, i, io_root, mods);
@@ -2348,6 +2367,24 @@ static void osk_show(const char *title, const char *initial, int max_chars) {
     pthread_mutex_unlock(&g_wifi_mu);
 }
 
+/* The answer: to the game's keyboard, or to the menu when it asked (launcher_prompt). */
+static void osk_reply(int ok, const uint16_t *buf, int len) {
+    if (atomic_load(&g_ltext_state) == 1) {
+        int n = 0;
+        for (int i = 0; i < len && n + 4 < (int)sizeof g_ltext; i++) {     /* UTF-16 -> UTF-8 (the BMP) */
+            const unsigned c = buf[i];
+            if (c < 0x80) g_ltext[n++] = (char)c;
+            else if (c < 0x800) { g_ltext[n++] = (char)(0xC0 | c >> 6); g_ltext[n++] = (char)(0x80 | (c & 0x3F)); }
+            else { g_ltext[n++] = (char)(0xE0 | c >> 12); g_ltext[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); g_ltext[n++] = (char)(0x80 | (c & 0x3F)); }
+        }
+        g_ltext[n] = 0;
+        g_ltext_ok = ok;
+        atomic_store(&g_ltext_state, 2);
+        return;
+    }
+    pes6_osk_answer(ok, buf, len);
+}
+
 static void JNICALL osk_done(JNIEnv *env, jclass cls, jboolean ok, jstring text) {
     (void)cls;
     uint16_t buf[128];
@@ -2357,7 +2394,7 @@ static void JNICALL osk_done(JNIEnv *env, jclass cls, jboolean ok, jstring text)
         if (len > 128) len = 128;
         (*env)->GetStringRegion(env, text, 0, len, (jchar *)buf);
     }
-    pes6_osk_answer(ok == JNI_TRUE, buf, len);
+    osk_reply(ok == JNI_TRUE, buf, len);
 }
 
 static void osk_prompt(JNIEnv *env, jobject activity) {
@@ -2385,7 +2422,7 @@ static void osk_prompt(JNIEnv *env, jobject activity) {
             uint16_t t[128];
             int n = 0;
             for (; initial[n] && n < 128; n++) t[n] = (uint8_t)initial[n];
-            pes6_osk_answer(0, t, n);
+            osk_reply(0, t, n);
             return;
         }
         cls = (jclass)(*env)->NewGlobalRef(env, c);
@@ -2394,6 +2431,16 @@ static void osk_prompt(JNIEnv *env, jobject activity) {
         (*env)->GetStaticMethodID(env, cls, "show", "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;I)V"),
         activity, (*env)->NewStringUTF(env, title), (*env)->NewStringUTF(env, initial), max);
     if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env); }
+}
+
+static void launcher_prompt(const pes6_launcher *l) {
+    pthread_mutex_lock(&g_wifi_mu);
+    snprintf(g_osk_title, sizeof g_osk_title, "%s", l->text_title);
+    snprintf(g_osk_initial, sizeof g_osk_initial, "%s", l->text_initial);
+    g_osk_max = 22;
+    pthread_mutex_unlock(&g_wifi_mu);
+    atomic_store(&g_ltext_state, 1);
+    osk_prompt(main_env(), g_app->activity->clazz);       /* the menu runs before the helper thread starts */
 }
 
 /* com.pes6port.Device (java/com/pes6port/Device.java): the connected gamepad, the haptic tick. */
@@ -2588,6 +2635,7 @@ void android_main(struct android_app *app) {
     snprintf(mods, sizeof mods, "%s/mods", dir);
     extract_mods(app->activity->assetManager, mods);
     snprintf(g_iso_path, sizeof g_iso_path, "%s", iso);
+    psp_io_set_root(dir);                       /* the lobby's net_id (online.c) lives there too */
     const pes6_version *version = choose_version(dir, mods);
     if (!version) return;
     if (I.on) snprintf(elf, sizeof elf, "%s", I.elf);

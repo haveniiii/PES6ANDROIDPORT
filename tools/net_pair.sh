@@ -18,6 +18,9 @@
 #   NET_A_RATE / NET_B_RATE                  PES6_NET_RATE for one instance (its uplink; B accepts: the host)
 #   NET_BOT=1                                PES6_BOT in both (runtime/desktop/bot.c: they play the match)
 #   NET_ARGS="--gpu"                         extra host arguments for both (PES6_WIDE needs --gpu)
+#   NET_LOBBY=127.0.0.1:27700               meet through the online lobby (server/p6lobby.py, docs/41) in the
+#                                            room NET_ROOM (default "Lobby 1") instead of PES6_NET_PEERS;
+#                                            NET_RELAY=1: through the server's relay only
 #   (PES6_NET_LAG / PES6_NET_DROP in the environment apply to both instances)
 # Logs: OUTDIR/a.log, OUTDIR/b.log; captures OUTDIR/a_*.ppm, OUTDIR/b_*.ppm.
 set -e
@@ -31,13 +34,20 @@ I="400:cross,r2600:cross:8,3@200:cross:10,3@330:cross:10,4@700:up:4,4@800:cross:
 A="$I,15@2700:cross:4,15@3100:cross:4${NET_A_INPUT:+,$NET_A_INPUT}"
 B="$I,15@3700:cross:4${NET_B_INPUT:+,$NET_B_INPUT}"
 V=${NET_VERSION:-original}
+if [ -n "$NET_LOBBY" ]; then
+  export PES6_LOBBY="$NET_LOBBY" PES6_ONLINE_ROOM="${NET_ROOM:-Lobby 1}"
+  [ -n "$NET_RELAY" ] && export PES6_ONLINE_RELAY=1 PES6_ONLINE_DIRECT=0
+  PEERS_A= PEERS_B=
+else
+  PEERS_A=127.0.0.1:27601 PEERS_B=127.0.0.1:27600
+fi
 rm -rf build/SAVEDATA/ULES004764001000 build/inst2/SAVEDATA/ULES004764001000 \
        build/versions/$V/SAVEDATA/ULES004764001000 build/inst2/versions/$V/SAVEDATA/ULES004764001000
 
-PES6_NET_RATE="${NET_B_RATE:-}" PES6_BOT="${NET_BOT:+2}" PES6_NET_SLOW="${NET_B_SLOW:-}" PES6_NET_TIMING="${NET_TIMING:+$OUT/b_timing.txt}" PES6_NET_DUMP="${NET_TIMING:+$OUT/b_dump.txt}" PES6_AUDIO_DUMP="${NET_AUDIO:+$OUT/b}" PES6_FNPROF="${NET_B_FNPROF:-}" PES6_VERSION=$V PES6_NET_LOG=1 PES6_NET_PORT=27601 PES6_NET_PEERS=127.0.0.1:27600 PES6_IO_ROOT=build/inst2 PES6_OSK_TEXT=VISITA \
+PES6_NET_RATE="${NET_B_RATE:-}" PES6_BOT="${NET_BOT:+2}" PES6_NET_SLOW="${NET_B_SLOW:-}" PES6_NET_TIMING="${NET_TIMING:+$OUT/b_timing.txt}" PES6_NET_DUMP="${NET_TIMING:+$OUT/b_dump.txt}" PES6_AUDIO_DUMP="${NET_AUDIO:+$OUT/b}" PES6_FNPROF="${NET_B_FNPROF:-}" PES6_VERSION=$V PES6_NET_LOG=1 PES6_NET_PORT=27601 PES6_NET_PEERS=$PEERS_B PES6_IO_ROOT=build/inst2 PES6_OSK_TEXT=VISITA \
   PES6_INPUT="$B" PES6_CAPTURE_AT="$NET_CAPTURE" PES6_CAPTURE_PREFIX="$OUT/b" PES6_STOP_AT="$STOP" \
   $BIN build/EBOOT.elf --window 1 ${NET_ARGS:-} --seconds "${NET_SECONDS:-600}" > "$OUT/b.log" 2>&1 &
-PES6_NET_RATE="${NET_A_RATE:-}" PES6_BOT="${NET_BOT:+1}" PES6_NET_SLOW="${NET_A_SLOW:-}" PES6_NET_TIMING="${NET_TIMING:+$OUT/a_timing.txt}" PES6_NET_DUMP="${NET_TIMING:+$OUT/a_dump.txt}" PES6_AUDIO_DUMP="${NET_AUDIO:+$OUT/a}" PES6_FNPROF="${NET_A_FNPROF:-}" PES6_VERSION=$V PES6_NET_LOG=1 PES6_NET_PORT=27600 PES6_NET_PEERS=127.0.0.1:27601 PES6_OSK_TEXT=LOCAL \
+PES6_NET_RATE="${NET_A_RATE:-}" PES6_BOT="${NET_BOT:+1}" PES6_NET_SLOW="${NET_A_SLOW:-}" PES6_NET_TIMING="${NET_TIMING:+$OUT/a_timing.txt}" PES6_NET_DUMP="${NET_TIMING:+$OUT/a_dump.txt}" PES6_AUDIO_DUMP="${NET_AUDIO:+$OUT/a}" PES6_FNPROF="${NET_A_FNPROF:-}" PES6_VERSION=$V PES6_NET_LOG=1 PES6_NET_PORT=27600 PES6_NET_PEERS=$PEERS_A PES6_OSK_TEXT=LOCAL \
   PES6_INPUT="$A" PES6_CAPTURE_AT="$NET_CAPTURE" PES6_CAPTURE_PREFIX="$OUT/a" PES6_STOP_AT="$STOP" \
   $BIN build/EBOOT.elf --window 1 ${NET_ARGS:-} --seconds "${NET_SECONDS:-600}" > "$OUT/a.log" 2>&1 || true
 wait

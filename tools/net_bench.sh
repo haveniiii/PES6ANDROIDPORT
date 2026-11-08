@@ -8,6 +8,7 @@
 #   NET_LAG=5,50,5,80   the simulated WiFi (PES6_NET_LAG; default as here)
 #   NET_A_RATE / NET_B_RATE   a limited uplink for one side (PES6_NET_RATE; B is the host)
 #   PES6_NET_REDUNDANCY, PES6_NET_PEER_TIMING (0 by default here: no rows sent, as in play) pass through
+#   STOP=15@80000 SECS=1700  a longer match (default 15@20000, 900 s)
 #   BOT=1               both sides play the match (runtime/desktop/bot.c: passes, shots, pressure)
 #                       instead of the random walk
 #
@@ -45,8 +46,8 @@ for cfg in "$@"; do
     IFS=: read -r name ease buf <<< "$cfg"
     rm -rf "${OUT:?}/$name"
     PES6_SIM60=1 PES6_NET_EASE="$ease" PES6_NET_BUFFER="$buf" PES6_NET_LAG="${NET_LAG:-5,50,5,80}" \
-        PES6_NET_PEER_TIMING="${PES6_NET_PEER_TIMING:-0}" NET_BOT="${BOT:-}" NET_ARGS=--gpu NET_TIMING=1 NET_A_INPUT="$A" NET_B_INPUT="$B" NET_SECONDS=900 \
-        tools/net_pair.sh "$OUT/$name" 15@20000 > "$OUT/$name.out" 2>&1 || true
+        PES6_NET_PEER_TIMING="${PES6_NET_PEER_TIMING:-0}" NET_BOT="${BOT:-}" NET_ARGS=--gpu NET_TIMING=1 NET_A_INPUT="$A" NET_B_INPUT="$B" NET_SECONDS=${SECS:-900} \
+        tools/net_pair.sh "$OUT/$name" ${STOP:-15@20000} > "$OUT/$name.out" 2>&1 || true
     restore
     echo "### $name (ease $ease, buffer $buf)"
     for s in a b; do

@@ -35,6 +35,8 @@ void pes6_settings_load(pes6_settings *s, const char *io_root) {
         else if (!strcmp(line, "camera")) s->camera = clampi(atoi(v), 0, CAMERA_COUNT - 1);
         else if (!strcmp(line, "rate")) s->rate = clampi(atoi(v), 0, MATCH_RATE_COUNT - 1);
         else if (!strcmp(line, "version")) snprintf(s->version, sizeof s->version, "%s", v);
+        else if (!strcmp(line, "net_name")) snprintf(s->net_name, sizeof s->net_name, "%s", v);
+        else if (!strcmp(line, "lobby")) snprintf(s->lobby, sizeof s->lobby, "%s", v);
     }
     fclose(f);
     pes6_settings_set_controls(s, s->controls);
@@ -95,9 +97,9 @@ int pes6_settings_save(const pes6_settings *s, const char *io_root) {
     snprintf(path, sizeof path, "%s/settings.txt", io_root && *io_root ? io_root : ".");
     FILE *f = fopen(path, "w");
     if (!f) return -1;
-    fprintf(f, "move=%d\nedge_run=%d\nhand=%d\ngpu=%d\ncommentary=%d\ncontrols=%d\nres=%d\nquality=%d\nscreen=%d\ncamera=%d\nrate=%d\nversion=%s\n",
+    fprintf(f, "move=%d\nedge_run=%d\nhand=%d\ngpu=%d\ncommentary=%d\ncontrols=%d\nres=%d\nquality=%d\nscreen=%d\ncamera=%d\nrate=%d\nversion=%s\nnet_name=%s\nlobby=%s\n",
             s->move, s->rim_run, s->hand, s->gpu, s->commentary, s->controls, s->res, s->quality, s->screen,
-            s->camera, s->rate, s->version);
+            s->camera, s->rate, s->version, s->net_name, s->lobby);
     return fclose(f) == 0 ? 0 : -1;
 }
 

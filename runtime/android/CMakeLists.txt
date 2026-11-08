@@ -39,7 +39,7 @@ add_library(pes6 SHARED
     "${PES6_ROOT}/runtime/desktop/bot.c"
     "${COMMON}/ge.c" "${COMMON}/mpeg.c" "${COMMON}/atrac.c" "${COMMON}/h264.c"
     "${COMMON}/version.c" "${COMMON}/afs_mods.c" "${COMMON}/patch.c" "${COMMON}/pcof.c" "${COMMON}/launcher.c"
-    "${COMMON}/at3.c" "${COMMON}/audio.c" "${COMMON}/commentary.c" "${COMMON}/widescreen.c" "${COMMON}/net.c" "${COMMON}/osk.c" "${COMMON}/settings.c" "${COMMON}/lang.c"
+    "${COMMON}/at3.c" "${COMMON}/audio.c" "${COMMON}/commentary.c" "${COMMON}/widescreen.c" "${COMMON}/net.c" "${COMMON}/online.c" "${COMMON}/osk.c" "${COMMON}/settings.c" "${COMMON}/lang.c"
     "${COMMON}/tuning.c" "${COMMON}/rules.c" "${COMMON}/flow.c" "${COMMON}/faces.c" "${COMMON}/iso_eboot.c"
     # the EBOOT of the player's ISO decrypted on the phone (docs/35): pspdecrypt, GPL-3
     "${PES6_ROOT}/third_party/pspdecrypt/PrxDecrypter.cpp" "${PES6_ROOT}/third_party/pspdecrypt/pspdecrypt_shim.cpp"
@@ -76,6 +76,9 @@ set(PES6_PRODUCT_VERSION "" CACHE STRING "mods/<id> the app plays alone; empty f
 # Only the files that read it: the generated code does not recompile when it changes.
 set_source_files_properties(main.c "${COMMON}/version.c" "${COMMON}/launcher.c"
     PROPERTIES COMPILE_DEFINITIONS "PES6_PRODUCT_VERSION=\"${PES6_PRODUCT_VERSION}\"")
+# The online lobby server built in (docs/41): host:port, empty for none (PES6_LOBBY at run time overrides it).
+set(PES6_LOBBY_SERVER "" CACHE STRING "online lobby server host:port")
+set_property(SOURCE "${COMMON}/online.c" APPEND PROPERTY COMPILE_DEFINITIONS "PES6_LOBBY_SERVER=\"${PES6_LOBBY_SERVER}\"")
 
 # Movie and music decoding: the static FFmpeg built by tools/android_ffmpeg.sh.
 # Without it the intro is black and there is no music.

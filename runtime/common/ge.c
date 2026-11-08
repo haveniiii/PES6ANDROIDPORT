@@ -1488,6 +1488,9 @@ void pes6_ge_thread_stats(uint64_t *cpu_ns, uint64_t *wait_ns) {
 #include "ge_gl.c"          /* GPU rasterization; shares this file's private types */
 #endif
 
+/* PES6_GE_NODRAW=1: lists, signals and vertex addresses as ever, but no triangle set up or drawn -- for
+ * long headless runs that only need the match (bot matches for the commentary, docs/39 §6). */
+static int g_nodraw;
 GE_STAGE static void draw_prim(uint32_t arg) {
     uint32_t count = arg & 0xFFFF, type = (arg >> 16) & 7;
     vformat f;
@@ -1500,7 +1503,7 @@ GE_STAGE static void draw_prim(uint32_t arg) {
     g_stats.vertices += count;
 
     draw_ctx c;
-    int drawable = count && stride && f.pos && draw_setup(&c);
+    int drawable = !g_nodraw && count && stride && f.pos && draw_setup(&c);
     if (drawable && !(type == 3 || type == 4 || type == 5 || type == 6)) {
         g_stats.skipped_prims++;             /* points and lines */
         drawable = 0;
@@ -1994,6 +1997,8 @@ void pes6_ge_init(void) {
     g_cull_mode = cull && *cull ? atoi(cull) : 0;
     const char *zf = getenv("PES6_GE_ZFAIL");
     g_zfail_log = zf && *zf ? atol(zf) : 0;
+    const char *nd = getenv("PES6_GE_NODRAW");
+    g_nodraw = nd && *nd && *nd != '0';
     const char *noz = getenv("PES6_GE_NOZ");
     g_no_ztest = noz && *noz && *noz != '0';
     const char *dbg = getenv("PES6_GE_DEBUG");

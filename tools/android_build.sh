@@ -14,6 +14,7 @@
 #                                     and the menu background, never the game data (pushed as above)
 #                                     nor a PS2 commentary bank: the APK that can be shared.
 #                                     PRODUCT=<id>: the app plays only that patch (the old docs/29)
+#                                     PES6_LOBBY_SERVER=host:port: the online lobby built in (docs/41)
 #   tools/android_build.sh bundle [install]
 #                                     the same, but the APK carries the game data (assets/EBOOT.elf,
 #                                     assets/pes6.iso stored uncompressed, ~1.3 GB) and the game
@@ -71,9 +72,13 @@ PY
 cmake -S "$ROOT/runtime/android" -B "$ROOT/runtime/android/build" \
       -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
       -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 -DCMAKE_BUILD_TYPE=Release \
-      -DPES6_PRODUCT_VERSION="$PRODUCT" $(eboot_defs) > "$OUT.cmake.log" 2>&1 \
+      -DPES6_PRODUCT_VERSION="$PRODUCT" -DPES6_LOBBY_SERVER="${PES6_LOBBY_SERVER:-}" $(eboot_defs) > "$OUT.cmake.log" 2>&1 \
   || { mkdir -p "$OUT"; tail -20 "$OUT.cmake.log"; exit 1; }
 cmake --build "$ROOT/runtime/android/build" -j
+# The lobby server must really be in the library (a wrong source path once left it out silently).
+if [ -n "${PES6_LOBBY_SERVER:-}" ] && ! strings -a "$ROOT/runtime/android/build/libpes6.so" | grep -xF "$PES6_LOBBY_SERVER" >/dev/null; then
+    echo "PES6_LOBBY_SERVER=$PES6_LOBBY_SERVER is not in libpes6.so"; exit 1
+fi
 
 # the work files go; the APKs already built stay (bundle, mods and iso live side by side)
 mkdir -p "$OUT"; find "$OUT" -mindepth 1 -maxdepth 1 ! -name '*.apk' -exec rm -rf {} +
@@ -113,7 +118,7 @@ if [ "$MODS" = 1 ]; then
     # .base copy of tools/roster_update.py, nor source images). The player can delete them.
     for id in $PATCHES $PRODUCT; do
         [ -f "$ROOT/mods/$id/mod.json" ] || [ -f "$ROOT/mods/$id/version.txt" ] || { echo "no patch mods/$id"; exit 1; }
-        (cd "$ROOT/mods" && find "$id/mod.json" "$id/version.txt" "$id/textures" "$id/afs" "$id/faces" "$id/commentary" "$id/save" -type f ! -name '*.orig' ! -name '*.base' 2>/dev/null) >> "$LIST"
+        (cd "$ROOT/mods" && find "$id/mod.json" "$id/version.txt" "$id/textures" "$id/afs" "$id/faces" "$id/commentary" "$id/save" -type f ! -name '*.orig' ! -name '*.base' 2>/dev/null || true) >> "$LIST"   # a missing mod.json or version.txt is fine
     done
     sort -u -o "$LIST" "$LIST"
     # Textures for every version (mods/common/textures: the menu background, tools/menu_background.py).
@@ -122,8 +127,9 @@ if [ "$MODS" = 1 ]; then
     (cd "$ROOT/mods" && find music -maxdepth 1 -type f -name 'track*.pcm' 2>/dev/null) >> "$LIST"
     # Commentary (docs/24, docs/38 §5): only the catalogues, mods/catalogues/<bank>.txt (clip numbers,
     # from tools/commentary/build_catalogue.py). The PS2 bank itself is the player's: imported in the
-    # menu's Patches page. No APK carries one (7/11, decision of the user).
-    (cd "$ROOT/mods" && find catalogues -maxdepth 1 -type f -name '*.txt' 2>/dev/null) >> "$LIST"
+    # menu's Patches page. No APK carries one (7/11, decision of the user). e_sound.lengths: the English
+    # bank's 13127 clip sizes (numbers, no sound), to place a bank in another language (docs/40).
+    (cd "$ROOT/mods" && find catalogues -maxdepth 1 -type f \( -name '*.txt' -o -name '*.lengths' \) 2>/dev/null) >> "$LIST"
     if grep -E '\.afs$' "$LIST" | grep -vE '^[^/]+/(commentary|afs)/' | grep -q .; then
         echo "a PS2 commentary bank outside a patch would go into the APK:"; grep -E '\.afs$' "$LIST" | grep -vE '^[^/]+/(commentary|afs)/'; exit 1
     fi
@@ -156,7 +162,8 @@ else
     "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
         --out "$OUT/$APK" "$OUT/aligned.apk"
 fi
-rm -f "$OUT/base.apk" "$OUT/aligned.apk"; rm -rf "$OUT/pkg/assets"
+rm -f "$OUT/base.apk" "$OUT/aligned.apk"
+rm -rf "$OUT/pkg/assets" 2>/dev/null || rm -rf "$OUT/pkg/assets" || true   # Finder may write a .DS_Store meanwhile
 ls -lh "$OUT/$APK"
 # A firm rule (docs/29): an APK to share never carries the game. Only bundle may, for the user's own phone.
 if [ "$BUNDLE" = 0 ] && unzip -l "$OUT/$APK" | grep -Eiq '\.(iso|cso|elf|prx|pbp)$|EBOOT'; then

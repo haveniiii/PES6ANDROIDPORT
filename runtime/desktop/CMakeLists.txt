@@ -77,6 +77,7 @@ add_executable(pes6
     ../common/flow.c
     ../common/faces.c
     ../common/net.c
+    ../common/online.c
     ../common/osk.c
     ../common/settings.c
     ../common/lang.c
@@ -103,6 +104,9 @@ target_link_libraries(pes6patch PRIVATE z)
 # a mods/<id> here makes the app play only that one (the old "only the Chilean patch", docs/29).
 set(PES6_PRODUCT_VERSION "" CACHE STRING "mods/<id> the app plays alone; empty for every patch")
 target_compile_definitions(pes6 PRIVATE PES6_PRODUCT_VERSION="${PES6_PRODUCT_VERSION}")
+# The online lobby server built in (docs/41): host:port, empty for none (PES6_LOBBY at run time overrides it).
+set(PES6_LOBBY_SERVER "" CACHE STRING "online lobby server host:port")
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../common/online.c APPEND PROPERTY COMPILE_DEFINITIONS "PES6_LOBBY_SERVER=\"${PES6_LOBBY_SERVER}\"")
 
 find_path(AVCODEC_INCLUDE libavcodec/avcodec.h HINTS /opt/homebrew/include /usr/local/include)
 find_library(AVCODEC_LIB avcodec HINTS /opt/homebrew/lib /usr/local/lib)

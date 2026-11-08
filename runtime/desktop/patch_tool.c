@@ -28,6 +28,12 @@ static int usage(void) {
 int main(int argc, char **argv) {
     pes6_lang_init(getenv("LANG"));
     if (argc < 3) return usage();
+    {   /* the English catalogue and its clip lengths, for a bank in another language (docs/40) */
+        const char *m = getenv("PES6_MODS");
+        static char ref[900];
+        snprintf(ref, sizeof ref, "%s/catalogues", m && *m ? m : "mods");
+        pes6_bank_set_reference(ref);
+    }
     const char *cmd = argv[1];
     if (!strcmp(cmd, "list")) {
         static pes6_patch p[PES6_PATCH_MAX];

@@ -28,6 +28,7 @@
 #include "audio.h"
 #include "net.h"
 #include "osk.h"
+#include "online.h"
 #include "pes6_addrs.h"
 #include "settings.h"
 #include "window.h"
@@ -566,6 +567,14 @@ int main(int argc, char **argv) {
     pes6_audio_init();
     pes6_net_init();
     pes6_osk_init();
+    {   /* online lobby (docs/41): from the menu's Online page, or PES6_LOBBY for a scripted test */
+        const char *lobby = getenv("PES6_LOBBY");
+        if (lobby && *lobby) {
+            const char *name = getenv("PES6_ONLINE_NAME");
+            pes6_online_start(lobby, name && *name ? name : getenv("PES6_OSK_TEXT"), pes6_match_at_60,
+                              getenv("PES6_VERSION"));
+        }
+    }
     if (getenv("PES6_FORCE60")) psp_add_vblank_task(force60_task);   /* experiment, docs/18 §5 */
     setup_probes();
     setup_sampler();

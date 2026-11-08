@@ -459,6 +459,43 @@ Herramienta: `tools/commentary/audit_catalogue.py`.
 
 Verificado en escritorio con un partido entero del bot (que ahora pasa repeticiones y el descanso). Falta el teléfono.
 
+**7/11 noche — primer partido en el teléfono (`docs/39` §6.6, sin commit tras `2750966`):**
+- `save_corner`: «la mandó al córner» solo en un córner que dio el arquero; el clip 5060 queda fuera.
+- El generador aleatorio del comentarista ahora se siembra; antes, cada vez que se abría la app sonaban las mismas
+  frases en el mismo orden.
+- Se elige entre los clips menos dichos en el partido: ninguno se repite en un tiempo.
+- `PES6_GE_NODRAW=1` (no dibuja): un tiempo del bot en segundos, con el mismo partido que dibujando. Así se jugaron
+  12 primeros tiempos en paralelo, con distintas semillas de `PES6_BOT`.
+- APK `PES6-1.2.2-plus3.apk` (iso, release), sin instalar. La `plus1` está instalada en el Redmi.
+- El banco del usuario se copió en el teléfono a `<files>/audio`.
+- **Parche chileno y cualquier idioma (`docs/39` §6.7, `docs/40`):**
+  - el generador del comentarista es propio (splitmix64);
+  - un relleno no se repite antes de 4 minutos;
+  - PECH tiene `interception` / `tackle` / `corner_kick`;
+  - **cualquier banco PS2 de 13 127 clips se importa:** se alinea con el inglés por las duraciones relativas de su
+    directorio (`align_bank.py`, `patch.c`; equipos y nombres fijos) y su catálogo sale del inglés. **Probado con los
+    6 bancos PAL reales de `PS2DAT/`** (inglés, español, francés, alemán, italiano y polaco; `p_sound` es polaco): un
+    primer tiempo por idioma, cada frase transcrita, y cuadra con su evento (`docs/40` §2);
+  - el catálogo español se rehízo fusionando el inglés alineado con el hecho desde su transcripción;
+  - el APK lleva `mods/catalogues/e_sound.lengths` (tamaños, no audio): **el usuario tiene que decidir si vale**;
+  - el español se reconoce por huella; `PS2DAT/` está en `.gitignore`;
+  - APK nueva (`plus5`) sin instalar; patch_test 43 de 43; regresión PASS.
+
+**8/11 — online por internet con servidor de salas (`docs/41`, sin commit) — RETOMAR AQUÍ:** pedido del usuario: servidor
+para las salas y partidos P2P, cambio de anfitrión en el segundo tiempo; el usuario pagará el servidor (barato, da igual dónde).
+- `server/p6lobby.py` (Python sin dependencias, UDP 27700; salas fijas y propias con clave, presentación de pares, reenvío solo
+  si no hay camino directo; `server/test_p6lobby.py` 9/9; `server/README.md` + `p6lobby.service`).
+- Cliente `runtime/common/online.c` en el mismo socket del juego (`net.c`: `pes6_net_tap`, `idle_read`, `set_online`):
+  PUNCH/PONG cada segundo, RELAY a los 6 s sin camino directo. Página **Online** del menú previo (`launcher.c` página 3;
+  nombre en `settings.txt` `net_name`, servidor `lobby`). APK: `PES6_LOBBY_SERVER=host:puerto tools/android_build.sh iso`.
+- **Cambio de anfitrión: lo hace el juego solo** (`docs/41` §3, hallado en el código el 8/11). Manda el estado la consola
+  con `0x08A8167C` = 1: en el primer tiempo la del equipo local, en el segundo la del visitante (netlib elige un master
+  nuevo al terminar el periodo 0, comando `0x12/1`). Visto con dos bots (`[net] master:` en el log) y en un partido real Mac (WiFi) contra Redmi (4G compartido), directo.
+  `swap_task` (otro bit, estaba mal) se quitó. Servidor real: Vultr `155.138.175.40` (`server/deploy.sh`); APK `PES6-1.2.2-online2.apk`.
+- Probado en el Mac: dos instancias se encuentran por el servidor y juegan, directo y por reenvío (`NET_LOBBY=127.0.0.1:27700
+  [NET_RELAY=1] NET_BOT=1 tools/net_pair.sh`, con las pulsaciones de `net_bench.sh`); regresión PASS. Falta: un partido por reenvío
+  entre redes reales (dos 4G).
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.
@@ -561,7 +598,7 @@ rendimiento, vídeo de la intro**),
 `jalr` que dejaba viva la pantalla de formación),
 `13-gpu-renderer.md` (iteración 18: rasterizado por GPU),
 `14-android.md` (**iteración 19: APK, primer arranque en un teléfono real**),
-`15-multiplayer-plan.md` (multijugador WiFi), `16-liga-chilena.md` (liga chilena, primer intento: iteraciones 32–33), `17-versiones.md` (menú de versión, mods y guardados por versión), `18-rendimiento.md` (optimización del código generado), `19-menu-ajustes.md` (menú previo, ajustes, mandos), `20-mantenimiento.md` (regresión, direcciones, nombres, toolkit), `21-partido-estructuras.md` (jugadores, tablas y globales del partido, vistos en RAM), `22-arquitectura.md` (**mapa del juego**: arranque, escenas, overlays, partido), `23-liga-datos.md` (bloque de datos de Liga/ML, punto de partida), `24-comentarios.md` (**comentarista**: banco de voz de PS2, motor), `25-manipulacion.md` (**dónde tocar para cambiar el juego**: parámetros, reglas, mapa Y→Z), `26-capas.md` (**las capas del port** y qué se puede tocar), `27-rollback.md` (netcode por entradas: investigación), `28-parches-pech.md` (parches PECH a versiones), `29-pes6chile27.md` (**el producto**: solo el parche, nombre, APK), `30-aspecto-jugadores.md` (pelo, piel y barba de los jugadores), `31-pantalla-ancha.md` (el partido a lo ancho del teléfono), `33-plantillas.md` (plantillas al día desde Wikipedia), `34-progreso-plantillas-28-10.md` (progreso de la sesión del 28/10: Primera B, Argentina y estado de las plantillas), `35-apk-iso.md` (APK que pide la ISO en el menú y descifra el EBOOT), `36-controles.md` (**catálogo de controles** desde la Command List del juego: 89 acciones clasificadas y borrador de esquema nuevo), `37-esquema-flow.md` (esquema táctil Flow, implementado; §8: mediciones y pendientes), `38-parches.md` (**parches**: `mod.json`, importador, pantalla Parches, comentarista del usuario), `39-auditoria-comentarista.md` (**auditoría del comentarista inglés**: catálogo clip por clip, motor, comparación con PC y arreglos). Pantalla Controles del menú previo: `docs/19` §9.
+`15-multiplayer-plan.md` (multijugador WiFi), `16-liga-chilena.md` (liga chilena, primer intento: iteraciones 32–33), `17-versiones.md` (menú de versión, mods y guardados por versión), `18-rendimiento.md` (optimización del código generado), `19-menu-ajustes.md` (menú previo, ajustes, mandos), `20-mantenimiento.md` (regresión, direcciones, nombres, toolkit), `21-partido-estructuras.md` (jugadores, tablas y globales del partido, vistos en RAM), `22-arquitectura.md` (**mapa del juego**: arranque, escenas, overlays, partido), `23-liga-datos.md` (bloque de datos de Liga/ML, punto de partida), `24-comentarios.md` (**comentarista**: banco de voz de PS2, motor), `25-manipulacion.md` (**dónde tocar para cambiar el juego**: parámetros, reglas, mapa Y→Z), `26-capas.md` (**las capas del port** y qué se puede tocar), `27-rollback.md` (netcode por entradas: investigación), `28-parches-pech.md` (parches PECH a versiones), `29-pes6chile27.md` (**el producto**: solo el parche, nombre, APK), `30-aspecto-jugadores.md` (pelo, piel y barba de los jugadores), `31-pantalla-ancha.md` (el partido a lo ancho del teléfono), `33-plantillas.md` (plantillas al día desde Wikipedia), `34-progreso-plantillas-28-10.md` (progreso de la sesión del 28/10: Primera B, Argentina y estado de las plantillas), `35-apk-iso.md` (APK que pide la ISO en el menú y descifra el EBOOT), `36-controles.md` (**catálogo de controles** desde la Command List del juego: 89 acciones clasificadas y borrador de esquema nuevo), `37-esquema-flow.md` (esquema táctil Flow, implementado; §8: mediciones y pendientes), `38-parches.md` (**parches**: `mod.json`, importador, pantalla Parches, comentarista del usuario), `39-auditoria-comentarista.md` (**auditoría del comentarista inglés**: catálogo clip por clip, motor, comparación con PC y arreglos), `40-comentarios-idiomas.md` (**bancos de PS2 en cualquier idioma**: alineados por los tamaños de sus clips), `41-online.md` (**online por internet**: servidor de salas, P2P, cambio de anfitrión). Pantalla Controles del menú previo: `docs/19` §9.
 
 **Mantenimiento (iteración 38, `docs/20-mantenimiento.md`):** `tools/regress.sh` = batería de
 regresión (capturas deterministas por MD5 contra `tools/regress/expected.txt`; pasarla tras tocar

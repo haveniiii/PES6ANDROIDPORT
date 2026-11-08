@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -572,6 +573,7 @@ static int afs_slot_fits(const afs_table *t, unsigned slot, int64_t len) {
 
 static const struct { uint64_t fp; const char *file, *catalogue, *label; } BANKS[] = {
     { 0x1ade46cba78cec57ull, "e_sound.afs", "e_sound.txt", "Brackley & Brooking (English)" },
+    { 0xeda661fd4d513ccaull, "s_sound.afs", "s_sound.txt", "Rivero & Cano (Espanol)" },   /* PS2 PAL, 7/11 */
 };
 
 /* 1: "AFS\0" with 13 127 clips (a PS2 commentary bank), its table's fingerprint in *fp;
@@ -589,6 +591,186 @@ static int bank_probe(int fd, uint64_t *fp) {
     return 1;
 }
 
+/* ---- a bank in any language: aligned with the English one by its clip lengths (docs/40) ---------
+ * Every PS2 language bank records the same script in the same slots, but for whole blocks a language
+ * moved (Spanish: 6 slots earlier from ~6581 to the names). A clip's size in the .afs directory is its
+ * length (ADX mono, 13.5 KB a second), and a line lasts about as long in any language: a dynamic
+ * programme over the shift (target slot - English slot), paying for lengths that do not match and for
+ * each change of shift, finds the slots, and the English catalogue (audited clip by clip, docs/39) is
+ * carried over. tools/commentary/align_bank.py is the same, for testing. */
+#define ALIGN_FIRST 77                 /* 0-76: jingles and crowd */
+#define ALIGN_MAX 48
+#define ALIGN_PENALTY 20.0f
+#define ALIGN_MIN_CLOSE 40             /* % of clips close in relative length: the 5 PS2 languages 54-62,
+                                          shuffled 14-15, Palma's (another script) 25 */
+#define ALIGN_LOCAL 15                 /* a clip's length is taken relative to its +-15 neighbours */
+#define ALIGN_MAX_CHANGES 16           /* English/Spanish: 1; an unrelated bank's path jumps all over */
+static char g_ref_dir[900];
+
+void pes6_bank_set_reference(const char *catalogues) {
+    snprintf(g_ref_dir, sizeof g_ref_dir, "%s", catalogues ? catalogues : "");
+}
+
+/* <catalogues>/e_sound.lengths: the English bank's clip sizes, one a line (tools/commentary/align_bank.py
+ * --write-lengths). 0, or -1. */
+static int ref_lengths(uint32_t *len, int n) {
+    char path[1000];
+    snprintf(path, sizeof path, "%s/e_sound.lengths", g_ref_dir);
+    FILE *f = g_ref_dir[0] ? fopen(path, "r") : NULL;
+    if (!f) return -1;
+    int i = 0;
+    unsigned long v;
+    while (i < n && fscanf(f, "%lu", &v) == 1) len[i++] = (uint32_t)v;
+    fclose(f);
+    return i == n ? 0 : -1;
+}
+
+/* The same number in every language (checked by ear in e/s/f/g/i/p_sound, docs/40 §2): the teams and
+ * the players' names, short clips alike in length that the lengths alone place badly. */
+static int align_pinned(int i) { return (i >= 5279 && i < 5969) || i >= 8156; }
+
+/* log length minus the mean of its neighbours': a language that reads a stretch 25 % longer (Spanish
+ * narration) still matches clip for clip. NAN where there is no clip. */
+static void local_logs(const uint32_t *len, int n, float *z) {
+    double sum = 0;
+    int cnt = 0;
+    for (int i = 0; i < n && i <= ALIGN_LOCAL; i++) if (len[i]) { sum += log((double)len[i]); cnt++; }
+    for (int i = 0; i < n; i++) {                        /* window [i - LOCAL, i + LOCAL], sliding */
+        z[i] = len[i] && cnt ? (float)(log((double)len[i]) - sum / cnt) : NAN;
+        const int in = i + ALIGN_LOCAL + 1, out = i - ALIGN_LOCAL;
+        if (in < n && len[in]) { sum += log((double)len[in]); cnt++; }
+        if (out >= 0 && len[out]) { sum -= log((double)len[out]); cnt--; }
+    }
+}
+
+/* shift[i]: the target's slot for English slot i is i + shift[i]. Returns the % of the clips compared whose
+ * lengths are within 15 %, or -1 (no memory). */
+static int align_shifts(const uint32_t *ref, const uint32_t *tgt, int n, int8_t *shift) {
+    enum { S = 2 * ALIGN_MAX + 1 };
+    const int N = n - ALIGN_FIRST;
+    float *lr = malloc((size_t)n * sizeof(float)), *lt = malloc((size_t)n * sizeof(float));
+    int8_t *back = malloc((size_t)N * S);
+    if (!lr || !lt || !back) { free(lr); free(lt); free(back); return -1; }
+    local_logs(ref, n, lr);
+    local_logs(tgt, n, lt);
+    float score[S] = { 0 }, next[S];
+    for (int t = 0; t < N; t++) {
+        const int i = ALIGN_FIRST + t;
+        int best = 0;
+        for (int k = 1; k < S; k++)                      /* ties: the smaller shift */
+            if (score[k] > score[best] || (score[k] == score[best] && abs(k - ALIGN_MAX) < abs(best - ALIGN_MAX))) best = k;
+        const int pin = align_pinned(i);
+        for (int k = 0; k < S; k++) {
+            const int j = i + k - ALIGN_MAX;
+            float row = 0.0f;
+            if (pin && k != ALIGN_MAX) row = -1e6f;
+            else if (ref[i] && j >= 0 && j < n && tgt[j]) row = fmaxf(0.0f, 1.0f - fabsf(lt[j] - lr[i]) / 0.3f);
+            const float stay = score[k], sw = score[best] - ALIGN_PENALTY;
+            if (stay >= sw) { next[k] = stay + row; back[(size_t)t * S + k] = (int8_t)k; }
+            else            { next[k] = sw + row;   back[(size_t)t * S + k] = (int8_t)best; }
+        }
+        memcpy(score, next, sizeof score);
+    }
+    int k = 0;
+    for (int q = 1; q < S; q++)
+        if (score[q] > score[k] || (score[q] == score[k] && abs(q - ALIGN_MAX) < abs(k - ALIGN_MAX))) k = q;
+    memset(shift, 0, (size_t)n);
+    for (int t = N - 1; t >= 0; t--) {
+        shift[ALIGN_FIRST + t] = (int8_t)(k - ALIGN_MAX);
+        k = back[(size_t)t * S + k];
+    }
+    int compared = 0, close = 0;
+    for (int i = ALIGN_FIRST; i < n; i++) {
+        const int j = i + shift[i];
+        if (!ref[i] || j < 0 || j >= n || !tgt[j]) continue;
+        compared++;
+        if (fabsf(lt[j] - lr[i]) < 0.15f) close++;
+    }
+    free(lr); free(lt); free(back);
+    return compared ? close * 100 / compared : 0;
+}
+
+/* The English catalogue carried over to the target's slots, into `out`: every clip c becomes c + shift[c]
+ * (a team line keeps its team index). 0, or -1. */
+static int remap_catalogue(const char *out, const int8_t *shift, int n, const char *note) {
+    char path[1000];
+    snprintf(path, sizeof path, "%s/e_sound.txt", g_ref_dir);
+    FILE *in = fopen(path, "r"), *o = in ? fopen(out, "w") : NULL;
+    if (!in || !o) { if (in) fclose(in); return -1; }
+    fprintf(o, "# Carried over from the English catalogue by clip lengths (%s; docs/40).\n", note);
+    static char line[1 << 14];
+    while (fgets(line, sizeof line, in)) {
+        char *h = strchr(line, '#');
+        if (h) *h = 0;
+        char *save, *w = strtok_r(line, " \t\r\n", &save);
+        if (!w) continue;
+        const int team = !strcmp(w, "team");
+        fprintf(o, "%s", w);
+        int nth = 0;
+        while ((w = strtok_r(NULL, " \t\r\n", &save))) {
+            const long c = strtol(w, NULL, 10);
+            if (team && nth++ == 0) { fprintf(o, " %ld", c); continue; }
+            const long m = c >= 0 && c < n ? c + shift[c] : -1;
+            if (m >= 0 && m < n) fprintf(o, " %ld", m);
+        }
+        fputc('\n', o);
+    }
+    fclose(in);
+    return fclose(o) == 0 ? 0 : -1;
+}
+
+/* The language of a bank by its file's name (e_sound, f_sound...): only for the label. */
+static const char *bank_language(const char *name) {
+    static const struct { char c; const char *lang; } L6[] = {
+        { 'e', "English" }, { 's', "Espanol" }, { 'f', "Francais" }, { 'g', "Deutsch" }, { 'i', "Italiano" },
+        { 'p', "Polski" } };                           /* p_sound is Polish (heard 7/11), not Portuguese */
+    const char *b = base_name(name), *u = strstr(b, "_sound");
+    if (u && u == b + 1)
+        for (size_t i = 0; i < sizeof L6 / sizeof L6[0]; i++)
+            if ((b[0] | 0x20) == L6[i].c) return L6[i].lang;
+    return NULL;
+}
+
+/* An unknown bank: its slots found from its directory, the catalogue written next to it. 0, or -1. */
+static int bank_align(pes6_patch_job *job, int fd, const char *name, const char *audio_dir, char *label, size_t lcap) {
+    uint32_t *ref = malloc(BANK_CLIPS * sizeof(uint32_t)), *tgt = malloc(BANK_CLIPS * sizeof(uint32_t));
+    uint8_t *t = malloc(BANK_CLIPS * 8);
+    int8_t *shift = malloc(BANK_CLIPS);
+    int rc = -1;
+    if (!ref || !tgt || !t || !shift) goto out;
+    if (ref_lengths(ref, BANK_CLIPS) != 0) {
+        say(job, "%s", L("This build has no reference to place an unknown bank's clips.",
+                         "Esta version no tiene la referencia para ubicar los clips de un banco desconocido."));
+        goto out;
+    }
+    if (rd(fd, 8, t, BANK_CLIPS * 8) != 0) { say(job, "%s", L("The file could not be read.", "No se pudo leer el archivo.")); goto out; }
+    for (int i = 0; i < BANK_CLIPS; i++) tgt[i] = le32(t + 8 * i + 4);
+    const int close = align_shifts(ref, tgt, BANK_CLIPS, shift);
+    int changes = 0;
+    for (int i = ALIGN_FIRST + 1; i < BANK_CLIPS; i++) changes += shift[i] != shift[i - 1];
+    fprintf(stderr, "[patch] %s aligned with the English bank: %d%% of the clips close in length, %d changes of shift\n",
+            base_name(name), close, changes);
+    if (close < ALIGN_MIN_CLOSE || changes > ALIGN_MAX_CHANGES) {
+        say(job, L("Its clips do not line up with PES6's commentary (%d%% alike): not a PES6 PS2 bank, or one that was edited.",
+                   "Sus clips no calzan con los comentarios del PES6 (%d%% parecidos): no es un banco del PES6 de PS2, o fue editado."), close);
+        goto out;
+    }
+    char cat[1100], note[160];
+    const char *lang = bank_language(name);
+    snprintf(note, sizeof note, "%s, %d%% alike", base_name(name), close);
+    snprintf(cat, sizeof cat, "%s/catalogue.txt.part", audio_dir);
+    mkdirs(audio_dir);
+    if (remap_catalogue(cat, shift, BANK_CLIPS, note) != 0) {
+        say(job, "%s", L("The commentary catalogue could not be written.", "No se pudo escribir el catalogo de comentarios."));
+        goto out;
+    }
+    snprintf(label, lcap, "PS2 (%s)", lang ? lang : L("another language", "otro idioma"));
+    rc = 0;
+out:
+    free(ref); free(tgt); free(t); free(shift);
+    return rc;
+}
+
 static int bank_take(pes6_patch_job *job, int fd, const char *name, const char *audio_dir) {
     uint64_t fp = 0;
     const int kind = bank_probe(fd, &fp);
@@ -604,10 +786,10 @@ static int bank_take(pes6_patch_job *job, int fd, const char *name, const char *
     if (!file && strstr(base_name(name), "s_sound")) {      /* the Spanish one: layout of docs/24 */
         file = "s_sound.afs"; catalogue = "s_sound.txt"; label = "Rivero & Cano (Espanol)";
     }
-    if (!file) {
-        say(job, L("Unknown commentary bank (fingerprint %016llx): its clips are not catalogued.",
-                   "Banco de comentarios desconocido (huella %016llx): sus clips no estan catalogados."), (unsigned long long)fp);
-        return -1;
+    static char aligned_label[96];
+    if (!file) {                                       /* another language or edition: placed by its lengths */
+        if (bank_align(job, fd, name, audio_dir, aligned_label, sizeof aligned_label) != 0) return -1;
+        file = "voice.afs"; catalogue = "@catalogue.txt"; label = aligned_label;
     }
     struct stat st;
     if (fstat(fd, &st) != 0) { say(job, "%s", L("The file could not be read.", "No se pudo leer el archivo.")); return -1; }
@@ -631,8 +813,16 @@ static int bank_take(pes6_patch_job *job, int fd, const char *name, const char *
         job->at = off;
     }
     if (out && fclose(out) != 0) ok = 0;
-    if (!ok) { remove(part); say(job, "%s", L("The bank could not be copied (room?).", "No se pudo copiar el banco (espacio?).")); return -1; }
+    char cat_part[1100], cat_dst[1100];
+    snprintf(cat_part, sizeof cat_part, "%s/catalogue.txt.part", audio_dir);
+    snprintf(cat_dst, sizeof cat_dst, "%s/catalogue.txt", audio_dir);
+    if (!ok) { remove(part); remove(cat_part); say(job, "%s", L("The bank could not be copied (room?).", "No se pudo copiar el banco (espacio?).")); return -1; }
     pes6_bank_delete(audio_dir);                   /* one bank: the new one replaces the old */
+    if (catalogue[0] == '@' && rename(cat_part, cat_dst) != 0) {
+        remove(part); remove(cat_part);
+        say(job, "%s", L("The commentary catalogue could not be kept.", "No se pudo guardar el catalogo de comentarios."));
+        return -1;
+    }
     char info[1100];
     snprintf(info, sizeof info, "%s/bank.txt", audio_dir);
     FILE *f = fopen(info, "w");
@@ -672,6 +862,10 @@ int pes6_bank_delete(const char *audio_dir) {
     }
     snprintf(path, sizeof path, "%s/s_sound.afs", audio_dir);
     if (remove(path) != 0 && errno != ENOENT) rc = -1;
+    snprintf(path, sizeof path, "%s/voice.afs", audio_dir);          /* one placed by its lengths (docs/40) */
+    if (remove(path) != 0 && errno != ENOENT) rc = -1;
+    snprintf(path, sizeof path, "%s/catalogue.txt", audio_dir);
+    remove(path);
     snprintf(path, sizeof path, "%s/bank.txt", audio_dir);
     remove(path);
     return rc;
@@ -686,7 +880,8 @@ int pes6_patch_voice(const char *mods, const char *id) {
 int pes6_bank_paths(const char *audio_dir, const char *mods, char *afs, int afs_cap, char *catalogue, int cat_cap) {
     char cat[64];
     if (pes6_bank_installed(audio_dir, afs, afs_cap, cat, sizeof cat, NULL, 0) != 0) return -1;
-    snprintf(catalogue, (size_t)cat_cap, "%s/catalogues/%s", mods, cat);
+    if (cat[0] == '@') snprintf(catalogue, (size_t)cat_cap, "%s/%s", audio_dir, cat + 1);   /* written at import */
+    else               snprintf(catalogue, (size_t)cat_cap, "%s/catalogues/%s", mods, cat);
     if (!is_file(catalogue)) {
         fprintf(stderr, "[patch] no catalogue %s for the commentary bank\n", catalogue);
         return -1;
