@@ -2,6 +2,7 @@
 """Tests of p6lobby.py over real UDP on localhost:  python3 server/test_p6lobby.py"""
 
 import asyncio
+import logging
 import os
 import socket
 import sys
@@ -54,6 +55,10 @@ class Phone:
         assert k == p6lobby.WELCOME, "no welcome"
         self.token = [x[6:] for x in lines if x.startswith("token=")][0]
         return lines
+
+
+def a2_client(lobby, mac):
+    return [c for c in lobby.by_addr.values() if c.mac == mac][0]
 
 
 def kv(lines, key):
@@ -142,11 +147,18 @@ async def run():
         assert len(kv(room, "member")) == 2
         ok += 1
 
-        # leaving empties and removes a room; BYE drops the phone
+        # a player's room left empty stays EMPTY_ROOM_S, then goes; BYE drops the phone
         c.send(p6lobby.LEAVE)
         c2.send(p6lobby.BYE)
         await asyncio.sleep(0.1)
-        assert rid not in lobby.rooms and len(lobby.by_addr) == 3
+        assert rid in lobby.rooms and len(lobby.by_addr) == 3        # empty, kept for a while
+        c.send(p6lobby.LIST)
+        k, rooms = await c.recv(p6lobby.ROOMS)
+        assert any(x.split("|")[0] == rid and x.split("|")[2] == "0" for x in kv(rooms, "room")), rooms
+        lobby.expire_rooms(time.monotonic() + p6lobby.EMPTY_ROOM_S - 5)
+        assert rid in lobby.rooms
+        lobby.expire_rooms(time.monotonic() + p6lobby.EMPTY_ROOM_S + 1)
+        assert rid not in lobby.rooms
         ok += 1
 
         # the same phone from a new address keeps its room (a 4G phone whose NAT moved)
@@ -181,6 +193,26 @@ async def run():
         many[0].send(p6lobby.BYE, token="x")                       # a BYE without the token does nothing
         await asyncio.sleep(0.1)
         assert lobby.per_ip["127.0.0.1"] == p6lobby.MAX_PER_IP
+        ok += 1
+        # a match: both in the game's match at once; logged with its path, and its end
+        seen = []
+        h = logging.Handler()
+        h.emit = lambda rec: seen.append(rec.getMessage())
+        p6lobby.log.addHandler(h)
+        p6lobby.log.setLevel(logging.INFO)
+        p6lobby.log.propagate = False
+        a2.send(p6lobby.STATE, busy="2")
+        b.send(p6lobby.STATE, busy="2")
+        await asyncio.sleep(0.1)
+        start = [x for x in seen if x.startswith("ev match_start")]
+        assert len(start) == 1 and "path=relay" in start[0] and "an=ANA" in start[0], seen
+        b.send(p6lobby.STATE, busy="0")
+        await asyncio.sleep(0.1)
+        end = [x for x in seen if x.startswith("ev match_end")]
+        assert len(end) == 1 and "'lost the other phone'" in end[0], seen
+        assert a2_client(lobby, a.mac).match is None
+        p6lobby.log.removeHandler(h)
+        p6lobby.log.propagate = True
         ok += 1
         print("p6lobby: %d checks passed" % ok)
     finally:

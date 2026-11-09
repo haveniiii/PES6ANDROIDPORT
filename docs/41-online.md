@@ -97,12 +97,15 @@ una instalación por adb a ~55 KB/s esa misma tarde); jugadores con 40–100 uni
 
 ## 4. Probado en el Mac
 
-- `server/test_p6lobby.py`: 9 de 9. Cubre:
+- `server/test_p6lobby.py`: 12 de 12. Cubre:
   - registro y token, y que un pedido falsificado no recibe respuesta;
   - la lista de salas y la sala fija por combinación, con otra velocidad rechazada;
   - el reenvío solo tras pedirlo y a la MAC de destino;
-  - la clave y el borrado de la sala vacía;
-  - un teléfono que cambia de dirección (4G) conserva su sala.
+  - la clave; una sala de jugador que queda vacía dura 3 minutos (`EMPTY_ROOM_S`, pedido del usuario el 9/11: al salir de
+    su sala para probar, desaparecía) y después se borra;
+  - un teléfono que cambia de dirección (4G) conserva su sala;
+  - el tope de HELLO y de teléfonos por IP;
+  - un partido queda en el registro (`ev match_start` / `ev match_end`; `server/stats.sh` lo resume).
 - **Reenvío** (`NET_RELAY=1`: sin camino directo): el partido entero pasó por el servidor, ~65 datagramas por
   segundo, 0 sobre el tope; los dos «through the server».
 - Regresión PASS 9/9. Pantalla Online capturada en el Mac (conectado, salas fijas, nombre).

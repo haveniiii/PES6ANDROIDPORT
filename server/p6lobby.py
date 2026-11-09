@@ -38,6 +38,11 @@ Rooms are for one game data set (the patch, "original" by default) and one match
 (--lobby) exist for every such combination; players can make their own rooms too.
 
     python3 p6lobby.py [--port 27700] [--lobby "Lobby 1" --lobby "Lobby 2"] [--motd text]
+
+What happens is logged as "ev <kind> key=value ..." lines (shell quoting): hello, name, moved, room, join,
+leave, refuse, state, relay, match_start, match_end, drop. A match is two members of a room in the game's
+match at once (STATE busy=2); it ends when one of them leaves it, loses the other (busy 0) or goes away.
+server/summary.py reads them back from journalctl.
 """
 
 import argparse
@@ -45,6 +50,7 @@ import asyncio
 import logging
 import os
 import secrets
+import shlex
 import time
 import zlib
 
@@ -53,6 +59,7 @@ HELLO, WELCOME, LIST, ROOMS, CREATE, ROOM, JOIN, ERROR, LEAVE, RELAY, STATE, BYE
 SERVER_VERSION = "1"
 
 CLIENT_TIMEOUT = 35.0          # no HELLO for this long: gone
+EMPTY_ROOM_S = 180.0           # a player's room left empty stays this long: its maker can come back, a friend find it
 ROOM_MAX = 8                   # members of a room (net.c has room for 16 peers)
 MAX_CLIENTS = 4000
 MAX_ROOMS = 500
@@ -84,6 +91,10 @@ def ep(addr):
     return "%s:%d" % addr
 
 
+def ev(kind, **kv):
+    log.info("ev %s %s", kind, " ".join("%s=%s" % (k, shlex.quote(str(v))) for k, v in kv.items()))
+
+
 class Client:
     def __init__(self, addr, mac):
         self.addr, self.mac = addr, mac
@@ -97,6 +108,7 @@ class Client:
         self.req, self.req_at = REQUESTS_PER_S, time.monotonic()
         self.hello, self.hello_at = HELLOS_PER_S, time.monotonic()
         self.relayed_bytes = 0
+        self.match = None
 
     def allow_request(self, now):
         self.req = min(REQUESTS_PER_S, self.req + (now - self.req_at) * REQUESTS_PER_S)
@@ -129,6 +141,14 @@ class Room:
         self.id, self.name, self.proto, self.patch = rid, name, proto, patch
         self.max, self.password, self.permanent = maxn, password, permanent
         self.members = []                  # Clients, in order of arrival
+        self.empty_at = None               # when its last member left (players' rooms only)
+
+
+class Match:
+    def __init__(self, mid, a, b, room, path):
+        self.id, self.a, self.b, self.room, self.path = mid, a, b, room, path
+        self.start = time.monotonic()
+        self.relay0 = a.relayed_bytes + b.relayed_bytes
 
 
 class Lobby(asyncio.DatagramProtocol):
@@ -139,6 +159,7 @@ class Lobby(asyncio.DatagramProtocol):
         self.next_room = 1
         self.transport = None
         self.stats = {"relayed": 0, "dropped": 0, "refused": 0}
+        self.next_match = 1
         self.per_ip = {}                   # ip -> phones registered from it
         self.new_bucket, self.new_at = NEW_CLIENTS_PER_S, time.monotonic()
 
@@ -152,6 +173,7 @@ class Lobby(asyncio.DatagramProtocol):
         self.transport.sendto(MAGIC + bytes([kind]) + body[:MAX_DATAGRAM], addr)
 
     def error(self, c, msg):
+        ev("refuse", mac=c.mac, why=msg)
         self.send(c.addr, ERROR, ["msg=" + msg])
 
     def datagram_received(self, data, addr):
@@ -169,6 +191,7 @@ class Lobby(asyncio.DatagramProtocol):
         now = time.monotonic()
         c = self.by_addr.get(addr)
         if kind == HELLO:
+            new = False
             mac = kv.get("mac", "").lower()
             if len(mac) != 12 or any(ch not in "0123456789abcdef" for ch in mac):
                 return
@@ -178,7 +201,7 @@ class Lobby(asyncio.DatagramProtocol):
                 c = None
                 for other in list(self.by_addr.values()):   # the same phone from a new address (4G)
                     if other.mac == mac and kv.get("token") == other.token:
-                        log.info("moved %s %s -> %s", mac, ep(other.addr), ep(addr))
+                        ev("moved", mac=mac, ip=ep(addr))
                         del self.by_addr[other.addr]
                         self.forget_ip(other.addr)
                         self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
@@ -193,7 +216,7 @@ class Lobby(asyncio.DatagramProtocol):
                     c = Client(addr, mac)
                     self.by_addr[addr] = c
                     self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
-                    log.info("hello %s %s", ep(addr), mac)
+                    new = True
             elif kv.get("token") not in (None, "", c.token):
                 return
             if not c.allow_hello(now):
@@ -205,6 +228,10 @@ class Lobby(asyncio.DatagramProtocol):
             c.app = clean(kv.get("app", ""), 24)
             c.patch = clean(kv.get("patch", ""), 64) or "original"
             c.local = clean(kv.get("local", ""), 64)
+            if new:
+                ev("hello", mac=c.mac, name=c.name, app=c.app, proto=c.proto, patch=c.patch, ip=ep(addr))
+            elif changed[0] != c.name:
+                ev("name", mac=c.mac, name=c.name)
             self.send(addr, WELCOME, ["you=" + ep(addr), "token=" + c.token, "server=" + SERVER_VERSION,
                                       "motd=" + self.motd])
             if c.room and changed != (c.name, c.proto, c.patch, c.local):
@@ -228,6 +255,8 @@ class Lobby(asyncio.DatagramProtocol):
             busy = {"1": 1, "2": 2}.get(kv.get("busy"), 0)      # 1 in WIRELESS, 2 in a match
             if busy != c.busy:
                 c.busy = busy
+                ev("state", mac=c.mac, busy=busy)
+                self.match_state(c)
                 if c.room:
                     self.broadcast_room(c.room)
         elif kind == BYE:
@@ -274,7 +303,7 @@ class Lobby(asyncio.DatagramProtocol):
         rid = "R%d" % self.next_room
         self.next_room += 1
         self.rooms[rid] = Room(rid, name, c.proto, c.patch, maxn, clean(kv.get("pass", ""), 24), False)
-        log.info("room %s '%s' by %s", rid, name, c.mac)
+        ev("room", id=rid, name=name, by=c.mac, locked=1 if self.rooms[rid].password else 0)
         self.join(c, rid, kv.get("pass", ""))
 
     def join(self, c, rid, password):
@@ -299,19 +328,26 @@ class Lobby(asyncio.DatagramProtocol):
         self.leave(c)
         c.room = r
         r.members.append(c)
+        ev("join", mac=c.mac, name=c.name, room=r.id, roomname=r.name)
         self.broadcast_room(r)
 
     def leave(self, c):
         r = c.room
         if r is None:
             return
+        if c.match:
+            self.end_match(c.match, "left the room")
+        ev("leave", mac=c.mac, room=r.id)
         c.room = None
         r.members.remove(c)
         for m in r.members:
             m.relay_with.discard(c.mac)
         c.relay_with.clear()
         if not r.members:
-            del self.rooms[r.id]                 # a permanent lobby is made again when joined
+            if r.permanent:
+                del self.rooms[r.id]             # made again when joined
+            else:
+                r.empty_at = time.monotonic()    # kept EMPTY_ROOM_S (expire_rooms)
         else:
             self.broadcast_room(r)
 
@@ -321,7 +357,10 @@ class Lobby(asyncio.DatagramProtocol):
         for m in c.room.members:
             if m.mac == mac and m is not c:
                 if mac not in c.relay_with:
-                    log.info("relay %s <-> %s in %s", c.mac, m.mac, c.room.id)
+                    mt = c.match if c.match and m in (c.match.a, c.match.b) else None
+                    if mt and mt.path == "direct":
+                        mt.path = "direct, then relay"
+                    ev("relay", a=c.mac, b=m.mac, room=c.room.id, match=mt.id if mt else "")
                 c.relay_with.add(m.mac)
                 m.relay_with.add(c.mac)
                 self.broadcast_room(c.room)
@@ -336,8 +375,34 @@ class Lobby(asyncio.DatagramProtocol):
                                                               1 if o is m else 0))
             self.send(m.addr, ROOM, lines)
 
+    # ---- matches -----------------------------------------------------------------------------
+
+    def match_state(self, c):
+        if c.busy != 2:
+            if c.match:
+                self.end_match(c.match, "finished" if c.busy == 1 else "lost the other phone")
+            return
+        if c.match or c.room is None:
+            return
+        for m in c.room.members:
+            if m is not c and m.busy == 2 and m.match is None:
+                path = "relay" if m.mac in c.relay_with else "direct"
+                mt = Match("M%d" % self.next_match, m, c, c.room, path)
+                self.next_match += 1
+                m.match = c.match = mt
+                ev("match_start", id=mt.id, a=m.mac, b=c.mac, an=m.name, bn=c.name, room=c.room.name,
+                   path=path, proto=c.proto, patch=c.patch)
+                return
+
+    def end_match(self, mt, why):
+        relayed = (mt.a.relayed_bytes + mt.b.relayed_bytes - mt.relay0) // 1000
+        ev("match_end", id=mt.id, dur=int(time.monotonic() - mt.start), why=why, path=mt.path, relayed_kb=relayed)
+        mt.a.match = mt.b.match = None
+
     def drop(self, c, why):
-        log.info("drop %s %s (%s)", ep(c.addr), c.mac, why)
+        ev("drop", mac=c.mac, why=why)
+        if c.match:
+            self.end_match(c.match, "a phone went away (%s)" % why)
         self.leave(c)
         if self.by_addr.pop(c.addr, None) is not None:
             self.forget_ip(c.addr)
@@ -378,14 +443,22 @@ class Lobby(asyncio.DatagramProtocol):
             for c in list(self.by_addr.values()):
                 if now - c.seen > CLIENT_TIMEOUT:
                     self.drop(c, "timeout")
+            self.expire_rooms(now)
+
+    def expire_rooms(self, now):
+        for r in list(self.rooms.values()):
+            if not r.members and not r.permanent and r.empty_at is not None and now - r.empty_at >= EMPTY_ROOM_S:
+                del self.rooms[r.id]
+                ev("room_gone", id=r.id, name=r.name)
 
     async def report(self, every):
         while True:
             await asyncio.sleep(every)
             relays = sum(1 for c in self.by_addr.values() if c.relay_with) // 2
-            log.info("%d phones, %d rooms, %d relayed pairs, %d datagrams relayed, %d over the limit, %d registrations refused",
-                     len(self.by_addr), len(self.rooms), relays, self.stats["relayed"], self.stats["dropped"],
-                     self.stats["refused"])
+            matches = sum(1 for c in self.by_addr.values() if c.match) // 2
+            log.info("%d phones, %d rooms, %d matches, %d relayed pairs, %d datagrams relayed, %d over the limit, "
+                     "%d registrations refused", len(self.by_addr), len(self.rooms), matches, relays,
+                     self.stats["relayed"], self.stats["dropped"], self.stats["refused"])
 
 
 async def main():

@@ -17,7 +17,8 @@ python3 server/test_p6lobby.py        # the server's own tests (localhost)
 ```
 
 The `--lobby` rooms always exist, once for each game version and match rate. Players can create
-rooms of their own too, optionally with a password.
+rooms of their own too, optionally with a password. A player's room that is left empty stays 3 minutes
+(`EMPTY_ROOM_S`), so its maker can come back and a friend can still find it.
 
 ## On a small VPS (Debian / Ubuntu)
 
@@ -35,6 +36,15 @@ points it at the server now and keeps it there every 15 minutes. The token stays
 
 ```sh
 DUCKDNS_DOMAIN=<name> DUCKDNS_TOKEN=<token> server/deploy.sh root@<ip>
+```
+
+**What happened.** The server logs each phone that comes in, the rooms it joins, every match (two members in the game's
+match at once: direct or relayed, how long, how it ended) and what it refused:
+
+```sh
+server/stats.sh root@<ip>                 # a summary of today
+server/stats.sh root@<ip> "2 hours ago"   # or since then
+server/stats.sh root@<ip> -f              # follow the events live
 ```
 
 The same by hand, on the VPS:
