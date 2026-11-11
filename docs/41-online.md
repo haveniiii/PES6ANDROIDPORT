@@ -14,7 +14,7 @@ y reenvío. El cambio de anfitrión lo hace el juego solo en el descanso (§3).*
        │                           │  · reenvío solo si A y B no se alcanzan
   teléfono B ──── P6L1 (salas) ────┘
        ║
-  A ═══╬═══ B   partido del modo WIRELESS del juego, directo (P6N3/P6N6, net.c)
+  A ═══╬═══ B   partido del modo WIRELESS del juego, directo (P6N7, net.c)
 ```
 
 1. El jugador abre **Online** en el menú previo y elige un nombre. La app se registra en el servidor **desde el
@@ -33,14 +33,16 @@ y reenvío. El cambio de anfitrión lo hace el juego solo en el descanso (§3).*
    difusión en la red local).
 
 Los de una sala tienen que poder jugar entre ellos: **la misma versión del juego** (el parche, `original` por
-defecto) y **la misma velocidad de partido** (30 o 60 fps, protocolo `P6N3`/`P6N6`). El servidor no deja
-entrar a otra combinación, y cada combinación tiene su copia de las salas fijas.
+defecto) y **el mismo protocolo** (`P6N7`). El servidor no deja entrar a otra combinación, y cada combinación
+tiene su copia de las salas fijas. Desde `P6N7` una sala tiene teléfonos a 30 y a 60 fps: el partido se juega a
+la velocidad más baja de los dos (`docs/15` §18). La página Online muestra la de cada uno. Las APK anteriores
+(`P6N3` a 30, `P6N6` a 60) siguen en salas aparte.
 
 ## 2. Piezas
 
 | Pieza | Qué hace |
 |---|---|
-| `server/p6lobby.py` | El servidor: Python 3 sin dependencias, un puerto UDP. Salas, presentación y reenvío. Pruebas en `server/test_p6lobby.py` (9 de 9). Instalación en `server/README.md` y `server/p6lobby.service` (systemd). |
+| `server/p6lobby.py` | El servidor: Python 3 sin dependencias, un puerto UDP. Salas, presentación y reenvío. Pruebas en `server/test_p6lobby.py` (13 de 13). Instalación en `server/README.md` y `server/p6lobby.service` (systemd). |
 | `runtime/common/online.c/h` | El cliente: un hilo propio, el registro cada 10 s, la lista de salas, PUNCH/PONG, la ruta y el ping de cada miembro, y la petición de RELAY. |
 | `runtime/common/net.c` | Comparte el socket: `pes6_net_tap` (los mensajes de las salas antes que el juego), `pes6_net_idle_read` (lee cuando el juego no lo hace: el menú previo), `pes6_net_set_online` (las direcciones de la sala), `pes6_net_state` (en el menú, en WIRELESS o jugando: se muestra en la sala). |
 | `runtime/common/launcher.c` | Botón **Online** arriba a la derecha y la página 3: estado del servidor, salas, crear o actualizar; dentro de una sala, sus miembros con su estado (en el menú, en WIRELESS, jugando) y la ruta (directo con ping, por el servidor, conectando…). |
@@ -97,9 +99,11 @@ una instalación por adb a ~55 KB/s esa misma tarde); jugadores con 40–100 uni
 
 ## 4. Probado en el Mac
 
-- `server/test_p6lobby.py`: 12 de 12. Cubre:
+- `server/test_p6lobby.py`: 13 de 13. Cubre:
   - registro y token, y que un pedido falsificado no recibe respuesta;
-  - la lista de salas y la sala fija por combinación, con otra velocidad rechazada;
+  - la lista de salas y la sala fija por combinación, con otro protocolo rechazado;
+  - una sala `P6N7` con un teléfono a 30 y otro a 60: cada línea `member=` lleva su velocidad, y un cambio de velocidad
+    llega a los demás sin salir de la sala (`docs/15` §18);
   - el reenvío solo tras pedirlo y a la MAC de destino;
   - la clave; una sala de jugador que queda vacía dura 3 minutos (`EMPTY_ROOM_S`, pedido del usuario el 9/11: al salir de
     su sala para probar, desaparecía) y después se borra;

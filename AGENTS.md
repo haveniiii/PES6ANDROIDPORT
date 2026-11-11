@@ -496,6 +496,15 @@ para las salas y partidos P2P, cambio de anfitrión en el segundo tiempo; el usu
   [NET_RELAY=1] NET_BOT=1 tools/net_pair.sh`, con las pulsaciones de `net_bench.sh`); regresión PASS. Falta: un partido por reenvío
   entre redes reales (dos 4G).
 
+**10/11 — partidos entre 30 y 60 fps (`docs/15` §18, sin commit):** pedido del usuario. Las dos velocidades usan el protocolo
+`P6N7` (`PES6_NET_MAGIC`, `net.h`; las APK anteriores con `P6N3`/`P6N6` no se ven con las nuevas). Cada consola manda su
+velocidad en CAPS (tipo 7). El rival es el del último desafío aceptado (`opponent_is`), y la partida se juega a la más baja
+de las dos. `rules.c` (`rate_task`) solo cambia de velocidad sin `game.ovl` cargado: nunca a mitad de partido.
+`pes6_match_at_60` es ahora la velocidad efectiva, y el deseo del menú es `pes6_match_wants_60()`. Servidor: `rate=` en
+HELLO y un 8.º campo en `member=` (13/13 pruebas), **sin desplegar**. La página Online muestra la velocidad de cada uno.
+Probado en el Mac con bots y WiFi simulada (`NET_A_SIM60`/`NET_B_SIM60`): negociado se ve como un 30 contra 30, también por
+el servidor local. Falta: APK y dos teléfonos.
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.

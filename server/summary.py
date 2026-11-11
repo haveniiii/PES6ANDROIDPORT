@@ -53,13 +53,16 @@ def main():
             online.add(mac)
             peak = max(peak, len(online))
             p = phones.setdefault(mac, {"first": when, "names": [], "kind": "", "ip": set()})
-            p["kind"] = "%s %s" % ({"P6N6": "60 fps"}.get(kv.get("proto"), "30 fps"), kv.get("patch", ""))
+            fps = kv.get("rate") if kv.get("rate") in ("30", "60") else "60" if kv.get("proto") == "P6N6" else "30"
+            p["kind"] = "%s fps %s" % (fps, kv.get("patch", ""))
             p["ip"].add(kv.get("ip", "").rsplit(":", 1)[0])
             if kv.get("name") and kv["name"] not in p["names"]:
                 p["names"].append(kv["name"])
         elif kind == "name" and mac in phones:
             if kv.get("name") not in phones[mac]["names"]:
                 phones[mac]["names"].append(kv.get("name"))
+        elif kind == "rate" and mac in phones and kv.get("rate") in ("30", "60"):
+            phones[mac]["kind"] = "%s fps %s" % (kv["rate"], phones[mac]["kind"].split(" ", 2)[-1])
         elif kind == "moved":
             moved[mac] += 1
         elif kind == "join":

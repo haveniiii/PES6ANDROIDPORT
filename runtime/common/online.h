@@ -28,6 +28,7 @@ typedef struct {
     char name[28];
     uint8_t mac[6];
     int you, busy, route, ping_ms;      /* ping -1: not measured yet */
+    int rate;                           /* its menu's match rate, 30 or 60; 0 not known (an older server) */
 } pes6_online_member;
 
 typedef struct {
@@ -44,7 +45,8 @@ typedef struct {
     unsigned serial;                    /* changes with anything above */
 } pes6_online_view;
 
-/* Who this phone is in the lobby: the name shown, the match rate (60: 1) and the game data set
+/* Who this phone is in the lobby: the name shown, the match rate (60: 1; a room holds both, and a
+ * match is played at the lower of its two players', docs/15 §18) and the game data set
  * (the version id, "original"). Start the lobby: resolves `server` ("host:port"; NULL or "" the
  * built-in one, PES6_LOBBY overrides both) and keeps itself registered until pes6_online_stop. */
 int  pes6_online_start(const char *server, const char *name, int rate60, const char *patch);

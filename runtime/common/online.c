@@ -67,6 +67,7 @@ static struct {
     int started;
     /* who */
     char name[28], proto[8], patch[64], server_text[80];
+    int rate;                      /* the menu's match rate, 30 or 60: rooms hold both (docs/15 §18) */
     /* the server */
     struct sockaddr_in server;
     int resolved;
@@ -187,14 +188,14 @@ static void local_ep(char *out, size_t cap) {
 static void send_hello(uint64_t now) {
     char mac[13], local[80];
     local_ep(local, sizeof local);
-    lsend(L_HELLO, "mac", mac_hex(pes6_net_mac(), mac), "name", O.name, "proto", O.proto, "app", "pes6port",
-          "patch", O.patch, "local", local, "token", O.token, (const char *)NULL);
+    lsend(L_HELLO, "mac", mac_hex(pes6_net_mac(), mac), "name", O.name, "proto", O.proto, "rate", O.rate == 60 ? "60" : "30",
+          "app", "pes6port", "patch", O.patch, "local", local, "token", O.token, (const char *)NULL);
     O.hello_at = O.hello_sent = now;
 }
 
 static const char *error_text(const char *code) {
-    if (!strcmp(code, "rate")) return L("That room plays at the other match rate (30/60 fps).",
-                                         "Esa sala juega a la otra velocidad de partido (30/60 fps).");
+    if (!strcmp(code, "rate")) return L("That room is for another version of the app: update both.",
+                                         "Esa sala es de otra versión de la app: actualicen las dos.");
     if (!strcmp(code, "patch")) return L("That room plays another game version (patch).",
                                           "Esa sala juega otra versión del juego (parche).");
     if (!strcmp(code, "password")) return L("Wrong password.", "Contraseña incorrecta.");
@@ -216,9 +217,9 @@ static void take_room(char *lines) {
         if (!strncmp(line, "id=", 3)) snprintf(O.room_id, sizeof O.room_id, "%s", line + 3);
         else if (!strncmp(line, "name=", 5)) snprintf(O.room_name, sizeof O.room_name, "%s", line + 5);
         else if (!strncmp(line, "member=", 7) && O.nmem < PES6_ONLINE_MEMBERS) {
-            char *f[7] = { 0 };
+            char *f[8] = { 0 };             /* the 8th, the rate, from servers that know it */
             int k = 0;
-            for (char *p = line + 7; k < 7; k++) {
+            for (char *p = line + 7; k < 8; k++) {
                 f[k] = p;
                 char *bar = strchr(p, '|');
                 if (!bar) { k++; break; }
@@ -235,6 +236,7 @@ static void take_room(char *lines) {
             m.relay = atoi(f[4]);
             m.m.busy = atoi(f[5]);
             m.m.you = atoi(f[6]);
+            m.m.rate = f[7] ? atoi(f[7]) : 0;
             m.m.ping_ms = -1;
             m.since = now;
             for (int i = 0; i < nold; i++)
@@ -521,7 +523,8 @@ static void *thread_main(void *arg) {
 
 static void identity(const char *name, int rate60, const char *patch) {
     snprintf(O.name, sizeof O.name, "%s", name && *name ? name : "PES6");
-    snprintf(O.proto, sizeof O.proto, "%s", rate60 ? "P6N6" : "P6N3");
+    snprintf(O.proto, sizeof O.proto, "%s", PES6_NET_MAGIC);
+    O.rate = rate60 ? 60 : 30;
     snprintf(O.patch, sizeof O.patch, "%s", patch && *patch ? patch : "original");
 }
 
@@ -548,7 +551,7 @@ int pes6_online_start(const char *server, const char *name, int rate60, const ch
     atomic_store(&O.running, 1);
     if (pthread_create(&O.thread, NULL, thread_main, NULL) != 0) { atomic_store(&O.running, 0); return -1; }
     O.started = 1;
-    olog("lobby started as '%s' (%s, %s)", O.name, O.proto, O.patch);
+    olog("lobby started as '%s' (%s, %d fps, %s)", O.name, O.proto, O.rate, O.patch);
     return 0;
 }
 
@@ -572,7 +575,7 @@ void pes6_online_stop(void) {
 void pes6_online_set_identity(const char *name, int rate60, const char *patch) {
     pthread_mutex_lock(&O.mu);
     char proto[8], old_patch[64];
-    snprintf(proto, sizeof proto, "%s", O.proto);
+    snprintf(proto, sizeof proto, "%s", O.proto);      /* the same for both rates now: a rate change keeps the room */
     snprintf(old_patch, sizeof old_patch, "%s", O.patch);
     identity(name, rate60, patch);
     if (O.room_id[0] && (strcmp(proto, O.proto) || strcmp(old_patch, O.patch))) {   /* this room no longer fits */

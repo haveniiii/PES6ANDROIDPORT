@@ -1399,7 +1399,13 @@ static void online_paint(const pes6_launcher *l, uint32_t *px) {
         uint32_t rc = focus ? RGB(220, 230, 250) : RGB(130, 146, 186);
         if (in_room) {
             const pes6_online_member *m = &g_ov.members[i];
-            snprintf(left, sizeof left, "%s%s", m->name, m->you ? L(" (you)", " (tu)") : "");
+            /* Its menu's rate, and for the others the match against it: the lower one (docs/15 §18). */
+            const int mine = l->s->rate == MATCH_60 ? 60 : 30;
+            char fps[48] = "";
+            if (m->you) snprintf(fps, sizeof fps, "  %d fps", mine);
+            else if (m->rate == mine) snprintf(fps, sizeof fps, "  %d fps", m->rate);
+            else if (m->rate) snprintf(fps, sizeof fps, L("  %d fps: match at 30", "  %d fps: partido a 30"), m->rate);
+            snprintf(left, sizeof left, "%s%s%s", m->name, m->you ? L(" (you)", " (tu)") : "", fps);
             if (m->you) snprintf(right, sizeof right, "%s", member_state(m));
             else {
                 char ping[24] = "";
@@ -1434,13 +1440,13 @@ static void online_paint(const pes6_launcher *l, uint32_t *px) {
     play_button(px, O_PLAY_X, O_BTN_Y, O_BTN_W, O_BTN_H, L("Play", "Jugar"), l->osel == b0 + online_buttons() - 1);
     const char *text = g_ov.error[0] && g_ov.state == ONLINE_READY ? g_ov.error
                      : in_room ? L("Press Play, then MATCH > WIRELESS: the players of your room show up there to challenge. "
-                                   "The second half swaps who hosts.",
+                                   "A match between 30 and 60 fps is played at 30 by both.",
                                    "Pulsa Jugar y entra en PARTIDO > WIRELESS: ahi aparecen los de tu sala para desafiarlos. "
-                                   "En el segundo tiempo se cambia el anfitrion.")
-                               : L("Join a room: its players see each other in the game's WIRELESS mode. Same game version and "
-                                   "match rate (30/60 fps) as yours.",
+                                   "Entre 30 y 60 fps, los dos juegan a 30.")
+                               : L("Join a room: its players see each other in the game's WIRELESS mode. Same game version as "
+                                   "yours; 30 and 60 fps play together, at 30.",
                                    "Entra en una sala: sus jugadores se ven en el modo WIRELESS del juego. Misma version del juego "
-                                   "y velocidad de partido (30/60 fps) que la tuya.");
+                                   "que la tuya; 30 y 60 fps juegan juntos, a 30.");
     wrap2(px, ROW_X + 4, O_TEXT_Y, ROW_W - 8, text, g_ov.error[0] && g_ov.state == ONLINE_READY ? RGB(255, 226, 170) : RGB(150, 170, 215));
     const char *keys = in_room ? L("\x01 Leave  \x02 Name  \x03 Back", "\x01 Salir  \x02 Nombre  \x03 Volver")
                                : L("\x04 Join  \x01 Create  \x02 Name  \x03 Back", "\x04 Entrar  \x01 Crear  \x02 Nombre  \x03 Volver");

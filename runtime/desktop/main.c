@@ -571,7 +571,7 @@ int main(int argc, char **argv) {
         const char *lobby = getenv("PES6_LOBBY");
         if (lobby && *lobby) {
             const char *name = getenv("PES6_ONLINE_NAME");
-            pes6_online_start(lobby, name && *name ? name : getenv("PES6_OSK_TEXT"), pes6_match_at_60,
+            pes6_online_start(lobby, name && *name ? name : getenv("PES6_OSK_TEXT"), pes6_match_wants_60(),
                               getenv("PES6_VERSION"));
         }
     }

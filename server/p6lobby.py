@@ -12,7 +12,7 @@ that the address this server sees is the one the other phone has to send to.
     "P6L1" type(1) then UTF-8 "key=value" lines
 
   phone -> server
-    1 HELLO   mac name proto app patch local [token]   every 10 s: register / keep alive
+    1 HELLO   mac name proto app patch local [rate] [token]   every 10 s: register / keep alive
     3 LIST    token                                    -> 4 ROOMS
     5 CREATE  token name [max] [pass]                  -> 6 ROOM or 8 ERROR
     7 JOIN    token id [pass]                          -> 6 ROOM or 8 ERROR
@@ -23,7 +23,7 @@ that the address this server sees is the one the other phone has to send to.
   server -> phone
     2 WELCOME you token server motd
     4 ROOMS   room=id|name|members|max|locked ...      the rooms this phone can join
-    6 ROOM    id name max, then member=mac|name|public|local|relay|busy|you ...   on every change
+    6 ROOM    id name max, then member=mac|name|public|local|relay|busy|you|rate ...   on every change
     8 ERROR   msg (the phone shows it as it comes)
 
   Anything starting with "P6N" (the phones' own protocol, runtime/common/net.c) from a member is
@@ -33,13 +33,16 @@ that the address this server sees is the one the other phone has to send to.
 The token in WELCOME is random and must come back in every other request: a forged source
 address never sees it, so the server cannot be used to bounce traffic at someone else.
 
-Rooms are for one game data set (the patch, "original" by default) and one match rate (P6N3 at
-30 Hz, P6N6 at 60): the phones of a room must be able to play each other. The permanent lobbies
-(--lobby) exist for every such combination; players can make their own rooms too.
+Rooms are for one game data set (the patch, "original" by default) and one protocol of the phones
+(proto): the phones of a room must be able to play each other. Since P6N7 a room holds phones at 30
+and 60 Hz, and the two of a match play it at the lower rate (they agree on it themselves, docs/15
+§18); rate= in HELLO is only shown to the others. Older apps said P6N3 at 30 Hz and P6N6 at 60 and
+keep rooms of their own. The permanent lobbies (--lobby) exist for every such combination; players
+can make their own rooms too.
 
     python3 p6lobby.py [--port 27700] [--lobby "Lobby 1" --lobby "Lobby 2"] [--motd text]
 
-What happens is logged as "ev <kind> key=value ..." lines (shell quoting): hello, name, moved, room, join,
+What happens is logged as "ev <kind> key=value ..." lines (shell quoting): hello, name, rate, moved, room, join,
 leave, refuse, state, relay, match_start, match_end, drop. A match is two members of a room in the game's
 match at once (STATE busy=2); it ends when one of them leaves it, loses the other (busy 0) or goes away.
 server/summary.py reads them back from journalctl.
@@ -100,6 +103,7 @@ class Client:
         self.addr, self.mac = addr, mac
         self.token = secrets.token_hex(8)
         self.name, self.proto, self.app, self.patch, self.local = "", "", "", "original", ""
+        self.rate = 0                      # the phone's menu: 30 or 60 (0: an app that does not say)
         self.room = None
         self.busy = 0
         self.seen = time.monotonic()
@@ -222,19 +226,22 @@ class Lobby(asyncio.DatagramProtocol):
             if not c.allow_hello(now):
                 return
             c.seen = now
-            changed = (c.name, c.proto, c.patch, c.local)
+            changed = (c.name, c.proto, c.patch, c.local, c.rate)
             c.name = clean(kv.get("name", ""), 24) or "PES6"
             c.proto = clean(kv.get("proto", ""), 8)
             c.app = clean(kv.get("app", ""), 24)
             c.patch = clean(kv.get("patch", ""), 64) or "original"
             c.local = clean(kv.get("local", ""), 64)
+            c.rate = {"30": 30, "60": 60}.get(kv.get("rate"), {"P6N3": 30, "P6N6": 60}.get(c.proto, 0))
             if new:
-                ev("hello", mac=c.mac, name=c.name, app=c.app, proto=c.proto, patch=c.patch, ip=ep(addr))
+                ev("hello", mac=c.mac, name=c.name, app=c.app, proto=c.proto, rate=c.rate, patch=c.patch, ip=ep(addr))
             elif changed[0] != c.name:
                 ev("name", mac=c.mac, name=c.name)
+            if not new and changed[4] != c.rate:
+                ev("rate", mac=c.mac, rate=c.rate)
             self.send(addr, WELCOME, ["you=" + ep(addr), "token=" + c.token, "server=" + SERVER_VERSION,
                                       "motd=" + self.motd])
-            if c.room and changed != (c.name, c.proto, c.patch, c.local):
+            if c.room and changed != (c.name, c.proto, c.patch, c.local, c.rate):
                 self.broadcast_room(c.room)
             return
         if c is None or kv.get("token") != c.token or not c.allow_request(now):
@@ -370,9 +377,9 @@ class Lobby(asyncio.DatagramProtocol):
         for m in r.members:
             lines = ["id=" + r.id, "name=" + r.name, "max=%d" % r.max]
             for o in r.members:
-                lines.append("member=%s|%s|%s|%s|%d|%d|%d" % (o.mac, o.name, ep(o.addr), o.local,
-                                                              1 if o.mac in m.relay_with else 0, o.busy,
-                                                              1 if o is m else 0))
+                lines.append("member=%s|%s|%s|%s|%d|%d|%d|%d" % (o.mac, o.name, ep(o.addr), o.local,
+                                                                 1 if o.mac in m.relay_with else 0, o.busy,
+                                                                 1 if o is m else 0, o.rate))
             self.send(m.addr, ROOM, lines)
 
     # ---- matches -----------------------------------------------------------------------------

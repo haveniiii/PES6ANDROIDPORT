@@ -15,11 +15,11 @@ PORT = 27799
 
 
 class Phone:
-    def __init__(self, mac, name, proto="P6N3", patch="original"):
+    def __init__(self, mac, name, proto="P6N3", patch="original", rate=None):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.s.bind(("127.0.0.1", 0))
         self.s.setblocking(False)
-        self.mac, self.name, self.proto, self.patch = mac, name, proto, patch
+        self.mac, self.name, self.proto, self.patch, self.rate = mac, name, proto, patch, rate
         self.token = ""
 
     def send(self, kind, **kv):
@@ -49,8 +49,9 @@ class Phone:
         return None, None
 
     async def hello(self):
+        extra = {"rate": self.rate} if self.rate else {}
         self.send(p6lobby.HELLO, mac=self.mac, name=self.name, proto=self.proto, app="t", patch=self.patch,
-                  local="10.0.0.2:27600")
+                  local="10.0.0.2:27600", **extra)
         k, lines = await self.recv(p6lobby.WELCOME)
         assert k == p6lobby.WELCOME, "no welcome"
         self.token = [x[6:] for x in lines if x.startswith("token=")][0]
@@ -147,6 +148,28 @@ async def run():
         assert len(kv(room, "member")) == 2
         ok += 1
 
+        # P6N7 (docs/15 §18): phones at 30 and 60 share a room; each member line says its rate, and a
+        # rate changed in the menu reaches the others without leaving the room
+        e, f = Phone("02503600000e", "EVA", "P6N7", rate="30"), Phone("02503600000f", "FRAN", "P6N7", rate="60")
+        await e.hello()
+        await f.hello()
+        e.send(p6lobby.CREATE, name="Mixta")
+        k, room = await e.recv(p6lobby.ROOM)
+        mixed = kv(room, "id")[0]
+        f.send(p6lobby.JOIN, id=mixed)
+        k, room_f = await f.recv(p6lobby.ROOM)
+        mem = [m.split("|") for m in kv(room_f, "member")]
+        assert [(m[1], m[7]) for m in mem] == [("EVA", "30"), ("FRAN", "60")], mem
+        await e.recv(p6lobby.ROOM)
+        f.rate = "30"
+        f.send(p6lobby.HELLO, mac=f.mac, name=f.name, proto="P6N7", app="t", patch="original", local="", rate="30")
+        k, room_e = await e.recv(p6lobby.ROOM)
+        assert [m.split("|")[7] for m in kv(room_e, "member")] == ["30", "30"], room_e
+        assert a2_client(lobby, f.mac).room.id == mixed
+        e.send(p6lobby.BYE)
+        f.send(p6lobby.BYE)
+        await asyncio.sleep(0.1)
+        ok += 1
         # a player's room left empty stays EMPTY_ROOM_S, then goes; BYE drops the phone
         c.send(p6lobby.LEAVE)
         c2.send(p6lobby.BYE)

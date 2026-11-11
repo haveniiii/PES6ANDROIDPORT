@@ -11,6 +11,7 @@
 #include <psprecomp/cpu.h>
 #include <psprecomp/hle.h>
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -183,11 +184,41 @@ static void cull_v56(void (*orig)(void)) {
 static void frustum_cull_v56(void) { cull_v56(psp_orig_frustum_cull_v56); }
 static void frustum_cull_pt(void) { cull_v56(psp_orig_frustum_cull_pt); }
 
+/* The match rate (docs/15 §18). The menu's choice is a wish; the rate a match is played at is
+ * the lowest of this console's wish and its WIRELESS opponent's (net.c tells it through
+ * pes6_match_rate_allow_60). It changes only while no match is loaded (game.ovl), so a match
+ * starts and ends at one rate, and both consoles of a WIRELESS match play it at the same one. */
+static int g_want_60;
+static _Atomic int g_allow_60 = 1;
+
 void pes6_match_rate_60(int on) {
-    if (!on || pes6_match_at_60) return;
-    pes6_match_at_60 = 1;
-    psp_add_vblank_task(pes6_sim_force_60);
-    fprintf(stderr, "[rules] match at 60 Hz\n");
+    if (!on || g_want_60) return;
+    g_want_60 = 1;
+    fprintf(stderr, "[rules] match at 60 Hz (the menu's choice; a WIRELESS opponent at 30 brings it to 30)\n");
+}
+int pes6_match_wants_60(void) { return g_want_60; }
+void pes6_match_rate_allow_60(int allow) { atomic_store(&g_allow_60, allow ? 1 : 0); }
+
+/* Back to the PSP's own 30 Hz: what match_set_frame_rate (0x088E6CAC) writes for it, and the EBOOT's
+ * clock table entry. The flip hold the game asks for itself on every match frame. */
+static void sim_restore_30(void) {
+    if (!psp_read32(PES6_MOTION_TABLE)) return;
+    psp_write8(PES6_SIM_FPS, 30);
+    psp_write8(PES6_CLOCK_UNITS, 30);
+    if (psp_read8(PES6_CLOCK_UNIT) == 60) psp_write8(PES6_CLOCK_UNIT, 30);
+    psp_write32(PES6_SPEED_DIVISOR, 0x43000000u);     /* 128.0f = 30 / 60 * 256 */
+    psp_write32(psp_read32(PES6_MOTION_TABLE), 0x40000000u);   /* 2.0f = 60 / 30 */
+}
+
+static void rate_task(void) {
+    const int want = g_want_60 && atomic_load(&g_allow_60);
+    if (want != pes6_match_at_60 && !pes6_game_ovl_loaded()) {
+        pes6_match_at_60 = want;
+        if (!want) sim_restore_30();
+        fprintf(stderr, "[rules] matches now at %d Hz%s\n", want ? 60 : 30,
+                g_want_60 && !want ? " (the WIRELESS opponent plays at 30)" : "");
+    }
+    if (pes6_match_at_60) pes6_sim_force_60();
 }
 
 void pes6_rules_init(const char *io_root) {
@@ -198,6 +229,7 @@ void pes6_rules_init(const char *io_root) {
     const char *ease = getenv("PES6_NET_EASE");
     if (ease && *ease) g_ease_env = atoi(ease);
     psp_add_vblank_task(net_ease_task);
+    psp_add_vblank_task(rate_task);
     const char *sim60 = getenv("PES6_SIM60");
     pes6_match_rate_60(sim60 && *sim60 && *sim60 != '0');      /* docs/18 §5b */
     char path[1024], line[128];

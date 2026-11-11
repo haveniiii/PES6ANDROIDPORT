@@ -4,6 +4,14 @@
 
 #include <stdio.h>
 
+/* The phones' datagrams start with this (net.c); the lobby's room kind too (online.c). One for 30
+ * and 60 Hz: the rate is negotiated per match (docs/15 §18). Before it: "P6N3" / "P6N6". */
+#define PES6_NET_MAGIC "P6N7"
+
+/* The rate of the next WIRELESS match against the opponent of the last accepted challenge:
+ * 0 none (out of WIRELESS, or no challenge yet), 30 or 60. From any thread. */
+int pes6_net_match_rate(void);
+
 /* Register sceWlan / sceNet / sceNetAdhoc* . Call once, after psp_hle_init(). */
 void pes6_net_init(void);
 void pes6_net_report(FILE *out);

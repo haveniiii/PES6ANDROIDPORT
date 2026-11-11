@@ -9,14 +9,14 @@
  *
  * One UDP socket per instance carries everything:
  *
- *   "P6N3" type(1) src-mac(6) ...    ("P6N6" with the match at 60 Hz)
+ *   "P6N7" type(1) src-mac(6) ...    (at 30 and 60 Hz alike: the rate is negotiated, docs/15 §18)
  *     type 1 HELLO   group[8]                      "I exist, in this group"
  *     type 2 PDP     dst-mac(6) stream(4) count(1)
  *                    count x { seq(4) sport(2) dport(2) len(2) sent-ms(4) payload }
  *     type 3 TIMING  count(1) count x trow     the sender's PES6_NET_TIMING rows (see timing_task)
  *     type 4 REPORT  dst-mac(6) span fresh mean most (u16 each)   see send_reports
  *     type 5/6 PUNCH/PONG                      the online lobby's (online.c), never seen here
- *     type 7 CAPS    caps(4)                   what this build does, a bit each (none defined yet; with every HELLO)
+ *     type 7 CAPS    caps(4)                   what this build does and wants, a bit each (CAP_*; with every HELLO)
  *
  * A PDP datagram carries the newest message to that peer and, while it stays
  * small, the previous ones too (oldest first). The receiver drops the sequence
@@ -31,6 +31,11 @@
  * nobody has answered -- to every address of the local /24 one by one, since
  * phones often drop incoming broadcast. The MAC comes from a random id kept in
  * <io root>/net_id, so it is stable per device and differs between devices.
+ *
+ * The match rate (docs/15 §18): each console says in its CAPS the rate its menu asks for. The
+ * peer whose challenge we accepted, or who accepted ours, is the opponent; a match against it
+ * is played at the lower of the two rates, set on both consoles before the match loads
+ * (rules.c changes the rate only while no match is loaded).
  *
  *
  *   PES6_NET_PORT=27600          this instance's UDP port (default 27600)
@@ -331,9 +336,9 @@ static int net_open_locked(void) {
     return 0;
 }
 
-/* "P6N3" at the PSP's 30 Hz, "P6N6" with the match at 60 (docs/18 §5b): a console at the other
- * rate is not seen at all, rather than a match whose two halves run at different speeds. */
-static const char *net_magic(void) { return pes6_match_at_60 ? "P6N6" : "P6N3"; }
+/* One magic for both rates since the rate is negotiated (docs/15 §18). Builds before it said "P6N3"
+ * at 30 Hz and "P6N6" at 60 and are not seen: their console at the other rate would not negotiate. */
+static const char *net_magic(void) { return PES6_NET_MAGIC; }
 
 static size_t header(uint8_t *b, int type) {
     memcpy(b, net_magic(), 4);
@@ -366,7 +371,20 @@ void pes6_net_set_online(int on, const struct sockaddr_in *to, int n) {
     pthread_mutex_unlock(&online_mu);
 }
 
-static uint32_t g_caps;              /* what this build does (CAPS, type 7): no bits defined yet */
+/* CAPS (type 7): what this build does and wants, a bit each. */
+#define CAP_RATE      0x1u           /* negotiates the match rate (docs/15 §18) */
+#define CAP_WANTS_60  0x2u           /* its menu asks for matches at 60 Hz */
+#define CAP_AT_60     0x4u           /* the match it plays now, or its next one, is at 60 Hz */
+static uint32_t caps_now(void) {
+    return CAP_RATE | (pes6_match_wants_60() ? CAP_WANTS_60 : 0) | (pes6_match_at_60 ? CAP_AT_60 : 0);
+}
+
+/* The opponent: the peer of the last accepted challenge, until the game leaves its WIRELESS scene.
+ * Kept past the game's BYE and its ad hoc disconnect: for the match it stops matching, leaves the
+ * group "LOBBY" and joins "GAME<n>" (Mac, 10/11). Under rx_mu. */
+static uint8_t g_opp[6];
+static int g_opp_set;
+static uint32_t g_opp_caps;          /* its last CAPS (0: none seen yet) */
 
 static void send_hello(void) {
     uint8_t b[32 + STATUS_LEN];
@@ -419,7 +437,8 @@ static void send_hello(void) {
     /* Peers already known get it directly too: broadcast may not reach them. And CAPS, to them. */
     uint8_t c[16];
     size_t cn = header(c, 7);
-    for (int k = 0; k < 4; k++) c[cn + k] = (uint8_t)(g_caps >> (8 * k));
+    const uint32_t caps = caps_now();
+    for (int k = 0; k < 4; k++) c[cn + k] = (uint8_t)(caps >> (8 * k));
     cn += 4;
     for (int i = 0; i < MAX_PEERS; i++)
         if (N.peers[i].seen) {
@@ -436,6 +455,19 @@ static peer *find_peer(const uint8_t *mac) {
 
 static int matching_packet(const uint8_t *mac, uint16_t port, const uint8_t *data, size_t len);
 static void matching_tick(uint64_t now);
+
+static pthread_mutex_t rx_mu;
+/* A challenge was accepted, by us or by them: this peer is the opponent (callers hold rx_mu or
+ * run on the game's thread, which is the one that takes it). */
+static void opponent_is(const uint8_t *mac) {
+    const peer *p = find_peer(mac);
+    if (!g_opp_set || memcmp(g_opp, mac, 6))
+        nlog("opponent %02X:%02X:%02X (%s)", mac[3], mac[4], mac[5],
+             !p || !(p->caps & CAP_RATE) ? "its rate not known yet" : p->caps & CAP_WANTS_60 ? "wants 60 Hz" : "plays at 30 Hz");
+    memcpy(g_opp, mac, 6);
+    g_opp_set = 1;
+    g_opp_caps = p ? p->caps : 0;
+}
 
 #define WIRE_EXTRA (28 + 60)        /* IP and UDP headers, and a VPN's (Tailscale's WireGuard) */
 
@@ -738,7 +770,7 @@ static void recv_report(peer *p, const uint8_t *b, size_t n, uint64_t now) {
 static void recv_timing(const uint8_t *b, size_t n);
 int (*pes6_net_tap)(const uint8_t *b, size_t n, const struct sockaddr_in *from);
 static _Atomic uint64_t g_pumped;             /* when net_pump last read the socket */
-static pthread_mutex_t rx_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t rx_mu = PTHREAD_MUTEX_INITIALIZER;   /* declared above opponent_is */
 
 /* The lobby's thread, while the game does not read the socket (the pre-game menu, a paused app):
  * the lobby's datagrams to it, the rest dropped (there is no game to take them). */
@@ -848,6 +880,7 @@ static void net_pump(void) {
             const uint32_t caps = (uint32_t)b[11] | (uint32_t)b[12] << 8 | (uint32_t)b[13] << 16 | (uint32_t)b[14] << 24;
             if (caps != p->caps) nlog("peer %02X:%02X:%02X caps 0x%08X", p->mac[3], p->mac[4], p->mac[5], (unsigned)caps);
             p->caps = caps;
+            if (g_opp_set && !memcmp(g_opp, p->mac, 6)) g_opp_caps = caps;
         } else if (b[4] == 2 && n >= 22) {
             if (memcmp(b + 11, N.mac, 6)) continue;
             const uint32_t stream = (uint32_t)b[17] | (uint32_t)b[18] << 8 | (uint32_t)b[19] << 16 | (uint32_t)b[20] << 24;
@@ -1124,6 +1157,7 @@ static int matching_packet(const uint8_t *mac, uint16_t port, const uint8_t *dat
     case M_ACCEPT:
         if (M.peer[i].state != P_WE_ASKED) break;
         M.peer[i].state = P_JOINED;
+        opponent_is(mac);
         nlog("matching: our request was accepted");
         m_queue(EV_ACCEPT, mac, opt, optlen);
         m_queue(EV_COMPLETE, mac, opt, optlen);
@@ -1131,6 +1165,7 @@ static int matching_packet(const uint8_t *mac, uint16_t port, const uint8_t *dat
         break;
     case M_COMPLETE:
         M.peer[i].state = P_JOINED;
+        opponent_is(mac);
         nlog("matching: connection complete");
         m_queue(EV_COMPLETE, mac, opt, optlen);
         break;
@@ -1227,6 +1262,9 @@ static void hle_MatchingSelectTarget(void) {
         nlog("sceNetAdhocMatchingSelectTarget: accepting");
         m_send(mac, M_ACCEPT, opt, optlen);
         M.peer[i].state = P_JOINED;              /* COMPLETE follows when they confirm */
+        pthread_mutex_lock(&rx_mu);
+        opponent_is(mac);
+        pthread_mutex_unlock(&rx_mu);
         g_local_pad = 1;
     } else {
         nlog("sceNetAdhocMatchingSelectTarget: asking to join");
@@ -1400,6 +1438,43 @@ static void master_watch_task(void) {
     last_flag = flag; last_master = master; last_period = period; last_self = self;
 }
 
+/* The rate of the next match against the opponent (docs/15 §18): the lower of both wishes, sent to
+ * rules.c, which applies it while no match is loaded. Also checks, in the match, that the
+ * opponent says it plays at the same rate. */
+static _Atomic int g_match_rate;
+int pes6_net_match_rate(void) { return atomic_load(&g_match_rate); }
+static void rate_watch_task(void) {
+    const int wireless = psp_read32(PES6_SCENE_STACK) == PES6_SCENE_WIRELESS;
+    pthread_mutex_lock(&rx_mu);
+    if (!wireless) g_opp_set = 0;        /* out of WIRELESS: the menu's rate again */
+    const int set = g_opp_set;
+    const uint32_t caps = g_opp_caps;
+    pthread_mutex_unlock(&rx_mu);
+    const int known = set && (caps & CAP_RATE);
+    const int allow = !set || (known && (caps & CAP_WANTS_60));     /* not known yet: 30 until it is */
+    pes6_match_rate_allow_60(allow);
+    const int rate = !set ? 0 : pes6_match_wants_60() && allow ? 60 : 30;
+    if (rate != atomic_load(&g_match_rate)) {
+        atomic_store(&g_match_rate, rate);
+        if (rate) fprintf(stderr, "[net] the match against the opponent: %d Hz (this console wants %d, the opponent %s)\n",
+                          rate, pes6_match_wants_60() ? 60 : 30,
+                          !known ? "not known yet" : caps & CAP_WANTS_60 ? "60" : "30");
+    }
+    /* Both at one rate in the match: the opponent's CAPS say what it plays at (every 0.5 s). */
+    static uint64_t differs_since;
+    static int said;
+    const int in_match = set && atomic_load(&g_state) == 2;
+    const int differs = in_match && known && !!(caps & CAP_AT_60) != pes6_match_at_60;
+    if (!differs) { differs_since = 0; if (!in_match) said = 0; return; }
+    const uint64_t now = wall_usec();
+    if (!differs_since) differs_since = now;
+    if (!said && now - differs_since > 3000000u) {
+        said = 1;
+        fprintf(stderr, "[net] WARNING: this console plays the match at %d Hz and the opponent at %d\n",
+                pes6_match_at_60 ? 60 : 30, caps & CAP_AT_60 ? 60 : 30);
+    }
+}
+
 void pes6_net_init(void) {
     const char *l = getenv("PES6_NET_LOG");
     N.log = l && *l && *l != '0';
@@ -1450,6 +1525,7 @@ void pes6_net_init(void) {
     t_start = wall_usec();
     psp_add_vblank_task(timing_task);    /* always: its rows also go to the other side */
     psp_add_vblank_task(master_watch_task);
+    psp_add_vblank_task(rate_watch_task);
     /* The player-file name the on-screen keyboard "types" (it has no UI yet):
      * different per device, so two players can tell each other apart. */
     const char *osk = getenv("PES6_OSK_TEXT");

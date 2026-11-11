@@ -125,7 +125,8 @@ los tiros libres en Entrenamiento van bien.
 **Lo medido por paso** en el host se ajusta con `pes6_step_30()` (umbrales del comentarista). El alejamiento
 de cámara ya no depende del paso: decide la altura del ojo (`docs/25` §2b).
 
-**Falta:** opción en el menú, red con mezcla 30/60, repeticiones y HUD medidos a fondo.
+**Falta:** repeticiones y HUD medidos a fondo. (La opción del menú y la red con mezcla 30/60 ya están: la
+mezcla, en `docs/15` §18.)
 
 ## 6. Nivel 1: memoria directa y dónde se va la CPU (iteración 42)
 

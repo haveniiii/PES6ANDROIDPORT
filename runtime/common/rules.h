@@ -14,8 +14,12 @@ void pes6_rules_report(FILE *out);
 void pes6_camera_set_distance(float k);
 
 /* The match at 60 Hz (the launcher's Partido setting, or PES6_SIM60): the game's own 60 fps
- * values every vblank (docs/18 §5b). Turning it on is for the whole run; 0 does nothing. */
+ * values every vblank (docs/18 §5b). The wish is for the whole run; 0 does nothing. */
 void pes6_match_rate_60(int on);
-extern int pes6_match_at_60;          /* 1 once it is on (net.c tells consoles at 60 apart) */
+int pes6_match_wants_60(void);        /* the wish */
+/* 0: the WIRELESS opponent plays at 30, so the next match is at 30 too (net.c, docs/15 §18). */
+void pes6_match_rate_allow_60(int allow);
+extern int pes6_match_at_60;          /* the rate of the match being played or the next one: 1 = 60 Hz.
+                                       * It changes only while no match is loaded. */
 
 #endif

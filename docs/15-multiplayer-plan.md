@@ -404,8 +404,8 @@ Para separar «manda poco» de «se pierde por el aire», `PES6_NET_TIMING` escr
 `tools/net_timing.py` las resume. En el Mac a 30 Hz con `PES6_NET_DROP=5`: 0–1 perdidos de ~6 000, y
 255–333 salvados por las repeticiones.
 
-**A 60 Hz el protocolo es `P6N6`** (`net_magic`, `pes6_match_at_60`): con los teléfonos a 60 en la misma red,
-un par del Mac a 30 no los vio.
+**A 60 Hz el protocolo era `P6N6`** (`net_magic`, `pes6_match_at_60`): con los teléfonos a 60 en la misma red,
+un par del Mac a 30 no los vio. Desde §18 las dos velocidades usan `P6N7` y se ponen de acuerdo.
 **Ojo con `net_pair.sh`:** si hay teléfonos en la red con el juego abierto y el mismo protocolo, entran en el
 lobby de la prueba. Además, el partido necesita las pulsaciones del guion de `regress.sh --net`.
 
@@ -664,3 +664,75 @@ la subida.
 10 s del partido registra `sending N kbit/s (repeats R, buffer B ms)`. En el Mac, el que manda el estado da ~125 kbit/s y
 el otro ~74, con 0 repeticiones. Siguiente: un partido con el Redmi local y otro con el Redmi visitante, para saber quién
 sube más.
+
+## 18. Partidos entre 30 y 60 fps: la velocidad se negocia (10/11)
+
+**Antes:** la velocidad de partido del menú (30/60 fps, `docs/18` §5b) cambiaba el protocolo: `P6N3` a 30 y `P6N6` a 60.
+Una consola a 30 no veía a una a 60, ni en la WiFi ni en una sala del servidor (`docs/41`), que también las separaba.
+Juntarlas sin más no sirve: el juego cuenta en pasos de 1/60 s y a 60 avanza uno por cuadro, a 30 dos. Medido con dos
+bots en el Mac (`build/rate_mismatch/`), A a 60 y B a 30 con el mismo protocolo: el partido de A avanzaba a 0,77 del
+tiempo real y el de B a 1,08. B veía el balón saltar 147 / 48 / 23 veces por minuto (15–40 / 40–100 / 100–1000 unidades),
+contra 99 / 37 / 15 en un partido normal a 30.
+
+**Ahora:** las dos velocidades usan el mismo protocolo, `P6N7` (`PES6_NET_MAGIC`, `net.h`). Cada partido WIRELESS se juega
+a **la velocidad más baja de los dos**: el que eligió 60 baja a 30 contra uno de 30, y vuelve a 60 al salir de WIRELESS.
+Se baja al de 60 y no se sube al de 30 porque el que eligió 30 suele tener un teléfono que no sostiene 60.
+
+### 18.1 Protocolo
+
+- **CAPS (tipo 7)**, con cada HELLO (cada 0,5 s) a cada par conocido: `caps(4)`, little endian.
+  - `0x1 CAP_RATE`: esta versión negocia la velocidad.
+  - `0x2 CAP_WANTS_60`: su menú pide 60.
+  - `0x4 CAP_AT_60`: el partido que juega ahora, o el siguiente, va a 60.
+- **El rival** es el par del último desafío aceptado (`opponent_is`). Se fija al aceptar (`SelectTarget` sobre uno que
+  pidió) o al recibir `ACCEPT`/`COMPLETE`. Lo pone cada consola por su lado, y las dos ven el mismo par. Sigue siendo el
+  rival tras el `BYE` del juego y su `AdhocctlDisconnect`, porque para el partido el juego sale del grupo `LOBBY` y entra
+  en `GAME<n>`. Se olvida al salir de la escena WIRELESS (15).
+- **La decisión** (`rate_watch_task`, cada vblank): con rival, 60 solo si las dos consolas piden 60. Si todavía no
+  llegaron sus CAPS, 30 hasta que lleguen. Como cada lado conoce los dos deseos, los dos llegan al mismo resultado sin
+  más mensajes. Lo comunica a `rules.c` con `pes6_match_rate_allow_60`.
+- **Cuándo cambia** (`rate_task`, `rules.c`): solo **sin partido cargado** (`game.ovl` fuera). Entre el desafío y la
+  carga del partido pasan varios segundos, así que el partido empieza con la velocidad ya puesta. Nunca cambia a mitad de
+  partido. Para volver a 30 escribe lo que `match_set_frame_rate` pone para 30: `fps` 30, paso 2,0, `speed_divisor`
+  128,0 y la tabla de reloj del EBOOT. La espera del *flip* la pide el propio juego en cada cuadro del partido.
+- **Comprobación en el partido:** si durante más de 3 s los CAPS del rival dicen otra velocidad (`CAP_AT_60`), el
+  registro avisa `[net] WARNING: this console plays the match at … and the opponent at …`.
+- **Registro:** `[net] the match against the opponent: 30 Hz (this console wants 60, the opponent 30)` y
+  `[rules] matches now at 30 Hz (the WIRELESS opponent plays at 30)`.
+- **Versiones anteriores:** las APK con `P6N3`/`P6N6` no ven a las nuevas, y al revés: hay que actualizar las dos.
+
+### 18.2 Salas (servidor, `docs/41`)
+
+- **El teléfono:** `HELLO` del cliente lleva `proto=P6N7` y `rate=30|60`, y la página Online muestra la velocidad de cada
+  miembro.
+- **El servidor:** guarda `rate` y lo añade como 8.º campo de `member=` (`…|busy|you|rate`); las APK anteriores no lo
+  leen. Las salas de `P6N7` juntan las dos velocidades.
+- **Al cambiar la velocidad en el menú** con la página Online abierta, el servidor reenvía la sala y los demás la ven al
+  momento. Antes, cambiar la velocidad sacaba al jugador de la sala.
+- **Cómo se ve:** un miembro a otra velocidad sale como `60 fps: partido a 30`, y el texto de la página explica la regla.
+- El error `rate` del servidor ya solo aparece entre una APK vieja y una nueva, y el texto lo dice así.
+- **Falta desplegar** el servidor nuevo en el VPS. El de ahora acepta `P6N7` igual, porque el protocolo es texto libre,
+  pero no muestra la velocidad de cada uno.
+
+### 18.3 Pruebas en el Mac (dos bots, WiFi simulada `PES6_NET_LAG=5,50,5,80`, colchón `auto`)
+
+`NET_B_SIM60=0 BOT=1 tools/net_bench.sh OUTDIR mix:0:auto` (`NET_A_SIM60`/`NET_B_SIM60` en `net_pair.sh` y
+`net_bench.sh`). Con dos instancias el Mac da ~48 vblanks por segundo, las dos por igual.
+
+| | A (menú) | B (menú) | cuadros/s A · B | saltos de jugadores por minuto, lado que corrige (15–40 / 40–100) | bloqueos ≥ 50 ms |
+|---|---|---|---|---|---|
+| sin negociar (`build/rate_mismatch/`) | 60, juega a 60 | 30 | 45,9 · 32,3: partidos a distinto ritmo | 56–63 / 5–6, balón 147 / 48 / 23 | 0 |
+| negociado (`build/rate_mix/`) | 60, **juega a 30** | 30 | 28,0 · 28,3 | 82–102 / 8–11, balón 81 / 40 / 13 | 1 de 50 ms |
+| referencia 30 contra 30 (`build/rate_30/`) | 30 | 30 | 27,8 · 27,7 | 88–97 / 7–8, balón 99 / 37 / 15 | 0 |
+| negociado por el servidor de salas local (`build/rate_lobby/`, hasta 15@12000) | 60, **juega a 30** | 30 | 28,0 · 27,8 | 108 / 4–5 | 0 |
+| 60 contra 60 (`build/rate_60/`, hasta 15@12000) | 60, juega a 60 | 60 | 46,2 · 46,7 | 21–31 / 1–3 | 0 |
+
+Sin negociar, el lado de 30 recibe menos correcciones de jugadores, porque el otro manda a otro ritmo. Pero su balón
+salta casi el doble y los dos partidos avanzan a distinta velocidad. Negociado, el partido es como uno normal de 30 contra
+30: los dos lados avanzan igual y los saltos quedan dentro de la variación entre pasadas. Ninguna de las dos consolas se
+congela. Por el servidor (`NET_LOBBY=127.0.0.1:27700`, `server/p6lobby.py` local), las dos entraron en la misma sala
+(`L90526-P6N7-original`) y jugaron directo; el servidor registró el partido. Dos consolas que piden 60 siguen a 60.
+
+**Sin probar:** que la de 60 vuelva a 60 contra la CPU tras un partido WIRELESS a 30, aunque el código lo hace al salir de
+la escena 15; la página Online con una velocidad cambiada mientras está abierta (el servidor lo cubre en
+`test_p6lobby.py`); dos teléfonos.

@@ -16,7 +16,8 @@ python3 server/p6lobby.py --port 27700 --lobby "Chile 1" --lobby "Chile 2"
 python3 server/test_p6lobby.py        # the server's own tests (localhost)
 ```
 
-The `--lobby` rooms always exist, once for each game version and match rate. Players can create
+The `--lobby` rooms always exist, once for each game version (and app protocol: phones at 30 and 60 fps share them
+since P6N7 and play at the lower rate, docs/15 §18). Players can create
 rooms of their own too, optionally with a password. A player's room that is left empty stays 3 minutes
 (`EMPTY_ROOM_S`), so its maker can come back and a friend can still find it.
 

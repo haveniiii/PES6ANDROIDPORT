@@ -9,6 +9,8 @@
 #   NET_A_RATE / NET_B_RATE   a limited uplink for one side (PES6_NET_RATE; B is the host)
 #   PES6_NET_REDUNDANCY, PES6_NET_PEER_TIMING (0 by default here: no rows sent, as in play) pass through
 #   STOP=15@80000 SECS=1700  a longer match (default 15@20000, 900 s)
+#   NET_A_SIM60=0 / NET_B_SIM60=0   that side's menu at 30 fps (default both at 60): the two agree on
+#                       the lower rate (docs/15 §18)
 #   BOT=1               both sides play the match (runtime/desktop/bot.c: passes, shots, pressure)
 #                       instead of the random walk
 #
@@ -46,7 +48,7 @@ for cfg in "$@"; do
     IFS=: read -r name ease buf <<< "$cfg"
     rm -rf "${OUT:?}/$name"
     PES6_SIM60=1 PES6_NET_EASE="$ease" PES6_NET_BUFFER="$buf" PES6_NET_LAG="${NET_LAG:-5,50,5,80}" \
-        PES6_NET_PEER_TIMING="${PES6_NET_PEER_TIMING:-0}" NET_BOT="${BOT:-}" NET_ARGS=--gpu NET_TIMING=1 NET_A_INPUT="$A" NET_B_INPUT="$B" NET_SECONDS=${SECS:-900} \
+        PES6_NET_PEER_TIMING="${PES6_NET_PEER_TIMING:-0}" NET_A_SIM60="${NET_A_SIM60:-1}" NET_B_SIM60="${NET_B_SIM60:-1}" NET_BOT="${BOT:-}" NET_ARGS=--gpu NET_TIMING=1 NET_A_INPUT="$A" NET_B_INPUT="$B" NET_SECONDS=${SECS:-900} \
         tools/net_pair.sh "$OUT/$name" ${STOP:-15@20000} > "$OUT/$name.out" 2>&1 || true
     restore
     echo "### $name (ease $ease, buffer $buf)"
