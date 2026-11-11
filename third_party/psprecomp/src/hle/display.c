@@ -189,3 +189,9 @@ void psp_display_register(void) {
     psp_hle_register(0xDBA6C4C4, "sceDisplay", "sceDisplayGetFramePerSec",    hle_GetFramePerSec);
     psp_hle_register(0xEEDA2E54, "sceDisplay", "sceDisplayGetFrameBuf",       hle_GetFrameBuf);
 }
+
+/* PES6PORT: the frame counters, for the rollback study's snapshot (docs/27 §5). */
+void psp_display_counters(uint64_t *vblanks, uint64_t *flips, int set) {
+    if (set) { g_vblank_count = *vblanks; g_flips = *flips; }
+    else     { *vblanks = g_vblank_count; *flips = g_flips; }
+}

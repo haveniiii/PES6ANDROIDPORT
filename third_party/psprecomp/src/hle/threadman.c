@@ -988,3 +988,89 @@ void psp_threadman_register(void) {
     psp_hle_register(0x6652B8CA, "ThreadManForUser", "sceKernelSetAlarm",  hle_SetAlarm);
     psp_hle_register(0x7E65B999, "ThreadManForUser", "sceKernelCancelAlarm", hle_CancelAlarm);
 }
+
+/* ---- PES6PORT: kernel snapshot for the rollback study (docs/27 §5) ----------------------------
+ * Taken and put back only from the vblank hook/tasks, where no guest thread is running: each one
+ * sits in yield_to_base on its own host stack. A snapshot is the kernel tables, the clock and the
+ * used part of every host stack (from its saved stack pointer to its top), so a thread put back
+ * resumes in the call it was in at the snapshot. It fails (-1) if a thread was created or deleted
+ * in between (its host stack is another one). */
+static uintptr_t th_host_sp(const psp_thread *t) {
+#if defined(HOST_CTX_ASM)
+    return (uintptr_t)t->uctx.sp;
+#elif defined(__APPLE__) && defined(__aarch64__)
+    return (uintptr_t)t->uctx.uc_mcontext->__ss.__sp;
+#else
+    (void)t;
+    return 0;
+#endif
+}
+
+typedef struct {
+    psp_thread th[MAX_THREADS];
+    psp_sema sema[MAX_SEMAS];
+    psp_evflag flag[MAX_FLAGS];
+    psp_callback cb[MAX_CBS];
+    psp_alarm alarm[MAX_ALARMS];
+    psp_subintr vbi[MAX_SUBINTR];
+    uint64_t now, next_vblank;
+    uint32_t next_uid, intr_stack;
+    psp_cpu_state cpu;
+} th_snap_head;
+
+size_t psp_threadman_snapshot(void *buf, size_t cap, size_t *stack_bytes) {
+    size_t need = sizeof(th_snap_head), stacks = 0;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        const psp_thread *t = &g_thread[i];
+        if (!t->used || !t->host_stack) continue;
+        const uintptr_t sp = th_host_sp(t), top = (uintptr_t)t->host_stack + TH_HOST_STACK;
+        if (sp && sp < top) stacks += top - sp;
+    }
+    need += stacks;
+    if (stack_bytes) *stack_bytes = stacks;
+    if (!buf || cap < need) return need;
+    th_snap_head *h = (th_snap_head *)buf;
+    memcpy(h->th, g_thread, sizeof g_thread);
+    memcpy(h->sema, g_sema, sizeof g_sema);
+    memcpy(h->flag, g_flag, sizeof g_flag);
+    memcpy(h->cb, g_cb, sizeof g_cb);
+    memcpy(h->alarm, g_alarm, sizeof g_alarm);
+    memcpy(h->vbi, g_vblank_intr, sizeof g_vblank_intr);
+    h->now = g_now; h->next_vblank = g_next_vblank; h->next_uid = g_next_uid; h->intr_stack = g_intr_stack;
+    h->cpu = psp_cpu;
+    uint8_t *p = (uint8_t *)(h + 1);
+    for (int i = 0; i < MAX_THREADS; i++) {
+        const psp_thread *t = &g_thread[i];
+        if (!t->used || !t->host_stack) continue;
+        const uintptr_t sp = th_host_sp(t), top = (uintptr_t)t->host_stack + TH_HOST_STACK;
+        if (!sp || sp >= top) continue;
+        memcpy(p, (void *)sp, top - sp);
+        p += top - sp;
+    }
+    return need;
+}
+
+int psp_threadman_restore(const void *buf) {
+    const th_snap_head *h = (const th_snap_head *)buf;
+    if (g_current) return -1;
+    for (int i = 0; i < MAX_THREADS; i++)
+        if (h->th[i].used != g_thread[i].used || h->th[i].host_stack != g_thread[i].host_stack) return -1;
+    memcpy(g_thread, h->th, sizeof g_thread);
+    memcpy(g_sema, h->sema, sizeof g_sema);
+    memcpy(g_flag, h->flag, sizeof g_flag);
+    memcpy(g_cb, h->cb, sizeof g_cb);
+    memcpy(g_alarm, h->alarm, sizeof g_alarm);
+    memcpy(g_vblank_intr, h->vbi, sizeof g_vblank_intr);
+    g_now = h->now; g_next_vblank = h->next_vblank; g_next_uid = h->next_uid; g_intr_stack = h->intr_stack;
+    psp_cpu = h->cpu;
+    const uint8_t *p = (const uint8_t *)(h + 1);
+    for (int i = 0; i < MAX_THREADS; i++) {
+        const psp_thread *t = &g_thread[i];
+        if (!t->used || !t->host_stack) continue;
+        const uintptr_t sp = th_host_sp(t), top = (uintptr_t)t->host_stack + TH_HOST_STACK;
+        if (!sp || sp >= top) continue;
+        memcpy((void *)sp, p, top - sp);
+        p += top - sp;
+    }
+    return 0;
+}

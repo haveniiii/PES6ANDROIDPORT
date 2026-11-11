@@ -64,6 +64,7 @@ add_executable(pes6
     overlays.c
     input.c
     bot.c
+    rbprobe.c
     ../common/ge.c
     ../common/mpeg.c
     ../common/atrac.c

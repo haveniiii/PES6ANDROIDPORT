@@ -16,6 +16,7 @@
 #include <psprecomp/mem.h>
 #include <psprecomp/cpu.h>
 
+#include "rbprobe.h"
 #include "lang.h"
 #include "overlays.h"
 #include "../common/commentary.h"
@@ -398,6 +399,7 @@ static void setup_commentary(void) {
 }
 
 static void setup_probes(void) {
+    pes6_rb_setup();                       /* PES6_RB: rollback study, docs/27 §5 */
     const char *w = getenv("PES6_WATCH");
     const char *m = getenv("PES6_WATCH_MAX");
     const char *ww = getenv("PES6_WATCH_WRITE");

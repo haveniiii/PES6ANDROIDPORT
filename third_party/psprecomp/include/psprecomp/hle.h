@@ -123,6 +123,7 @@ uint64_t psp_display_vblanks(void);
 uint32_t psp_display_framebuffer(void);
 uint64_t psp_display_flips(void);      /* times the displayed buffer changed */
 uint32_t psp_display_stride(void);     /* pixels per row of the displayed buffer */
+void     psp_display_counters(uint64_t *vblanks, uint64_t *flips, int set);   /* PES6PORT, docs/27 §5 */
 int      psp_display_format(void);     /* 0=565 1=5551 2=4444 3=8888 */
 
 void psp_ge_init(void);
@@ -169,6 +170,12 @@ void psp_threadman_reset(void);
  * module_start only creates and starts the first thread, which is then
  * dispatched here. */
 void psp_threadman_run(void);
+/* PES6PORT, rollback study (docs/27 §5): kernel tables, clock and used host stacks, from the vblank
+ * hook only. snapshot returns the size it needs (and writes nothing if buf is NULL or too small). */
+#include <stddef.h>
+size_t psp_threadman_snapshot(void *buf, size_t cap, size_t *stack_bytes);
+int    psp_threadman_restore(const void *buf);
+size_t psp_sas_state(void *buf, int set);   /* the SAS mixer's state (docs/27 §5) */
 
 /* Virtual guest clock in microseconds (deterministic; see threadman.c), and a
  * timed block of the current guest thread against it. HLE calls that block on

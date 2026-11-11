@@ -500,3 +500,21 @@ void psp_sas_register(void) {
     psp_hle_register(0xD5A229C9, "sceSasCore", "__sceSasRevEVOL",           hle_accept);
     psp_hle_register(0xF983B186, "sceSasCore", "__sceSasRevVON",            hle_accept);
 }
+
+/* PES6PORT: the mixer's state, for the rollback study's snapshot (docs/27 §5): copies it to or
+ * from buf when it is not NULL and returns its size. */
+size_t psp_sas_state(void *buf, int set) {
+    const size_t n = sizeof g_voice + sizeof g_frames_rendered + sizeof g_samples_nonzero;
+    if (!buf) return n;
+    uint8_t *p = (uint8_t *)buf;
+    if (set) {
+        memcpy(g_voice, p, sizeof g_voice); p += sizeof g_voice;
+        memcpy(&g_frames_rendered, p, 8); p += 8;
+        memcpy(&g_samples_nonzero, p, 8);
+    } else {
+        memcpy(p, g_voice, sizeof g_voice); p += sizeof g_voice;
+        memcpy(p, &g_frames_rendered, 8); p += 8;
+        memcpy(p, &g_samples_nonzero, 8);
+    }
+    return n;
+}

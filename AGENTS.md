@@ -505,6 +505,17 @@ HELLO y un 8.º campo en `member=` (13/13 pruebas), **sin desplegar**. La págin
 Probado en el Mac con bots y WiFi simulada (`NET_A_SIM60`/`NET_B_SIM60`): negociado se ve como un 30 contra 30, también por
 el servidor local. Falta: APK y dos teléfonos.
 
+**10/11 — factibilidad del rollback (`docs/27` §4–§10, sin commit):** pedido del usuario, solo estudio. Sonda
+`PES6_RB=dirty|replay` (`runtime/desktop/rbprobe.c`; toolkit: `psp_threadman_snapshot/restore`, `psp_display_counters`,
+`psp_sas_state`). Medido en el Mac:
+- ~375 KB de RAM sucia por paso; 1,6 MB en todo el partido;
+- re-simular un paso cuesta 0,73 ms sin dibujar, y el partido en sí es el ~30 % de eso;
+- rebobinar y re-simular 256 cuadros deja el partido idéntico bit a bit; solo difiere el sonido;
+- el tiempo real cambia la duración de las paradas, así que hace falta un reloj virtual de paso fijo.
+
+Veredicto con teléfonos estimados (sin adb): viable en el Redmi a 30 Hz (~100 ms); a 60 Hz el Moto llega justo
+(~33 ms) y el Redmi no (~17 ms) salvo que la re-simulación se salte el dibujo (~50 ms).
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.
