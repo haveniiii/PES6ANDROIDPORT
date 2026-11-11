@@ -38,3 +38,8 @@ PES6_HOOK(frustum_cull_pt, "EBOOT.elf", 0x08813934u, "renderer: frustum test of 
 /* camera: the view matrix from the camera's eye (0x089F64E0) and target (0x089F64F0) with
  * mat4_look_at, each frame (camera_frame); rules.c moves the eye back for a wider match camera */
 PES6_HOOK(camera_build_view, "EBOOT.elf", 0x08839348u, "camera: view matrix from eye and target")
+
+/* main loop, after scene_dispatch: camera_frame, then the frame callback list (sky, players,
+ * shadows, 2D layers, HUD) and the screen fade. The draw half of a step; a rollback re-simulation
+ * skips it (runtime/desktop/rbprobe.c PES6_RB_SKIPDRAW, docs/27 §11) */
+PES6_HOOK(frame_callbacks_run, "EBOOT.elf", 0x0880497Cu, "main loop: camera and the frame's draw callbacks")

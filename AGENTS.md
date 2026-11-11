@@ -516,6 +516,16 @@ el servidor local. Falta: APK y dos teléfonos.
 Veredicto con teléfonos estimados (sin adb): viable en el Redmi a 30 Hz (~100 ms); a 60 Hz el Moto llega justo
 (~33 ms) y el Redmi no (~17 ms) salvo que la re-simulación se salte el dibujo (~50 ms).
 
+**11/11 — re-simular sin dibujar (`docs/27` §11, commit al terminar):** gancho `frame_callbacks_run` (`pes6_hooks.h`).
+`PES6_RB_SKIPDRAW=1|2` y `PES6_RB_TAIL` en la sonda. **`=2`:** salta 9 callbacks de dibujo y cambia `render_pass_sky` por
+`sky_lite`, que solo copia `+0x2C → +0x30` en los objetos de `render_draw_list(1|2)` (el partido lee `+0x30`).
+- **Verificado:** partido idéntico en 40 de 40 comprobaciones (30 y 60 Hz, ventanas tempranas y tardías, encadenadas).
+- **Tienen que correr:** `render_pass_shadows` (matriz de mundo y esqueleto de cada modelo; el partido lee los dos), los
+  efectos, `layer2d_update`, `shadows_frame`, la cámara y `charas_render_prepare`.
+- **Ahorro:** el paso queda en ×0,48–0,64 a 60 Hz (antes ×0,76–0,85). Moto a 60 Hz: 4 cuadros. Redmi a 60 Hz: 1,9
+  estimados, o sea 1, y 2 solo en la mejor ventana.
+- **Herramientas de búsqueda:** `PES6_RB_UNDO`/`_KEEP`/`_WHO`/`_PASSDIFF`.
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.

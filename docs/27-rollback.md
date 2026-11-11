@@ -247,12 +247,17 @@ Presupuesto por cuadro = duración del cuadro − cuadro normal − guardar (con
 (sistema, calor, la espera al GE). Ese presupuesto, dividido por lo que cuesta re-simular un paso, da los pasos
 que caben. Cifras de teléfono: estimaciones de §6–§7.
 
-| | cuadro | normal | guardar + reponer | cabe para re-simular | **re-simulando tal cual** | saltando el dibujo |
+| | cuadro | normal | guardar + reponer | cabe para re-simular | **re-simulando tal cual** | saltando el dibujo (§11, `=2`, ×0,55) |
 |---|---|---|---|---|---|---|
-| Redmi, 60 Hz | 16,7 ms | 7,4 | 0,7 | 6,6 ms | **1 cuadro ≈ 17 ms** (0 en un mal cuadro) | 3 ≈ 50 ms |
-| Moto, 60 Hz | 16,7 ms | 4,6 | 0,5 | 9,6 ms | **2 cuadros ≈ 33 ms** | 6 ≈ 100 ms |
-| Redmi, 30 Hz | 33,3 ms | 7,9 | 0,7 | 22,7 ms | **3 pasos ≈ 100 ms** | 10 ≈ 330 ms |
-| Moto, 30 Hz | 33,3 ms | 4,9 | 0,5 | 25,9 ms | **6 pasos ≈ 200 ms** | 18 ≈ 600 ms |
+| Redmi, 60 Hz | 16,7 ms | 7,4 | 0,7 | 6,6 ms | **1 cuadro ≈ 17 ms** (0 en un mal cuadro) | 1 ≈ 17 ms (1,9; 2 con ×0,52 o menos) |
+| Moto, 60 Hz | 16,7 ms | 4,6 | 0,5 | 9,6 ms | **2 cuadros ≈ 33 ms** | 4 ≈ 67 ms |
+| Redmi, 30 Hz | 33,3 ms | 7,9 | 0,7 | 22,7 ms | **3 pasos ≈ 100 ms** | 6 ≈ 200 ms |
+| Moto, 30 Hz | 33,3 ms | 4,9 | 0,5 | 25,9 ms | **6 pasos ≈ 200 ms** | 11 ≈ 367 ms |
+
+La última columna usa lo medido en §11 con `PES6_RB_SKIPDRAW=2`: el paso re-simulado cuesta 0,48–0,64 del normal a
+60 Hz (×0,55 en la tabla) y 0,40–0,70 a 30 Hz (×0,57). En el Redmi baja de ~6,4 a ~3,5 ms, y en el Moto de ~4,0 a
+~2,2 ms. Para que el Redmi a 60 Hz llegue a 2 cuadros hace falta ≤3,3 ms (×0,52). Solo una de las tres ventanas
+medidas llega (×0,48).
 
 Con un factor de Geekbench (~5,6×) el Redmi a 60 Hz llegaría a 2 cuadros (33 ms). La banda razonable es de 0 a 2.
 
@@ -308,9 +313,11 @@ fijo desde la carga, para llegar al saque con la misma RAM (§8.2). La netlib de
 - **El Redmi a 60 Hz no es viable tal cual:** aguanta ~1 cuadro, y 0 en un cuadro malo.
 
 **Qué haría falta para que aguante a 60 Hz en el Redmi, por orden:**
-1. **Re-simular sin la parte de dibujo del paso.** El cálculo del partido es el ~30 % del paso. Bastaría un gancho que
-   salte el armado del dibujo (cámara, recorte, matrices, listas) en los pasos re-simulados. Daría ~3 cuadros (~50 ms).
-   Primero hay que comprobar con `PES6_RB=replay` que saltarlo no cambia el partido.
+1. **Re-simular sin la parte de dibujo del paso. Hecho y medido (§11):** el partido no cambia y el paso baja a
+   ×0,48–0,64 a 60 Hz. El Moto a 60 Hz pasa de 2 a 4 cuadros. El Redmi a 60 Hz queda en el borde (1,9 cuadros
+   estimados): llega a 2 solo si el teléfono se comporta como la mejor ventana del Mac. Lo que queda en el paso es
+   la simulación, la matriz y el esqueleto de cada modelo (`render_pass_shadows`, que el partido lee), la cámara
+   y los efectos.
 2. **Retraso de entrada de 2–3 cuadros** (33–50 ms): con 3 cuadros de rollback cubre hasta el p99 de internet. Sigue
    siendo la mitad o menos de lo que siente hoy la otra consola.
 3. **Barrera de escritura en el emisor** en vez de copiar el conjunto fijo: −0,4 ms por cuadro.
@@ -318,3 +325,94 @@ fijo desde la carga, para llegar al saque con la misma RAM (§8.2). La netlib de
    por medidas. Es lo primero antes de decidir.
 
 Requisito en todos los casos: reloj virtual de paso fijo en el partido y sonido fuera del rebobinado (§8.1–8.2).
+
+## 11. Re-simular sin dibujar: el gancho, medido (11/11)
+
+**El gancho.** `frame_callbacks_run` (EBOOT `0x0880497C`) es la mitad del paso que sigue a `scene_dispatch`. Hace
+lo siguiente:
+- `camera_frame`;
+- la lista de callbacks del cuadro (cabeza `0x089D6528`; nodo: `[1]` siguiente, `[2]` función; 41 entradas en el
+  partido);
+- `frame_callback_empty`;
+- `screen_fade_apply_color`.
+
+Es `PES6_HOOK(frame_callbacks_run, …)` en `pes6_hooks.h`. La sonda (`rbprobe.c`, `skip_draw`) la rehace en C,
+igual que el juego, y deja fuera las funciones elegidas. Sin saltar nada (`PES6_RB_SKIPDRAW=DEADBEEF`) da el mismo
+partido que el código del juego.
+
+**La prueba.** `PES6_RB=replay` con:
+- `PES6_RB_SKIPDRAW=1|2`: la segunda pasada salta el dibujo en sus K pasos (conjuntos abajo);
+- `PES6_RB_TAIL=M`: después, M cuadros normales.
+
+Se compara el estado del partido contra la primera pasada, tras los K pasos y tras la cola: jugadores, globales
+`0x08A2F0D0–0x08A30158`, balón, estadísticas de equipo, fases y `match_rand`. El sonido y las animaciones de dibujo
+quedan fuera.
+
+```bash
+PES6_VERSION=original PES6_RB=replay PES6_RB_K=8,32,64,128,200,256 PES6_RB_TAIL=240 PES6_RB_SKIPDRAW=2 \
+  PES6_GE_NODRAW=1 PES6_STOP_AT=8@4400 tools/ref_match.sh          # y con PES6_SIM60=1
+```
+
+**Qué se puede saltar.** Dos conjuntos:
+- `PES6_RB_SKIPDRAW=1`: `render_frame_begin` (`0x088165CC`), `render_pass_world` (`0x08826758`) y
+  `layer2d_draw_a/b/c` (`0x0882E854`, `0x0882E8B8`, `0x0882E8E4`);
+- **`PES6_RB_SKIPDRAW=2`:** lo anterior, más `draw2d_update_all` (`0x0886995C`), `ui3d_frame_if_ready`
+  (`0x08886E24`), `ball_shadow_update` (`0x088E4910`) y `charas_visibility_update` (`0x088E4B3C`). Además,
+  `render_pass_sky` (`0x0882663C`) se cambia por `sky_lite`.
+
+**Qué necesita el partido del dibujo** (hallado el 11/11; corrige lo que decía aquí antes):
+- **`render_pass_sky`** (el nombre engaña): son `render_draw_list(1)` y `(2)`. Recorren los objetos de esas listas
+  (`scene_stack[9 + lista]`, siguiente en `+0x130`, activo si el byte `+0` no es 0). En cada objeto activo llaman a
+  `+0x120`, copian **`+0x2C` en `+0x30`**, dibujan y llaman a `+0x124`. El partido lee `+0x30`. `sky_lite`
+  (`rbprobe.c`) hace solo la copia.
+- **`render_pass_shadows`** (el nombre también engaña): para cada objeto de las listas 0–3 calcula su **matriz de
+  mundo** (`+0x50`) desde la rotación y la posición (`+0xD0`). Si tiene modelo, actualiza su **esqueleto**
+  (`0x08812198`, `0x088278F4`). El partido lee las dos cosas: saltar solo el esqueleto (con dos ganchos de prueba,
+  ya quitados) cambió el partido a 30 Hz con K = 64. Tiene que correr entera.
+- **`render_pass_effects`, `layer2d_update` y `shadows_frame`:** en una ventana sola el partido no cambia sin
+  ellas. Pero dejan estado que lee un rebobinado posterior: en corridas encadenadas, el partido cambió más
+  adelante (30 Hz, K = 200; un byte en `0x08A2FF53` tras 8@5063). Tienen que correr.
+- **`camera_frame`, `charas_render_prepare`, `render_frame_counter` y los fundidos** (`menu_fade_step`,
+  `screen_fade_frame`): saltarlos cambia el partido (los dos últimos, solo a 60 Hz).
+- `0x08A2F66C` (`setpiece_ball_spot`) **no** lo escriben esas pasadas: es una variable temporal que la simulación
+  reescribe varias veces por cuadro. Antes aparecía como causa porque se miraba el estado final ya divergido.
+
+**Cómo se halló.** Herramientas de la sonda, solo en el segundo pase:
+- `PES6_RB_UNDO=<fn,…>` corre esas funciones y después devuelve la RAM a como estaba, salvo los rangos de
+  `PES6_RB_KEEP=<lo-hi,…>`. Correr y deshacer dio la misma divergencia que saltar: la dependencia está en la RAM.
+- Partiendo la RAM en cuartos con `KEEP` (cuatro corridas en paralelo; se sigue por la que da idéntico, en una
+  ventana limpia con `PES6_RB_FROM`) se llega a los bytes que el partido lee.
+- `PES6_RB_WHO=1` dice qué función de la lista escribe `KEEP[0]`, y con qué valores.
+- `PES6_RB_PASSDIFF=<fn>` lista lo que cambia esa función en sus primeras llamadas.
+- `PES6_WATCH_WRITE` necesita el build `-DPSP_MEM_FAST=OFF` y no ve los guardados de la VFPU (`sv.q`).
+
+Al buscar hay que usar una sola ventana, desde un estado limpio (`PES6_RB_FROM`). En una corrida con varias
+ventanas, cada una arranca del estado que dejó la anterior re-simulada, y eso mezcla causas. Lo que vale al final
+es la corrida encadenada, porque en un rollback real también se re-simula sobre cuadros re-simulados.
+
+**Verificación de `=2`** (partido idéntico tras los pasos y tras 240 cuadros de cola; 40 de 40):
+- 30 Hz: K = 8, 32, 64, 128, 200, 256 encadenadas; y desde 8@4500: K = 32, 64, 128, 256, 256;
+- 60 Hz: K = 8, 32, 128, 256; y desde 8@4500: K = 32, 64, 128, 256, 256.
+
+**Cuánto se gana** (Mac, CPU del hilo del juego por paso re-simulado, sin el hash de la sonda, una corrida sola,
+ventanas K = 64, 256 y 256; normal / saltando):
+
+| | `=1` | `=2` |
+|---|---|---|
+| 30 Hz | 588/379, 452/361, 383/299 µs (×0,64–0,80) | 586/236, 453/272, 438/308 µs (**×0,40–0,70**) |
+| 60 Hz | 1 018/776, 838/710, 970/815 µs (×0,76–0,85) | 973/467, 859/551, 988/528 µs (**×0,48–0,64**) |
+| todo `frame_callbacks_run` (no vale) | | ~×0,5 |
+
+El paso normal varía de una corrida a otra en la misma ventana (586–754 µs a 30 Hz con K = 64). La razón dentro
+de una misma corrida es la cifra fiable.
+
+**En teléfonos (§9):**
+- Moto a 60 Hz: de 2 a 4 cuadros (~67 ms).
+- Redmi a 60 Hz: ~3,5 ms por paso con 6,6 ms de presupuesto, o sea 1,9 cuadros. **Sigue en 1 salvo que rinda como
+  la mejor ventana** (×0,48 → 2 cuadros).
+- Redmi a 30 Hz: 6 pasos (~200 ms).
+
+**Qué queda en el paso:** la simulación (`scene_dispatch`), `frame_systems_update`, la cámara, las matrices y los
+esqueletos de los modelos, los efectos y la actualización de capas 2D. Para bajar más:
+- separar dentro de `render_pass_shadows` la matriz y el esqueleto de lo que solo dibuja;
+- o medir en el teléfono antes. La razón de ahorro puede no ser la misma en ARM con otra caché.
