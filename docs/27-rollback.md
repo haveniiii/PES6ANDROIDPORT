@@ -468,3 +468,42 @@ en el mismo hilo. En el teléfono el GE va en el suyo, así que sus números no 
   reloj real (`psp_threadman_set_realtime(1)`), y §8.2 ya mostró que el tiempo real cambia el partido. Es el reloj
   virtual de paso fijo que §8 pide; lo siguiente es probar la sonda en el teléfono con el reloj virtual durante
   las dos pasadas.
+
+### 12.1 La divergencia a 60 Hz: tres causas, arregladas (15/11)
+
+El 60 Hz del teléfono divergía en 3 de 4 ventanas. Reproducido en el Mac y separado en tres causas:
+
+1. **El reloj real.** Con tiempo real (`psp_threadman_set_realtime(1)`: Android y la ventana) la hora del juego sigue al
+   reloj del anfitrión, y la segunda pasada, más rápida sin dibujo, ve otras horas. En el Mac, con ventana a 60 Hz,
+   diverge en 4 de 4. La sonda pone el reloj virtual desde la foto hasta el final de la segunda pasada y luego vuelve al
+   real (`psp_threadman_realtime()`, nuevo en el toolkit). Con `PES6_RB_REALTIME=1` se mantiene el reloj del anfitrión.
+   Un rollback de verdad necesita lo mismo: el partido en reloj virtual de paso fijo (§8.2).
+2. **Estado de las reglas de 60 Hz fuera de la RAM** (`rules.c`): `g_power_carry` (la fracción de potencia de tiro que
+   pasa de un paso al siguiente) y la historia de pulsaciones de R de `command_r2_window`. La primera pasada los cambia y
+   la foto no los devolvía. La ventana 8@1575 divergía incluso sin saltarse el dibujo, desde el primer vblank, y solo si
+   alguien jugaba. Por eso a 30 Hz, donde esas reglas no actúan, salía idéntico. Ahora están en `pes6_rules_state()` y van
+   en la foto. Todo estado del anfitrión que el partido lea tiene que ir en la foto.
+3. **`ball_shadow_update` (0x088E4910) escribe `0x08A2F66C`**, y el paso siguiente lo lee antes de reescribirlo.
+   Saltarla dejaba una diferencia pasajera que luego se corregía. Sale de `PES6_RB_SKIPDRAW=2`, que queda con 9 llamadas
+   saltadas.
+
+También van en la foto los tiempos de los canales de `sceAudio` (`pes6_audio_timeline`). No eran la causa, pero son hora
+del juego fuera de la RAM. La sonda imprime ahora el vblank en que el partido se separa («the match parts after N
+vblank(s)») y los bytes que difieren, y `PES6_RB_PAD=0` quita su mando. Descartados: la forma en que el GE entrega sus
+avisos al juego cuando va en su hilo (probado, no cambia nada) y el `sceCtrl` del toolkit.
+
+**Verificación.** En el Mac, 20 de 20 ventanas idénticas y sin diferencias pasajeras:
+- sin ventana, a 60 y a 30 Hz, K = 8, 32, 64, 128, 256, 64, 64;
+- con ventana en tiempo real y el GE en su hilo, 6 × K = 64.
+
+Regresión 9/9 PASS. **En el Redmi (`build/phone_rb/20261115-203820/`): idéntico en 4 de 4 a 60 Hz y en 4 de 4 a 30 Hz.**
+
+| Redmi, con `ball_shadow_update` | 30 Hz | 60 Hz |
+|---|---|---|
+| paso normal | 6,3 ms | 5,1 ms |
+| paso re-simulado (media; peor ventana) | 3,9; 4,0 ms | 2,9; 3,3 ms (×0,58) |
+| guardar + reponer | 0,16 + 0,14 ms | 0,13 + 0,11 ms |
+| **rollback que cabe** | **6 pasos ≈ 200 ms** | **3 cuadros ≈ 50 ms** (2 en la peor ventana) |
+
+El paso normal varía entre corridas: en la medición anterior dio 3,8 ms y 4 cuadros. Lo fiable es una banda de 3 a 4
+cuadros a 60 Hz.

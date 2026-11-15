@@ -14,6 +14,9 @@
  *                 are compared after the K steps and again after PES6_RB_TAIL more normal vblanks
  *                 (default 0), which must bring the drawing state back (docs/27 §11).
  * PES6_RB=dirty,replay  the one, then the other (tools/phone_rollback.sh).
+ * Replay runs both passes on the virtual clock, also where the host plays in real time (Android,
+ * the window): with the wall clock a faster second pass sees other times and the match diverges
+ * (docs/27 §8.2, §12). PES6_RB_REALTIME=1 keeps the host's clock, to see that.
  * The vblank task runs on the scheduler's stack with every guest thread parked, so the snapshot is
  * whole. */
 #include "rbprobe.h"
@@ -21,6 +24,8 @@
 #include "pes6_addrs.h"
 #include "pes6_game.h"
 #include "ge.h"
+#include "audio.h"
+#include "rules.h"
 
 #include <psprecomp/hle.h>
 #include <psprecomp/mem.h>
@@ -181,6 +186,8 @@ static void *g_snap_k;
 static size_t g_snap_k_cap;
 static uint64_t g_snap_vb, g_snap_fl;
 static void *g_snap_sas;
+static uint64_t g_snap_audio[8];   /* sceAudio channels' timeline */
+static uint8_t g_snap_rules[256];   /* the 60 Hz rules' carried state (rules.c) */
 static int g_with_sas = 1;
 static uint64_t g_hash1[512], g_hash2[512];
 static uint8_t *g_k_ram;            /* first pass, after its K steps */
@@ -189,14 +196,15 @@ static double g_cpu[2], g_cpu_at;   /* game-thread CPU over the K steps, per pas
 extern void (*psp_hook_frame_callbacks_run)(void);
 /* Frame callbacks a re-simulated step can leave out (docs/27 §11), checked with PES6_RB_TAIL:
  * =1: render_frame_begin, render_pass_world, layer2d_draw_a/b/c;
- * =2: those, render_pass_sky as sky_lite, draw2d_update_all, ui3d_frame_if_ready, ball_shadow_update
- *     and charas_visibility_update.
- * Must run: camera_frame, charas_render_prepare, render_pass_shadows (object matrices and skeletons,
+ * =2: those, render_pass_sky as sky_lite, draw2d_update_all, ui3d_frame_if_ready and
+ *     charas_visibility_update.
+ * Must run: camera_frame, charas_render_prepare, ball_shadow_update (writes 0x08A2F66C, which the
+ * next step reads before rewriting it: docs/27 §12), render_pass_shadows (object matrices and skeletons,
  * which the match reads), render_pass_effects, layer2d_update and shadows_frame (state later steps
  * read), render_frame_counter and the fades (60 Hz). =<hex,...|cam>: skip exactly those
  * (PES6_RB_SKYLITE=1: render_pass_sky as sky_lite). */
 static uint32_t g_skip_fn[64] = { 0x088165CCu, 0x08826758u, 0x0882E854u, 0x0882E8B8u, 0x0882E8E4u,
-                                  0x0882663Cu, 0x0886995Cu, 0x08886E24u, 0x088E4910u, 0x088E4B3Cu };
+                                  0x0882663Cu, 0x0886995Cu, 0x08886E24u, 0x088E4B3Cu };
 static int g_nskip, g_sky_lite;
 static double g_hash_cpu;           /* CPU spent hashing, left out of the step cost */
 
@@ -260,6 +268,7 @@ static void skip_draw(void) {
     call(0x088209B4u);                                    /* screen_fade_apply_color */
 }
 static int g_k[16], g_nk, g_ki;
+static int g_rt_host, g_keep_rt;   /* the host played in real time; PES6_RB_REALTIME=1 */
 static int g_phase, g_left, g_pos, g_gap;   /* phase 0 wait, 1 first pass, 2 second pass */
 static double g_restore_us;
 
@@ -280,6 +289,8 @@ static void snapshot(void) {
     if (need > g_snap_k_cap) { free(g_snap_k); g_snap_k = malloc(need); g_snap_k_cap = need; }
     psp_threadman_snapshot(g_snap_k, g_snap_k_cap, NULL);
     psp_display_counters(&g_snap_vb, &g_snap_fl, 0);
+    pes6_audio_timeline(g_snap_audio, 0);
+    pes6_rules_state(g_snap_rules, 0);
     if (g_with_sas) { if (!g_snap_sas) g_snap_sas = malloc(psp_sas_state(NULL, 0)); psp_sas_state(g_snap_sas, 0); }
 }
 
@@ -289,6 +300,8 @@ static int restore(void) {
     if (psp_threadman_restore(g_snap_k) < 0) return -1;
     memcpy(psp_mem.ram, g_snap_ram, PSP_RAM_SIZE);
     psp_display_counters(&g_snap_vb, &g_snap_fl, 1);
+    pes6_audio_timeline(g_snap_audio, 1);
+    pes6_rules_state(g_snap_rules, 1);
     if (g_with_sas) psp_sas_state(g_snap_sas, 1);
     g_restore_us = now_us() - t0;
     return 0;
@@ -317,6 +330,21 @@ static void sim_diff(int k, const uint8_t *ref, const char *when) {
         if (n) at += snprintf(buf + at, sizeof buf - at, " %s %u B (first 0x%08X);", r[i].name, n, first);
     }
     fprintf(stderr, "[rb] K=%d: match state %s: %s%s\n", k, when, total ? "DIFFERS" : "identical", total ? buf : "");
+}
+
+/* The match alone (players, globals, ball), per vblank: where the passes part, sound aside. */
+static uint64_t g_sim1[512], g_sim2[512];
+#define SIM_LEN (0x08A30158u - PES6_PLAYERS)
+static uint8_t *g_simram;            /* pass 1's players + globals, every vblank (where they part) */
+static uint64_t sim_hash(void) {
+    const uint32_t ball = psp_read32(PES6_BALL_PTR);
+    const uint32_t at[2] = { PES6_PLAYERS, ball }, len[2] = { 0x08A30158u - PES6_PLAYERS, 0x100 };
+    uint64_t h = 1469598103934665603ull;
+    for (int r = 0; r < 2; r++) {
+        if (at[r] < PSP_RAM_BASE || at[r] + len[r] > PSP_RAM_BASE + PSP_RAM_SIZE) continue;
+        for (uint32_t b = 0; b < len[r]; b++) h = (h ^ psp_mem.ram[at[r] - PSP_RAM_BASE + b]) * 1099511628211ull;
+    }
+    return h;
 }
 
 static void compare_end(int k, const uint8_t *ref, const char *when) {
@@ -355,6 +383,8 @@ static void replay_step(void) {
             for (uint32_t n = psp_read32(0x089D652Cu), i = 0; n != 0x089D6528u && i < 64; n = psp_read32(n + 4), i++)
                 fprintf(stderr, "[rb] callback %u: node 0x%08X fn 0x%08X\n", i, n, psp_read32(n + 8));
         }
+        g_rt_host = psp_threadman_realtime();
+        if (!g_keep_rt) psp_threadman_set_realtime(0);   /* both passes on the same virtual time */
         snapshot();
         g_phase = 1; g_left = g_k[g_ki] + g_tail; g_pos = 0; g_cpu_at = cpu_us(); g_hash_cpu = 0;
         fprintf(stderr, "[rb] K=%d: snapshot at 8@%u (vblank %llu)\n", g_k[g_ki], pes6_scene_frame(),
@@ -363,15 +393,25 @@ static void replay_step(void) {
     }
     const int k = g_k[g_ki];
     if (g_phase == 1) {
+        g_sim1[g_pos] = sim_hash();
+        if (!g_simram) g_simram = malloc((size_t)512 * SIM_LEN);
+        if (g_simram) memcpy(g_simram + (size_t)g_pos * SIM_LEN, psp_mem.ram + (PES6_PLAYERS - PSP_RAM_BASE), SIM_LEN);
         g_hash1[g_pos++] = ram_hash();
         if (g_pos == k) { memcpy(g_k_ram, psp_mem.ram, PSP_RAM_SIZE); g_cpu[0] = cpu_us() - g_cpu_at - g_hash_cpu; }
         if (--g_left > 0) return;
         memcpy(g_end_ram, psp_mem.ram, PSP_RAM_SIZE);
-        if (restore() < 0) { fprintf(stderr, "[rb] restore refused (threads changed)\n"); g_mode = 0; return; }
+        if (restore() < 0) { fprintf(stderr, "[rb] restore refused (threads changed)\n"); g_mode = 0; if (g_rt_host) psp_threadman_set_realtime(1); return; }
         g_phase = 2; g_left = k + g_tail; g_pos = 0;
         if (g_skip) psp_hook_frame_callbacks_run = skip_draw;
         g_cpu_at = cpu_us(); g_hash_cpu = 0;
         return;
+    }
+    g_sim2[g_pos] = sim_hash();
+    if (g_simram && g_sim2[g_pos] != g_sim1[g_pos] && (g_pos == 0 || g_sim2[g_pos - 1] == g_sim1[g_pos - 1])) {
+        const uint8_t *a = g_simram + (size_t)g_pos * SIM_LEN, *b = psp_mem.ram + (PES6_PLAYERS - PSP_RAM_BASE);
+        int shown = 0;
+        for (uint32_t i = 0; i < SIM_LEN && shown < 12; i++)
+            if (a[i] != b[i]) { fprintf(stderr, "[rb] vblank %d: 0x%08X %02X>%02X\n", g_pos + 1, PES6_PLAYERS + i, a[i], b[i]); shown++; }
     }
     g_hash2[g_pos] = ram_hash();
     g_pos++;
@@ -387,10 +427,15 @@ static void replay_step(void) {
     for (int i = 0; i < k + g_tail; i++) if (g_hash1[i] != g_hash2[i]) { first = i; break; }
     fprintf(stderr, "[rb] K=%d: restore %.0f us; %s", k, g_restore_us,
             first < 0 ? "identical every vblank\n" : "");
+    int sim = -1;
+    for (int i = 0; i < k + g_tail; i++) if (g_sim1[i] != g_sim2[i]) { sim = i; break; }
+    if (sim >= 0) fprintf(stderr, "[rb] K=%d: the match parts after %d vblank(s) (8@%u)\n", k, sim + 1,
+                          pes6_scene_frame() - (unsigned)(k + g_tail) + (unsigned)sim + 1u);
     if (first >= 0) {
         fprintf(stderr, "first difference after %d vblank(s); end state:\n", first + 1);
         compare_end(k, g_end_ram, g_tail ? "after the tail" : "after the second pass");
     }
+    if (g_rt_host) psp_threadman_set_realtime(1);
     g_phase = 0; g_ki++; g_gap = 60;
 }
 
@@ -400,7 +445,9 @@ static void rb_task(void) {
 }
 
 uint32_t pes6_rb_pad(uint32_t *analog) {
-    if (!g_mode || !in_match()) return 0;   /* dirty too: on the phone there is no one at the pad */
+    static int off = -1;                   /* PES6_RB_PAD=0: nobody at the pad */
+    if (off < 0) off = getenv("PES6_RB_PAD") && *getenv("PES6_RB_PAD") == '0';
+    if (off || !g_mode || !in_match()) return 0;   /* dirty too: on the phone there is no one at the pad */
     uint32_t h = (pes6_scene_frame() / 6u + 1u) * 2654435761u;
     h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
     *analog = (h & 0xFFu) | ((h >> 8) & 0xFFu) << 8;
@@ -409,6 +456,7 @@ uint32_t pes6_rb_pad(uint32_t *analog) {
 }
 
 void pes6_rb_setup(void) {
+    if (pes6_rules_state(NULL, 0) > sizeof g_snap_rules) { fprintf(stderr, "[rb] rules state too big\n"); return; }
     const char *m = getenv("PES6_RB");
     if (!m || !*m) return;
     g_then_replay = !strcmp(m, "dirty,replay");
@@ -430,7 +478,7 @@ void pes6_rb_setup(void) {
     if ((e = getenv("PES6_RB_SKIPDRAW")) && *e && strcmp(e, "0")) {
         g_skip = 1;
         if (!strcmp(e, "1")) g_nskip = 5;
-        else if (!strcmp(e, "2")) g_nskip = 10, g_sky_lite = 1;
+        else if (!strcmp(e, "2")) g_nskip = 9, g_sky_lite = 1;
         else
             for (char *end; *e && g_nskip < 64; e = *end ? end + 1 : end) {
                 g_skip_fn[g_nskip++] = !strncmp(e, "cam", 3) ? (end = (char *)e + 3, 0x08839A4Cu)
@@ -439,6 +487,7 @@ void pes6_rb_setup(void) {
             }
     }
     g_who = getenv("PES6_RB_WHO") != NULL;
+    g_keep_rt = getenv("PES6_RB_REALTIME") && atoi(getenv("PES6_RB_REALTIME"));
     if (getenv("PES6_RB_SKYLITE")) g_sky_lite = 1;   /* with a list naming 0882663C: sky_lite in its place */
     if ((e = getenv("PES6_RB_PASSDIFF"))) g_watch_fn = (uint32_t)strtoul(e, NULL, 16);
     for (e = getenv("PES6_RB_UNDO"); e && *e && g_nundo < 8; e++) {

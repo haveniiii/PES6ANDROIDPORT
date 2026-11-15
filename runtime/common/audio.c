@@ -55,6 +55,10 @@ static atomic_int g_sink;
 static uint64_t g_dropped;
 static atomic_uint g_underruns;
 
+void pes6_audio_timeline(uint64_t *busy, int set) {
+    for (int i = 0; i < CHANNELS; i++) { if (set) g_ch[i].busy_until = busy[i]; else busy[i] = g_ch[i].busy_until; }
+}
+
 static channel *ch_arg(void) {
     uint32_t i = psp_arg(0);
     return i < CHANNELS && g_ch[i].reserved ? &g_ch[i] : NULL;

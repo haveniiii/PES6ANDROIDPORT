@@ -19,6 +19,10 @@ void pes6_match_rate_60(int on);
 int pes6_match_wants_60(void);        /* the wish */
 /* 0: the WIRELESS opponent plays at 30, so the next match is at 30 too (net.c, docs/15 §18). */
 void pes6_match_rate_allow_60(int allow);
+/* What the 60 Hz rules carry from step to step outside the game's RAM (shot power left over, R
+ * presses): a rollback snapshot must save (set 0) and put it back (set 1) with the RAM, or the
+ * re-simulation parts from the match (docs/27 §12). Returns its size; buf NULL just asks. */
+size_t pes6_rules_state(void *buf, int set);
 extern int pes6_match_at_60;          /* the rate of the match being played or the next one: 1 = 60 Hz.
                                        * It changes only while no match is loaded. */
 

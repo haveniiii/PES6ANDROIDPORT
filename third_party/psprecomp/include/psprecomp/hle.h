@@ -183,6 +183,7 @@ size_t psp_sas_state(void *buf, int set);   /* the SAS mixer's state (docs/27 §
  * the latter so threads are paced relative to each other. */
 uint64_t psp_time_usec(void);
 void psp_threadman_set_realtime(int on);      /* guest time follows the host clock */
+int psp_threadman_realtime(void);             /* is it on? */
 /* Real time only: wait for the next deadline busy instead of asleep. A phone whose governor lowers
  * its clocks when the cores sleep keeps them up this way, at the cost of power. */
 void psp_threadman_set_idle_spin(int on);

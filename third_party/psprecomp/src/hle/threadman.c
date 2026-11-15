@@ -188,6 +188,8 @@ void psp_threadman_set_realtime(int on) {
     g_rt = on != 0;
 }
 
+int psp_threadman_realtime(void) { return g_rt; }
+
 uint64_t psp_time_usec(void) {
     if (g_rt) { rt_sync(); return g_now; }
     return g_now++;

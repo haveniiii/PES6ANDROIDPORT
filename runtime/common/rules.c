@@ -219,6 +219,7 @@ static void sim_restore_30(void) {
  * throw-in parts (they also answer "kick now" once full, which the scaled power no longer is); -1 none. */
 static float g_shot_fill = 1.0f;
 static float g_power_carry[23];
+static uint32_t g_r_hist[8];          /* command_r2_window: each pad's R presses, a bit a step */
 static void power_scaled(void (*orig)(void), int charging) {
     const uint32_t ch = psp_cpu.r[4];
     const unsigned i = (ch - PES6_PLAYERS) / 0x240u;
@@ -250,7 +251,7 @@ static void command_r2_window(void) {
     const uint32_t ch = psp_cpu.r[4];
     const unsigned pad = psp_read8(ch + 0x47);
     psp_orig_chara_command_from_pad_r2();
-    static uint32_t hist[8];
+    uint32_t *hist = g_r_hist;
     if (pad > 7) return;
     const int r = !psp_read8(PAD_INPUT_OFF) && (psp_read32(USER_PAD_PRESSED + pad * 0x18u) & 0x800);
     hist[pad] = hist[pad] << 1 | (uint32_t)r;
@@ -259,6 +260,15 @@ static void command_r2_window(void) {
         const uint32_t w = psp_read32(a);
         if (w & 0x800) psp_write32(a, w - 0x600);
     }
+}
+
+size_t pes6_rules_state(void *buf, int set) {
+    const size_t n = sizeof g_power_carry + sizeof g_r_hist;
+    if (!buf) return n;
+    uint8_t *b = buf;
+    if (set) { memcpy(g_power_carry, b, sizeof g_power_carry); memcpy(g_r_hist, b + sizeof g_power_carry, sizeof g_r_hist); }
+    else { memcpy(b, g_power_carry, sizeof g_power_carry); memcpy(b + sizeof g_power_carry, g_r_hist, sizeof g_r_hist); }
+    return n;
 }
 
 /* Fades in the match (docs/42 §5): screen_fade's second argument is a speed (of 256 a step). The
