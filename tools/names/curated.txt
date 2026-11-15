@@ -118,7 +118,12 @@ game.ovl:08EE5028 chara_act_00_idle       # rec+0x16 == 0x00
 game.ovl:08EE6AC0 chara_act_45_aerial_duel       # rec+0x16 == 0x45
 game.ovl:08EE78E8 chara_act_18_stoppage_react       # rec+0x16 == 0x18
 game.ovl:08EE9A80 chara_act_12       # rec+0x16 == 0x12
-game.ovl:08EF1850 chara_act_04_FB_shoot # rec+0x16 == 0x04, 0xFB
+game.ovl:08EF1850 chara_act_04_FB_shoot # rec+0x16 == 0x04, 0xFB; while the kick winds up, square held adds 0x10 a step to the power rec+0x4D (0x80 full)
+game.ovl:08E1C0A0 shot_charge_queued     # once a step (flag +0x238 & 0x200): a shot queued with square held adds 0x20 to rec+0x4D, capped at 0x80
+game.ovl:08E08740 setpiece_charge        # corner / free kick: +8 or +0x10 to rec+0x4D a step while the button is held; 1 = kick (released or full)
+game.ovl:08FF8270 throw_in_charge        # long throw-in: +0x10 to rec+0x4D a step with circle; 0 = throw (released or full)
+game.ovl:08DBB530 chara_command_from_pad_r2  # +0xB0/+0xB4 from the pad block; R pressed twice in the last 16 steps (history 0x08A2FCCC + pad*0x40) turns into R2 (0x200)
+game.ovl:08EED288 shot_kick              # (chara, ?, angle, ?) the shot: power >> 3 and the sheet -> ball +0x50 speed, +0x74 lift
 game.ovl:08F01618 chara_act_0D_44_tackle # rec+0x16 == 0x0D, 0x44
 game.ovl:08F0D9A8 chara_act_0C_prepare_receive       # rec+0x16 == 0x0C
 game.ovl:08F33280 chara_act_0E_pass       # rec+0x16 == 0x0E

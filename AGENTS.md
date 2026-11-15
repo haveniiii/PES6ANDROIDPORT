@@ -543,6 +543,19 @@ imprime los tres números: cuánto cuesta un paso, cuánto cuesta guardar y repo
 rollback caben a 30 y a 60 Hz. Instala la APK de la sonda si el teléfono tiene otra, y devuelve el `env.txt`.
 Resultados en `build/phone_rb/latest/`.
 
+**15/11 — el disparo (`docs/42`, sin commit):** la potencia (`registro+0x4D`, 0x80 llena) sube una cantidad fija por
+paso con □ pulsado, así que a 60 Hz un toque de 133 ms daba potencia llena (0x80) en vez de la mitad (0x40, la PSP). Ganchos
+`shot_charge_queued` y `chara_act_04_FB_shoot` + `shot_power_scaled` en `rules.c`: a 60 Hz la subida va a la mitad;
+`PES6_SHOT_FILL=k` la escala a cualquier velocidad. A 30 Hz la barra es la de la PSP (~230 ms a llena). Regresión PASS. Falta
+decidir con el usuario la velocidad de la barra a 30 Hz y probar en el teléfono.
+Revisión de todo lo que cambia a 60 Hz (`docs/42` §4): además del tiro, la misma carga por paso en ○, córner, tiro
+libre y saque de banda (`setpiece_charge`, `throw_in_charge`) y la ventana de R×2 = R2 (`chara_command_from_pad_r2`, 16
+pasos), arreglados en `rules.c`; `settle` de Flow escalado; el bot juega al mismo ritmo real a 60. Sin aclarar: paradas más
+cortas (fase 4.14, estado 0xFD), la IA sin balón corre más, golpeos con la misma potencia.
+Aclarado después (`docs/42` §5): 33 fundidos con velocidad fija (gancho `screen_fade`, por dirección de retorno; la imagen
+de game.ovl empieza en carga + 0x80), arreglados; la IA y los golpeos son iguales (`PES6_SHOT_LOG=1`); quedan ~27 lecturas de
+la predicción del balón con índice fijo (el receptor llega 67 ms tarde) y esperas cortas sin escalar en 0xFD.
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.

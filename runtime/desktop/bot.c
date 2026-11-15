@@ -17,6 +17,7 @@
 #include "net.h"
 #include "pes6_addrs.h"
 #include "pes6_game.h"
+#include "rules.h"
 
 #include <psprecomp/mem.h>
 
@@ -94,7 +95,7 @@ static uint32_t stick(float dx, float dz) {
     return (uint32_t)(lx < 0 ? 0 : lx > 255 ? 255 : lx) | (uint32_t)(ly < 0 ? 0 : ly > 255 ? 255 : ly) << 8;
 }
 
-uint32_t pes6_bot_step(uint32_t *analog) {
+static uint32_t bot_step(uint32_t *analog) {
     const uint32_t scene = pes6_scene();
     if (scene != PES6_SCENE_MATCH && scene != PES6_SCENE_TRAINING && scene != PES6_SCENE_WIRELESS) return 0;
     /* the pause menu is left alone; half time's menu (a pause in phase 12) is answered below */
@@ -183,5 +184,18 @@ uint32_t pes6_bot_step(uint32_t *analog) {
             fprintf(stderr, "[bot] %-7s chara %2d team %d st %02X at %6.0f %6.0f vel %5.1f %5.1f ball %6.0f %6.0f goal %6.0f stick %04X b %04X\n",
                     mode, i, team, st, px, pz, c->vel.x, c->vel.z, bx, bz, gx, *analog, b);
     }
+    return b;
+}
+
+/* The bot counts pad reads; at 60 Hz it repeats each decision for a second read, so it plays at
+ * the same real pace as at 30 (the 30/60 comparisons, docs/42). */
+uint32_t pes6_bot_step(uint32_t *analog) {
+    static int odd, moved;
+    static uint32_t b, a;
+    if (pes6_match_at_60 && (odd ^= 1) == 0) { if (moved) *analog = a; return b; }
+    const uint32_t keep = *analog;
+    b = bot_step(analog);
+    moved = *analog != keep;
+    a = *analog;
     return b;
 }

@@ -18,6 +18,23 @@
 PES6_HOOK(offside_check, "game.ovl", 0x08FD4E08u, "referee: offside; returns != 0 when it whistled")
 PES6_HOOK(foul_check, "game.ovl", 0x08FAEC18u, "referee: fouls; returns != 0 when it whistled")
 
+/* the shot's power (rec+0x4D, 0x80 full) grows by a fixed amount each step square is held: 0x20 while
+ * the shot is queued, 0x10 while the kick winds up. Per step, so at 60 Hz twice as fast (rules.c) */
+PES6_HOOK(shot_charge_queued, "game.ovl", 0x08E1C0A0u, "shot: power while the shot is queued")
+PES6_HOOK(chara_act_04_FB_shoot, "game.ovl", 0x08EF1850u, "shot: the kick's action state (power while winding up)")
+/* the same power at a corner or free kick (+8 or +0x10 a step; v0 = 1 kick now: released or full) and
+ * a long throw-in (+0x10 a step with circle; v0 = 0 throw now) */
+PES6_HOOK(setpiece_charge, "game.ovl", 0x08E08740u, "set piece: power while the button is held")
+PES6_HOOK(throw_in_charge, "game.ovl", 0x08FF8270u, "throw-in: power while circle is held")
+/* the controlled player's buttons from his pad, once a step: R pressed twice within the last 16 steps
+ * (0x08A2FCCC + pad * 0x40) becomes R2 (controlled shot, slow dribble). 16 steps: 533 ms at 30 Hz, 267 at 60 */
+PES6_HOOK(chara_command_from_pad_r2, "game.ovl", 0x08DBB530u, "pad: the player's buttons; R twice in 16 steps = R2")
+/* the shot's kick: power rec+0x4D, motion and sheet in, the ball's speed (+0x50) and lift (+0x74) out */
+PES6_HOOK(shot_kick, "game.ovl", 0x08EED288u, "shot: the kick (ball speed and lift from the power)")
+/* (dir, speed): the screen fades by `speed` of 256 each step. The match passes 0x3C0 / clock_unit (the same
+ * time at 60 Hz) or a fixed speed from 33 places (twice as fast at 60 Hz; rules.c) */
+PES6_HOOK(screen_fade, "EBOOT.elf", 0x08820788u, "screen: fade in or out by a speed a step")
+
 /* renderer: draws one model instance (model, ?, 4x4 matrix) in a display list of its own,
  * run there and then; faces.c knows from it which player is being drawn */
 PES6_HOOK(model_render, "EBOOT.elf", 0x08816418u, "renderer: one model instance")

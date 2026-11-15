@@ -14,6 +14,7 @@
 #include "pes6_addrs.h"
 #include "pes6_game.h"
 #include "net.h"
+#include "rules.h"
 
 enum {
     B_SELECT = 0x0001, B_UP = 0x0010, B_RIGHT = 0x0020, B_DOWN = 0x0040, B_LEFT = 0x0080, B_L = 0x0100, B_R = 0x0200,
@@ -406,7 +407,7 @@ pes6_flow_context pes6_flow_context_now(int dashing, int select, int face) {
     flow_log(c, shown);
     if (c == FLOW_CONTEXTS) c = shown == FLOW_OFF ? FLOW_WAIT : shown;
     if (c != seen) { seen = c; steady = 0; }
-    if (++steady >= settle(shown, c)) shown = c;
+    if (++steady >= settle(shown, c) * (pes6_match_at_60 ? 2 : 1)) shown = c;   /* the same time at 60 Hz */
     return select && shown != FLOW_OFF ? FLOW_TACTICS : shown;
 }
 
