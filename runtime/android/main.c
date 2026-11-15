@@ -37,6 +37,7 @@
 #include <psprecomp/mem.h>
 
 #include "../desktop/overlays.h"
+#include "../desktop/rbprobe.h"
 #include "atrac.h"
 #include "audio.h"
 #include "commentary.h"
@@ -747,7 +748,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
             const float px = AMotionEvent_getX(ev, i), py = AMotionEvent_getY(ev, i);
             /* A finger that lands on the stick's side while there is no stick
              * creates one, centred where it touched. */
-            const float nx = px / (float)(g_w ? g_w : 1), ny = py / (float)(g_h ? g_h : 1);
+            const float nx = px / (float)(g_w ? g_w : 1);
             int on_button = 0;
             for (int k = 0; k < MAX_FINGERS; k++) on_button |= g_fing[k].used && g_fing[k].down && g_fing[k].id == id;
             const int fixed = pro_center_buttons(px, py) || pdpad_hit(px, py);
@@ -2693,7 +2694,8 @@ void android_main(struct android_app *app) {
         pes6_ge_gl_configure(scale, cs->quality == QUALITY_HIGH, cs->quality != QUALITY_LOW);
         setup_commentary(dir, mods);
         pes6_camera_set_distance(pes6_settings_camera_distance(cs));
-        pes6_match_rate_60(cs->rate == MATCH_60);          /* Partido: 60 fps (docs/18 §5b) */
+        const char *sim60 = getenv("PES6_SIM60");            /* env.txt PES6_SIM60=0|1 overrides the menu */
+        pes6_match_rate_60(sim60 && *sim60 ? *sim60 != '0' : cs->rate == MATCH_60);   /* Partido: 60 fps (docs/18 §5b) */
         /* the match in the screen's shape (docs/31), unless the player keeps the PSP's 16:9
          * (Pantalla); env.txt PES6_WIDE=0 keeps it 480:272 too */
         const char *wide = getenv("PES6_WIDE");
@@ -2704,6 +2706,7 @@ void android_main(struct android_app *app) {
             LOGI("widescreen match: %dx%d", g_w, g_h);
         }
     }
+    pes6_rb_setup();                            /* PES6_RB: rollback study (docs/27 §12) */
     audio_start();
     psp_threadman_set_realtime(1);
     psp_set_vblank_hook(on_vblank);

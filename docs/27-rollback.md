@@ -92,7 +92,7 @@ en su propia pila del anfitrión. Para el estudio el toolkit tiene tres piezas n
 | `PES6_RB=replay` | foto en 8@F, K vblanks con hash de la RAM en cada uno, vuelta a la foto, los mismos K con el mismo mando y comparación vblank a vblank y, al final, página a página. `PES6_RB_K=1,2,…`, `PES6_RB_SAS=0` deja fuera el mezclador y `PES6_RB_BYTES=1` muestra los bytes |
 
 En `replay`, el mando sale solo del estado del juego (`pes6_rb_pad`: un hash del cuadro de la escena), así
-que la segunda pasada recibe exactamente las mismas entradas. En `dirty` juega el bot (`PES6_BOT`).
+que la segunda pasada recibe exactamente las mismas entradas. En `dirty` juega ese mismo mando y, si está, el bot (`PES6_BOT`).
 
 ```bash
 PES6_VERSION=original PES6_BOT=1 PES6_RB=dirty PES6_RB_FROM=1200 PES6_RB_FRAMES=3600 \
@@ -416,3 +416,37 @@ de una misma corrida es la cifra fiable.
 esqueletos de los modelos, los efectos y la actualización de capas 2D. Para bajar más:
 - separar dentro de `render_pass_shadows` la matriz y el esqueleto de lo que solo dibuja;
 - o medir en el teléfono antes. La razón de ahorro puede no ser la misma en ARM con otra caché.
+
+## 12. Medir en el teléfono (15/11, listo, sin medir aún)
+
+La sonda corre también en Android: `runtime/android/CMakeLists.txt` compila `rbprobe.c`, y `main.c` llama a
+`pes6_rb_setup()`. Sin `PES6_RB` no hace nada. Cambios en la sonda:
+- `PES6_RB=dirty,replay`: primero `dirty` (`PES6_RB_FRAMES` vblanks) y luego `replay`, en la misma partida;
+- el mando de `pes6_rb_pad` juega también en `dirty`, porque en el teléfono no hay nadie en el mando;
+- antes de la foto y de reponerla espera a que el hilo del GE termine sus listas (`pes6_ge_call`). En escritorio,
+  sin GE en su hilo, eso no hace nada.
+
+En Android, `PES6_SIM60=0|1` del `env.txt` manda sobre la fila «Partido 30/60 fps» del menú.
+
+**`tools/phone_rollback.sh`** lo hace todo:
+1. busca el teléfono, explica qué activar si no hay ninguno y nunca usa el Redmi 15C;
+2. instala `build/android/PES6-1.3.0-rb1.apk` si el teléfono tiene otra APK (`install -r`, misma firma: conserva
+   la ISO y el guardado);
+3. guarda el `env.txt` y lo devuelve al final, también con Ctrl-C;
+4. corre dos partidos guionizados (el guion de `tools/ref_match.sh`, versión Original), a 30 y a 60 Hz, con
+   `PES6_RB=dirty,replay`, `PES6_RB_K=8,32,64,64`, `PES6_RB_SKIPDRAW=2` y `PES6_SPIN=0`. Este último hace falta
+   porque el giro entre cuadros contaría como CPU del hilo del juego;
+5. se trae los logs y `tools/rb_report.py` saca los números.
+
+Resultados en `build/phone_rb/<fecha>/`. `tools/phone_rollback.sh analyze <30.log> <60.log>` analiza logs que ya
+estén en el Mac.
+
+**Los tres números** (fórmula de §9, todo medido en el teléfono):
+- el paso normal (CPU del hilo del juego, primera pasada dibujando) y el re-simulado sin dibujar;
+- guardar = copiar las páginas cambiadas por paso (`dirty`), y reponer = la unión de 16 vblanks a la velocidad
+  de la reposición de 32 MB medida;
+- cuadros = (cuadro − normal − guardar − reponer − 2 ms) / paso re-simulado, con la media y con la peor ventana.
+
+**Prueba en el Mac** (los mismos ajustes, `build/rb/combo30.log` y `combo60.log`): el partido queda idéntico en
+6 de 6 ventanas. El paso «normal» incluye allí el rasterizado por software (8–9 ms), porque sin ventana el GE va
+en el mismo hilo. En el teléfono el GE va en el suyo, así que sus números no se comparan con estos.

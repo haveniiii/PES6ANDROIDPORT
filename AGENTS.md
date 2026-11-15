@@ -526,6 +526,23 @@ Veredicto con teléfonos estimados (sin adb): viable en el Redmi a 30 Hz (~100 m
   estimados, o sea 1, y 2 solo en la mejor ventana.
 - **Herramientas de búsqueda:** `PES6_RB_UNDO`/`_KEEP`/`_WHO`/`_PASSDIFF`.
 
+**15/11 — medir el rollback en el Redmi (`docs/27` §12) — RETOMAR AQUÍ:** la sonda corre en Android y la APK de
+prueba `build/android/PES6-1.3.0-rb1.apk` (iso, release, misma firma) está compilada, **sin instalar**. Falta solo
+correrlo con el teléfono. **Pasos para el usuario:**
+1. En el Redmi Note 13 (no el 15C): misma WiFi que el Mac, y en Ajustes > Ajustes adicionales > Opciones de
+   desarrollador, activar **Depuración inalámbrica**.
+2. En el Mac, desde la carpeta del proyecto, un solo comando:
+   ```bash
+   tools/phone_rollback.sh
+   ```
+3. Dejar el teléfono desbloqueado, con la pantalla encendida y sin tocarlo, unos 8 minutos. La app se abre sola y
+   juega dos partidos guionizados, uno a 30 y otro a 60 Hz.
+
+Si el Mac no ve el teléfono, el script dice qué hacer (vincular con código, `adb connect`) y termina. Al final
+imprime los tres números: cuánto cuesta un paso, cuánto cuesta guardar y reponer el estado, y cuántos cuadros de
+rollback caben a 30 y a 60 Hz. Instala la APK de la sonda si el teléfono tiene otra, y devuelve el `env.txt`.
+Resultados en `build/phone_rb/latest/`.
+
 **Infraestructura genérica que queda (iteraciones 33–35):**
 - **Reemplazo de texturas en el GE** (`runtime/common/ge.c` §3b): nombre = hash de los texels,
   `mods/<mod>/textures/<hash>.pam`, `PES6_TEX_DUMP=dir` para volcar.

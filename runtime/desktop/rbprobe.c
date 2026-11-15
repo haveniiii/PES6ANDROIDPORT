@@ -1,4 +1,4 @@
-/* PES6PORT — rollback study probe (docs/27 §5). Desktop only; nothing runs unless PES6_RB is set.
+/* PES6PORT — rollback study probe (docs/27 §5, §12). Desktop and Android; nothing runs unless PES6_RB is set.
  *
  * PES6_RB=dirty   from PES6_RB_FROM (8@F, default 8@1200) for PES6_RB_FRAMES vblanks (default 1800):
  *                 every vblank, which 4 KB pages and 64 B lines of the 32 MB of guest RAM changed,
@@ -13,12 +13,14 @@
  *                 (frame_callbacks_run, pes6_hooks.h), as a rollback re-simulation would; the pages
  *                 are compared after the K steps and again after PES6_RB_TAIL more normal vblanks
  *                 (default 0), which must bring the drawing state back (docs/27 §11).
+ * PES6_RB=dirty,replay  the one, then the other (tools/phone_rollback.sh).
  * The vblank task runs on the scheduler's stack with every guest thread parked, so the snapshot is
  * whole. */
 #include "rbprobe.h"
 
 #include "pes6_addrs.h"
 #include "pes6_game.h"
+#include "ge.h"
 
 #include <psprecomp/hle.h>
 #include <psprecomp/mem.h>
@@ -34,7 +36,8 @@
 #define NPAGES (PSP_RAM_SIZE / PAGE)
 #define LINE 64u
 
-static int g_mode;                 /* 1 dirty, 2 replay */
+static int g_mode, g_then_replay;  /* 1 dirty, 2 replay */
+static void ge_idle(void) {}       /* pes6_ge_call(ge_idle): the GE thread done with every list (Android) */
 static uint32_t g_from = 1200, g_frames = 1800;
 
 static double now_us(void) {
@@ -168,7 +171,7 @@ static void dirty_step(void) {
     g_stack_sum += stacks;
     if (stacks > g_stack_max) g_stack_max = stacks;
     g_step_us[g_v] = (float)step; g_cpu_us[g_v] = (float)cpu;
-    if (++g_v >= g_frames) { dirty_report(); g_mode = 0; }
+    if (++g_v >= g_frames) { dirty_report(); g_mode = g_then_replay ? 2 : 0; }
     g_last_end = now_us(); g_last_cpu = cpu_us();
 }
 
@@ -270,6 +273,7 @@ static uint64_t ram_hash(void) {
 }
 
 static void snapshot(void) {
+    pes6_ge_call(ge_idle);
     if (!g_snap_ram) { g_snap_ram = malloc(PSP_RAM_SIZE); g_end_ram = malloc(PSP_RAM_SIZE); g_k_ram = malloc(PSP_RAM_SIZE); }
     memcpy(g_snap_ram, psp_mem.ram, PSP_RAM_SIZE);
     const size_t need = psp_threadman_snapshot(NULL, 0, NULL);
@@ -280,6 +284,7 @@ static void snapshot(void) {
 }
 
 static int restore(void) {
+    pes6_ge_call(ge_idle);
     const double t0 = now_us();
     if (psp_threadman_restore(g_snap_k) < 0) return -1;
     memcpy(psp_mem.ram, g_snap_ram, PSP_RAM_SIZE);
@@ -395,7 +400,7 @@ static void rb_task(void) {
 }
 
 uint32_t pes6_rb_pad(uint32_t *analog) {
-    if (g_mode != 2 || !in_match()) return 0;
+    if (!g_mode || !in_match()) return 0;   /* dirty too: on the phone there is no one at the pad */
     uint32_t h = (pes6_scene_frame() / 6u + 1u) * 2654435761u;
     h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
     *analog = (h & 0xFFu) | ((h >> 8) & 0xFFu) << 8;
@@ -406,7 +411,8 @@ uint32_t pes6_rb_pad(uint32_t *analog) {
 void pes6_rb_setup(void) {
     const char *m = getenv("PES6_RB");
     if (!m || !*m) return;
-    g_mode = !strcmp(m, "dirty") ? 1 : !strcmp(m, "replay") ? 2 : 0;
+    g_then_replay = !strcmp(m, "dirty,replay");
+    g_mode = !strcmp(m, "dirty") || g_then_replay ? 1 : !strcmp(m, "replay") ? 2 : 0;
     if (!g_mode) return;
     const char *e;
     if ((e = getenv("PES6_RB_FROM"))) g_from = (uint32_t)strtoul(e, NULL, 10);
