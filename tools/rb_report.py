@@ -77,8 +77,9 @@ def report(logs):
             out.append(f"{hz} Hz: el log no tiene las mediciones (¿llegó al partido? ¿terminó la sonda?)")
             continue
         res[hz] = n
-        out.append(f"{hz} Hz: re-simulación {'idéntica' if not r['differs'] else 'DISTINTA'} en "
-                   f"{r['identical']} de {r['identical'] + r['differs']} ventanas")
+        tot = r['identical'] + r['differs']
+        out.append(f"{hz} Hz: re-simulación idéntica en {r['identical']} de {tot} ventanas" if not r['differs'] else
+                   f"{hz} Hz: re-simulación DISTINTA en {r['differs']} de {tot} ventanas (el partido diverge)")
     if not res:
         return "\n".join(out), res
     out.append("")

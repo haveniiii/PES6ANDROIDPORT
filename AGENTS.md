@@ -542,6 +542,10 @@ Si el Mac no ve el teléfono, el script dice qué hacer (vincular con código, `
 imprime los tres números: cuánto cuesta un paso, cuánto cuesta guardar y reponer el estado, y cuántos cuadros de
 rollback caben a 30 y a 60 Hz. Instala la APK de la sonda si el teléfono tiene otra, y devuelve el `env.txt`.
 Resultados en `build/phone_rb/latest/`.
+**Medido (15/11, `docs/27` §12):** en el Redmi a 60 Hz el paso normal cuesta 3,8 ms y el re-simulado 2,3 ms;
+guardar y reponer, ~0,26 ms. Caben **4 cuadros** a 60 Hz (~67 ms) y 6 pasos a 30 Hz (~200 ms): el doble de lo
+estimado. **Pero a 60 Hz la re-simulación diverge en 3 de 4 ventanas**, cuando a 30 Hz no. Sospecha sin comprobar:
+el reloj real del teléfono. Siguiente: la sonda con el reloj virtual en las dos pasadas.
 
 **15/11 — el disparo (`docs/42`, sin commit):** la potencia (`registro+0x4D`, 0x80 llena) sube una cantidad fija por
 paso con □ pulsado, así que a 60 Hz un toque de 133 ms daba potencia llena (0x80) en vez de la mitad (0x40, la PSP). Ganchos

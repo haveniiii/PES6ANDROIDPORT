@@ -450,3 +450,21 @@ estén en el Mac.
 **Prueba en el Mac** (los mismos ajustes, `build/rb/combo30.log` y `combo60.log`): el partido queda idéntico en
 6 de 6 ventanas. El paso «normal» incluye allí el rasterizado por software (8–9 ms), porque sin ventana el GE va
 en el mismo hilo. En el teléfono el GE va en el suyo, así que sus números no se comparan con estos.
+
+**Medido en el Redmi Note 13 (15/11, `build/phone_rb/20261115-195416/`)**, partido guionizado, `PES6_RB_SKIPDRAW=2`:
+
+| | 30 Hz | 60 Hz |
+|---|---|---|
+| paso normal, hilo del juego (estimado en §7: 7,9 / 7,4) | 6,1 ms | **3,8 ms** |
+| paso re-simulado sin dibujar (media; peor ventana) | 3,7; 4,0 ms | **2,3; 2,9 ms** (×0,60) |
+| guardar lo cambiado por paso (media; p99) | 0,16; 0,59 ms | 0,15; 0,33 ms |
+| reponer la unión de 16 vblanks (~600 KB; 32 MB medidos: 6–7 ms, 5–5,6 GB/s) | 0,14 ms | 0,11 ms |
+| **rollback que cabe** (fórmula de §9) | **6 pasos ≈ 200 ms** | **4 cuadros ≈ 67 ms** (3 en la peor ventana) |
+
+- El Redmi rinde el doble de lo estimado: el factor Mac → Redmi de §7 (8,8×) era pesimista. A 60 Hz pasa de 1 cuadro
+  estimado a 4 medidos, lo que cubre los 2–4 que pide la WiFi de casa y el p90 por internet de §9.
+- **A 60 Hz el partido re-simulado diverge en 3 de 4 ventanas** (jugadores, globales y balón); a 30 Hz es idéntico
+  en 4 de 4. En el Mac, sin ventana, era idéntico. La causa más probable, sin comprobar: el teléfono corre con el
+  reloj real (`psp_threadman_set_realtime(1)`), y §8.2 ya mostró que el tiempo real cambia el partido. Es el reloj
+  virtual de paso fijo que §8 pide; lo siguiente es probar la sonda en el teléfono con el reloj virtual durante
+  las dos pasadas.
