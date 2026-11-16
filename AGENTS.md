@@ -552,6 +552,18 @@ foto con `pes6_rules_state()`. (3) `ball_shadow_update` tiene que correr. Result
 4 de 4 a 60 Hz en el Redmi, donde caben 3 cuadros a 60 Hz (~50 ms) y 6 pasos a 30 Hz. APK `PES6-1.3.0-rb3.apk` instalada
 en el Redmi. Regla: todo estado del anfitrión que el partido lea tiene que ir en la foto.
 
+**15/11 noche — siguiente sesión: dos teléfonos por el servidor, el Redmi por WiFi y el moto por 4G — RETOMAR AQUÍ:**
+- El Redmi Note 13 (`f75f9fb3`) tiene la `PES6-1.3.0-rb3.apk` (código de `b872267`, servidor `pes6chileandroid.duckdns.org:27700`,
+  protocolo `P6N7`). La sonda solo actúa con `PES6_RB` en `env.txt`, y no está, así que juega normal. Su `env.txt`:
+  `PES6_NET_LOG PES6_FPS_LOG PES6_SLOW_LOG PES6_NET_TIMING PES6_SPIN=1 PES6_WIFI_DIRECT=off PES6_NET_PEER_TIMING=0 PES6_COMMENTARY_LOG=1`.
+- **El moto necesita una APK con `P6N7`** (la rb3 o una 1.3.0 nueva); con la fix9 o la beta 1.3.0 publicada no ve al Redmi.
+  Misma firma: `adb install -r` sin desinstalar. El servidor no tiene desplegado `rate=` (§10/11): la velocidad se negocia igual
+  entre las consolas.
+- Mac contra Redmi por el servidor (hoy, `build/phone_rb/manual/`): partido limpio con la ventana del Mac a la vista; con la
+  ventana tapada el Mac bajó a 10–20 % de velocidad (App Nap de macOS, deducido; arreglo ofrecido, sin hacer).
+- Tras cada partido: traer `pes6.log`, `net_timing.txt` y `peer_timing.txt` de cada teléfono y pasar `tools/net_timing.py`.
+- Sin `git push` (pedido del usuario). `.mcp.json`, `tools/claude-bridge/` y `docs/43` son del puente DSH y no se commitean aquí.
+
 **15/11 — el disparo (`docs/42`, sin commit):** la potencia (`registro+0x4D`, 0x80 llena) sube una cantidad fija por
 paso con □ pulsado, así que a 60 Hz un toque de 133 ms daba potencia llena (0x80) en vez de la mitad (0x40, la PSP). Ganchos
 `shot_charge_queued` y `chara_act_04_FB_shoot` + `shot_power_scaled` en `rules.c`: a 60 Hz la subida va a la mitad;
